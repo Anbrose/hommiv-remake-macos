@@ -30,8 +30,33 @@ public struct Sprite {
     public var frames: [SpriteImage] { images.filter { !$0.name.hasPrefix("shadow") && $0.name != "base_frame" } }
     public var baseFrame: SpriteImage? { images.first { $0.name == "base_frame" } }
     public func shadow(for frame: SpriteImage) -> SpriteImage? {
-        let suffix = frame.name.split(separator: " ").last.map(String.init) ?? ""
-        return images.first { $0.name.hasPrefix("shadow") && $0.name.hasSuffix(" " + suffix) }
+        guard let n = Sprite.frameNumbers(frame.name).first else { return nil }
+        return images.first { $0.name.hasPrefix("shadow") && Sprite.frameNumbers($0.name).contains(n) }
+    }
+
+    /// "frame 001 002 003" -> [1, 2, 3]: one image can stand in for a run of frame numbers.
+    static func frameNumbers(_ name: String) -> [Int] {
+        name.split(separator: " ").dropFirst().compactMap { Int($0) }
+    }
+
+    /// The animation as one entry per frame number: (image, shadow). Empty for static sprites.
+    public var timeline: [(frame: SpriteImage, shadow: SpriteImage?)] {
+        var byNumber: [Int: SpriteImage] = [:]
+        var shadows: [Int: SpriteImage] = [:]
+        for img in images {
+            for n in Sprite.frameNumbers(img.name) {
+                if img.name.hasPrefix("shadow") { shadows[n] = img } else { byNumber[n] = img }
+            }
+        }
+        guard byNumber.count > 1, let last = byNumber.keys.max() else { return [] }
+        var out: [(SpriteImage, SpriteImage?)] = []
+        var current: SpriteImage? = nil
+        for n in 1...last {
+            if let f = byNumber[n] { current = f }
+            guard let f = current else { continue }
+            out.append((f, shadows[n]))
+        }
+        return out
     }
 
     public init(data d: Data) throws {

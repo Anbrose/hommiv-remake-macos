@@ -89,15 +89,17 @@ final class Renderer: NSObject, MTKViewDelegate {
         return t
     }
 
+    var timelines: [String: [(frame: SpriteImage, shadow: SpriteImage?)]] = [:]
+
     /// The object's current frame (and shadow) at time t.
     func frame(of p: MapScene.Placed, at t: Double) -> (SpriteImage, SpriteImage?) {
-        let frames = p.sprite.frames
-        guard frames.count > 1 else { return (p.image, p.shadow) }
-        let speed = frames[0].speed
+        if timelines[p.name] == nil { timelines[p.name] = p.sprite.timeline }
+        let tl = timelines[p.name]!
+        guard !tl.isEmpty else { return (p.image, p.shadow) }
+        let speed = tl[0].frame.speed
         let period = speed > 0 ? Double(speed) / 60.0 : 0.125
-        let idx = Int(t / period) % frames.count
-        let f = frames[idx]
-        return (f, p.sprite.shadow(for: f))
+        let e = tl[Int(t / period) % tl.count]
+        return (e.frame, e.shadow ?? p.shadow)
     }
 
     func quads(at t: Double) -> [Quad] {

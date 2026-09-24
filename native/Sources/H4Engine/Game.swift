@@ -5,6 +5,9 @@ public struct Passability {
     public let size: Int
     public private(set) var blocked: [Bool]     // [x * size + y]
     public private(set) var cost: [Float]       // movement points to enter the cell
+    /// Pixels a creature standing on the cell is raised: bridge decks are drawn about 56 px above
+    /// the river cells they span, their ramps half that.
+    public private(set) var elevation: [Float]
 
     /// Decorative categories that do not block movement even though their footprint says so.
     static let walkable: Set<String> = ["flowers", "moss", "Mushrooms", "Cracks-Holes", "Dunes", "Lava flows-mud", "Stumps", "Logs", "Skeletons"]
@@ -13,6 +16,7 @@ public struct Passability {
         size = map.size
         blocked = [Bool](repeating: true, count: size * size)
         cost = [Float](repeating: 1, count: size * size)
+        elevation = [Float](repeating: 0, count: size * size)
         let cells = map.cells[level]
         for x in 0..<size {
             for y in 0..<size {
@@ -33,23 +37,32 @@ public struct Passability {
             if debug, p.sprite.footprint.w * p.sprite.footprint.h > 1 || p.category == "mine" {
                 print("footprint \(p.name) @(\(p.cellX),\(p.cellY)) \(p.sprite.footprint) blocked \(p.sprite.blocked) visitable \(p.sprite.visitable)")
             }
-            // the second mask marks the cell a pickup lets you step on; for bigger objects its bits
-            // do not line up with the footprint yet (layout still unknown), so only 1x1 objects use it
-            let pickup = p.sprite.footprint.w * p.sprite.footprint.h == 1 && !p.sprite.visitable.isEmpty
-            for b in p.sprite.blocked where !pickup {
+            // pickups block too: the hero stops next to them and takes them from there
+            for b in p.sprite.blocked {
                 let x = p.cellX + b.x, y = p.cellY + b.y
                 if x >= 0, x < size, y >= 0, y < size { blocked[x * size + y] = true }
             }
         }
         // bridges (and their ramps) are walkable over the river they span: their whole footprint is a deck
         for p in objects where p.category == "movement modifiers" && p.name.lowercased().contains("bridge") {
+            let raise: Float = p.name.lowercased().contains("ramp") ? 28 : 56
             for i in 0..<p.sprite.footprint.w {
                 for j in 0..<p.sprite.footprint.h {
                     let x = p.cellX + i, y = p.cellY + j
-                    if x >= 0, x < size, y >= 0, y < size { blocked[x * size + y] = false; cost[x * size + y] = 1 }
+                    if x >= 0, x < size, y >= 0, y < size {
+                        blocked[x * size + y] = false; cost[x * size + y] = 1; elevation[x * size + y] = raise
+                    }
                 }
             }
         }
+    }
+
+    public func elevation(_ x: Int, _ y: Int) -> Float {
+        x >= 0 && x < size && y >= 0 && y < size ? elevation[x * size + y] : 0
+    }
+
+    public mutating func free(_ x: Int, _ y: Int) {
+        if x >= 0, x < size, y >= 0, y < size { blocked[x * size + y] = false }
     }
 
     public func isFree(_ x: Int, _ y: Int) -> Bool {
@@ -121,6 +134,8 @@ public final class Hero {
     public var distance: Float = 0
     /// A path shown but not yet confirmed (HoMM style: click once to see, again to go).
     public var plan: [(x: Int, y: Int)] = []
+    /// The object the current plan/path leads to (a pickup taken on arrival), by cell and name.
+    public var target: (x: Int, y: Int, name: String)?
 
     public init(actor: String, x: Int, y: Int, movement: Float = 20) {
         self.actor = actor; self.x = x; self.y = y; self.movement = movement; maxMovement = movement
@@ -132,6 +147,13 @@ public final class Hero {
     public var position: (x: Float, y: Float) {
         guard let next = path.first else { return (Float(x), Float(y)) }
         return (Float(x) + (Float(next.x) - Float(x)) * progress, Float(y) + (Float(next.y) - Float(y)) * progress)
+    }
+
+    /// Pixels the hero is raised at its current (fractional) position.
+    public func elevation(in p: Passability) -> Float {
+        let here = p.elevation(x, y)
+        guard let next = path.first else { return here }
+        return here + (p.elevation(next.x, next.y) - here) * progress
     }
 
     public static func facing(dx: Int, dy: Int) -> String {
@@ -153,8 +175,11 @@ public final class Hero {
 public final class GameState {
     public let map: MapFile
     public let level: Int
-    public let passability: Passability
+    public let scene: MapScene
+    public private(set) var passability: Passability
     public var heroes: [Hero] = []
+    /// Things that happened this frame, for the UI (e.g. "picked up Resources.Gold").
+    public var log: [String] = []
     public var day = 1
     public var week: Int { (day - 1) / 7 % 4 + 1 }
     public var month: Int { (day - 1) / 28 + 1 }
@@ -164,7 +189,51 @@ public final class GameState {
     public init(map: MapFile, level: Int, scene: MapScene) {
         self.map = map
         self.level = level
+        self.scene = scene
         passability = Passability(map: map, level: level, objects: scene.placed)
+    }
+
+    /// A 1x1 object with a "step here to use" mask: resources, chests, artifacts, campfires.
+    public func isPickup(_ p: MapScene.Placed) -> Bool {
+        p.sprite.footprint.w * p.sprite.footprint.h == 1 && !p.sprite.visitable.isEmpty && !p.sprite.blocked.isEmpty
+    }
+
+    static func adjacent(_ a: (Int, Int), _ b: (Int, Int)) -> Bool { max(abs(a.0 - b.0), abs(a.1 - b.1)) == 1 }
+
+    /// Click on a pickup: take it if the hero stands next to it, otherwise plan (then walk) to the
+    /// cheapest neighbouring cell; it is taken on arrival.
+    public func click(hero: Hero, pickup p: MapScene.Placed) {
+        guard !hero.isWalking else { return }
+        if GameState.adjacent((hero.x, hero.y), (p.cellX, p.cellY)) { take(hero: hero, p); return }
+        if let t = hero.target, t.x == p.cellX, t.y == p.cellY, !hero.plan.isEmpty {
+            hero.path = hero.plan; hero.plan = []; hero.progress = 0
+            return
+        }
+        var best: [(x: Int, y: Int)]? = nil
+        var bestCost = Float.infinity
+        for dx in -1...1 {
+            for dy in -1...1 where dx != 0 || dy != 0 {
+                let c = (p.cellX + dx, p.cellY + dy)
+                guard passability.isFree(c.0, c.1) else { continue }
+                if c == (hero.x, hero.y) { best = []; bestCost = 0; continue }
+                guard let path = passability.path(from: (hero.x, hero.y), to: c) else { continue }
+                var cost: Float = 0
+                var px = hero.x, py = hero.y
+                for s in path { cost += passability.stepCost(from: px, py, to: s.x, s.y); px = s.x; py = s.y }
+                if cost < bestCost { bestCost = cost; best = path }
+            }
+        }
+        hero.plan = best ?? []
+        hero.target = best == nil ? nil : (p.cellX, p.cellY, p.name)
+    }
+
+    func take(hero: Hero, _ p: MapScene.Placed) {
+        guard hero.movement >= 1 else { log.append("no movement left to pick up \(p.name)"); return }
+        scene.remove(p)
+        passability.free(p.cellX, p.cellY)
+        hero.movement -= 1
+        hero.target = nil
+        log.append("picked up \(p.name) at (\(p.cellX),\(p.cellY))")
     }
 
     /// The first free cell at or around (x, y), searching outward.
@@ -188,6 +257,7 @@ public final class GameState {
             hero.progress = 0
         } else {
             hero.plan = passability.path(from: (hero.x, hero.y), to: (x, y)) ?? []
+            hero.target = nil
         }
     }
 
@@ -205,6 +275,10 @@ public final class GameState {
                 h.movement -= stepCost
                 h.path.removeFirst()
                 h.progress = 0
+                if h.path.isEmpty, let t = h.target, GameState.adjacent((h.x, h.y), (t.x, t.y)),
+                   let p = scene.placed.first(where: { $0.cellX == t.x && $0.cellY == t.y && $0.name == t.name }) {
+                    take(hero: h, p)
+                }
             }
         }
     }
@@ -215,4 +289,32 @@ public final class GameState {
     }
 
     public var dateText: String { "Month \(month), Week \(week), Day \(dayOfWeek)" }
+
+    /// Screen directions clockwise, as the arrow sprites name them.
+    static let compass = ["n", "ne", "e", "se", "s", "sw", "w", "nw"]
+
+    /// The path arrows to draw for a hero's planned route: (cell, sprite name such as
+    /// "green_arrow.left.ne"). Green while the hero can still afford the step this turn, red after;
+    /// the last cell gets the destination marker.
+    public func arrows(for h: Hero) -> [(x: Int, y: Int, name: String)] {
+        let plan = h.plan
+        guard !plan.isEmpty else { return [] }
+        var out: [(Int, Int, String)] = []
+        var left = h.movement
+        var px = h.x, py = h.y
+        for (k, c) in plan.enumerated() {
+            let stepCost = passability.stepCost(from: px, py, to: c.x, c.y)
+            let colour = left + 0.001 >= stepCost ? "green_arrow" : "red_arrow"
+            left -= stepCost
+            if k == plan.count - 1 { out.append((c.x, c.y, "\(colour).dest")); break }
+            let n = plan[k + 1]
+            let din = GameState.compass.firstIndex(of: Hero.facing(dx: c.x - px, dy: c.y - py)) ?? 0
+            let dout = GameState.compass.firstIndex(of: Hero.facing(dx: n.x - c.x, dy: n.y - c.y)) ?? 0
+            let turn = (dout - din + 8) % 8
+            let shape = turn == 7 ? "left" : turn == 1 ? "right" : "straight"
+            out.append((c.x, c.y, "\(colour).\(shape).\(GameState.compass[dout])"))
+            px = c.x; py = c.y
+        }
+        return out
+    }
 }

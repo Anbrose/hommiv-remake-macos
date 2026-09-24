@@ -15,11 +15,18 @@ var center: (Int, Int)?   // --center x,y: map cell to put in the middle of the 
 var zoom: Float = 1       // --zoom z: initial scale
 var walk: (Int, Int)?     // --walk x,y (with --snapshot): send the hero there and render 1.5 s later
 var showBlocked = false   // --blocked: mark impassable cells (debug)
+var heroAt: (Int, Int)?   // --hero x,y: put the hero there instead of at the town gate (debug)
+var plan: (Int, Int)?     // --plan x,y (with --snapshot): show the route there without walking
 var i = 3
 while i < args.count {
     if args[i] == "--level", i + 1 < args.count { level = Int(args[i + 1]) ?? 0; i += 2 }
     else if args[i] == "--zoom", i + 1 < args.count { zoom = Float(args[i + 1]) ?? 1; i += 2 }
     else if args[i] == "--blocked" { showBlocked = true; i += 1 }
+    else if (args[i] == "--hero" || args[i] == "--plan"), i + 1 < args.count {
+        let p = args[i + 1].split(separator: ",").compactMap { Int($0) }
+        if p.count == 2 { if args[i] == "--hero" { heroAt = (p[0], p[1]) } else { plan = (p[0], p[1]) } }
+        i += 2
+    }
     else if args[i] == "--walk", i + 1 < args.count {
         let p = args[i + 1].split(separator: ",").compactMap { Int($0) }
         if p.count == 2 { walk = (p[0], p[1]) }
@@ -78,7 +85,7 @@ if let town = scene.placed.filter({ $0.category == "castle" }).min(by: { ($0.cel
     let faction = alignments.first { town.name.lowercased().contains($0.key) }?.value ?? "life"
     // the gate is in the middle of the lower-right wall of right-facing (" R") towns, lower-left otherwise
     let right = town.name.lowercased().hasSuffix(" r.h4d")
-    if let cell = game.freeCell(near: town.cellX + (right ? 3 : 6), town.cellY + (right ? 6 : 3)) {
+    if let cell = heroAt ?? game.freeCell(near: town.cellX + (right ? 3 : 6), town.cellY + (right ? 6 : 3)) {
         game.heroes.append(Hero(actor: "hero.\(faction)_might_male", x: cell.0, y: cell.1))
         lap("hero at \(cell) by \(town.name)")
     }
@@ -93,12 +100,26 @@ if let out = snapshot {
     lap("textures uploaded")
     var snapTime = 0.0
     if let target = walk, let hero = game.heroes.first {
-        game.click(hero: hero, x: target.0, y: target.1)
-        print("path: \(hero.plan.map { "(\($0.x),\($0.y))" }.joined(separator: " "))")
-        game.click(hero: hero, x: target.0, y: target.1)
+        if let p = scene.placed.first(where: { $0.cellX == target.0 && $0.cellY == target.1 && game.isPickup($0) }) {
+            game.click(hero: hero, pickup: p)
+            print("path to pickup \(p.name): \(hero.plan.map { "(\($0.x),\($0.y))" }.joined(separator: " "))")
+            game.click(hero: hero, pickup: p)
+        } else {
+            game.click(hero: hero, x: target.0, y: target.1)
+            print("path: \(hero.plan.map { "(\($0.x),\($0.y))" }.joined(separator: " "))")
+            game.click(hero: hero, x: target.0, y: target.1)
+        }
         for _ in 0..<90 { game.update(dt: 1.0 / 60) }   // 1.5 s of walking
         snapTime = 1.5
+        for line in game.log { print(line) }
+        game.log.removeAll()
         print("hero now at (\(hero.x),\(hero.y)) facing \(hero.facing), movement \(hero.movement), still walking: \(hero.isWalking)")
+        let near = scene.placed.filter { game.isPickup($0) && abs($0.cellX - hero.x) <= 6 && abs($0.cellY - hero.y) <= 6 }
+        print("pickups nearby: \(near.map { "\($0.name.dropFirst(11).dropLast(4))@(\($0.cellX),\($0.cellY))" }.joined(separator: ", "))")
+    }
+    if let target = plan, let hero = game.heroes.first {
+        game.click(hero: hero, x: target.0, y: target.1)
+        print("plan: \(game.arrows(for: hero).map { "\($0.name)@(\($0.x),\($0.y))" }.joined(separator: " "))")
     }
     let w = 1280, h = 800
     renderer.viewSize = SIMD2(Float(w), Float(h))
@@ -147,6 +168,15 @@ final class MapView: MTKView {
         let m = renderer.pan + mouse / renderer.zoom
         let u = (m.x - Float(g.map.size * 32 + 32)) / 32, v = (m.y - 32) / 16   // u = y - x, v = x + y
         var x = Int(((v - u) / 2).rounded()), y = Int(((v + u) / 2).rounded())
+        // a pickup under the cursor (topmost drawn wins): walk next to it and take it
+        if let p = renderer.scene.placed.last(where: { p in
+            guard Float(p.x) <= m.x, m.x < Float(p.x + p.image.bitmap.width), Float(p.y) <= m.y, m.y < Float(p.y + p.image.bitmap.height) else { return false }
+            let bm = p.image.bitmap
+            return bm.pixels[((Int(m.y) - p.y) * bm.width + Int(m.x) - p.x) * 4 + 3] > 0 && g.isPickup(p)
+        }) {
+            g.click(hero: hero, pickup: p)
+            return
+        }
         if !g.passability.isFree(x, y) {
             // Clicked on something you cannot stand on. If an object's picture is under the cursor
             // (a bridge deck is drawn well above its cells), go to the nearest free cell of its

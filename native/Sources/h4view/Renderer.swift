@@ -118,6 +118,14 @@ final class Renderer: NSObject, MTKViewDelegate {
         return (e.frame, e.shadow ?? p.shadow)
     }
 
+    /// The game's own path arrows: adv_object.internal.<green|red>_arrow.<straight|left|right>.<dir> / .dest
+    func arrowSprite(_ name: String) -> Sprite? {
+        if let s = actorSprites[name] { return s }
+        guard let r = resolver, let e = r.entry("adv_object.internal.\(name).h4d"), let s = try? Sprite(data: r.archive.payload(e)) else { return nil }
+        actorSprites[name] = s
+        return s
+    }
+
     /// Screen centre of a (fractional) cell.
     func screen(_ x: Float, _ y: Float) -> (Float, Float) {
         ((y - x) * 32 + Float(scene.map.size * 32 + 32), (x + y) * 16 + 32)
@@ -143,7 +151,8 @@ final class Renderer: NSObject, MTKViewDelegate {
             frame = e.frame; shadow = e.shadow
         }
         let (px, py) = h.position
-        let (sx, sy) = screen(px, py)
+        let (sx, sy0) = screen(px, py)
+        let sy = sy0 - (game.map { h.elevation(in: $0.passability) } ?? 0)   // raised on bridges
         let ox = Int(sx) + Int(s.origin.x), oy = Int(sy) - 16 + Int(s.origin.y)   // origin is from the cell's top vertex
         var out: [Quad] = []
         if let sh = shadow { out.append(Quad(texture: texture(for: sh, of: entry), x: ox + sh.box.left, y: oy + sh.box.top, w: sh.bitmap.width, h: sh.bitmap.height)) }
@@ -161,12 +170,21 @@ final class Renderer: NSObject, MTKViewDelegate {
         var pending: [(depth: Float, quads: [Quad])] = []
         if let g = game {
             for h in g.heroes {
-                for c in h.plan {
-                    let (sx, sy) = screen(Float(c.x), Float(c.y))
-                    out.append(Quad(texture: dot, x: Int(sx) - 4, y: Int(sy) - 4, w: 8, h: 8))
+                for a in g.arrows(for: h) {
+                    // arrows sort with the objects (a tree in front hides them) and ride up onto bridges
+                    guard let s = arrowSprite(a.name), let f = s.frames.first else { continue }
+                    let raise = g.passability.elevation(a.x, a.y)
+                    let (sx, sy) = screen(Float(a.x), Float(a.y))
+                    let ox = Int(sx) + Int(s.origin.x), oy = Int(sy - raise) - 16 + Int(s.origin.y)
+                    var q: [Quad] = []
+                    if let sh = s.shadow(for: f) { q.append(Quad(texture: texture(for: sh, of: a.name), x: ox + sh.box.left, y: oy + sh.box.top, w: sh.bitmap.width, h: sh.bitmap.height)) }
+                    q.append(Quad(texture: texture(for: f, of: a.name), x: ox + f.box.left, y: oy + f.box.top, w: f.bitmap.width, h: f.bitmap.height))
+                    pending.append((Float((a.x + a.y) * 1000 + (a.y - a.x) + 499) + (raise > 0 ? 2500 : 0), q))
                 }
                 let (px, py) = h.position
-                pending.append(((px + py) * 1000 + (py - px) + 500, heroQuads(h, at: t)))
+                // on a bridge the hero is drawn after the bridge pieces around it
+                let raised: Float = h.elevation(in: g.passability) > 0 ? 2500 : 0
+                pending.append(((px + py) * 1000 + (py - px) + 500 + raised, heroQuads(h, at: t)))
             }
             pending.sort { $0.depth < $1.depth }
         }
@@ -207,6 +225,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         lastFrame = now
         if let g = game {
             g.update(dt: Float(min(dt, 0.1)))
+            for line in g.log { print(line) }
+            g.log.removeAll()
             if let h = g.heroes.first {
                 onTitle?("\(g.dateText) — movement \(Int(h.movement.rounded()))/\(Int(h.maxMovement))  (click: plan / go, Return: end turn)")
             }

@@ -161,6 +161,11 @@ public final class MapScene {
         placed = out.sorted { $0.depth < $1.depth }
     }
 
+    /// Take an object off the map (a pickup that was collected).
+    public func remove(_ p: Placed) {
+        placed.removeAll { $0.cellX == p.cellX && $0.cellY == p.cellY && $0.name == p.name && $0.depth == p.depth }
+    }
+
     static func mod(_ a: Int, _ m: Int) -> Int { ((a % m) + m) % m }
 
     /// Copy a 64x32 tile onto the canvas at (left, top), optionally through a 64x32 1-bit mask.

@@ -66,11 +66,19 @@ final class CombatScreen {
         return obstacleSprites[name]
     }
 
-    /// A land field for the terrain the hero stands on: its tiles as the ground, obstacles of its kind.
+    /// Map-canvas point at the top-left of the 1180x1024 field window (the ground is the map's terrain).
+    var origin: (Float, Float) = (0, 0)
+    /// The stack labels (layers.icons.combat_labels.<colour>): waving frames and the "selected" ones.
+    var labelSheets: [String: LayerFile] = [:]
+    func labels(_ colour: String) -> LayerFile? {
+        if labelSheets[colour] == nil, let d = payload("layers.icons.combat_labels.\(colour).h4d") { labelSheets[colour] = try? LayerFile(data: d) }
+        return labelSheets[colour]
+    }
+    var healthSheet: LayerFile? { labels("health") }
+
+    /// A land field for the terrain the hero stands on: open ground with obstacles of its kind.
     func generatedField(terrain: UInt8, variant: UInt8, seed: Int) -> Battlefield? {
-        let base = ["water", "grass", "rough", "swamp", "lava", "snow", "sand", "dirt", "subterranean"]
-        let t = Int(terrain) < base.count ? base[Int(terrain)] : "grass"
-        guard let d = payload("terrain.\(t).\(min(Int(variant), 1) + 1).1.h4d"), let patch = try? TerrainPatch(data: d) else { return nil }
+        _ = variant
         var cands: [(name: String, w: Int, h: Int)] = []
         for fam in CombatScreen.obstacleFamilies[terrain] ?? ["Rocks.Dirt"] {
             let prefix = "combat_object.obstacles.\(fam.lowercased())."
@@ -78,7 +86,7 @@ final class CombatScreen {
                 if let d = try? archive.payload(real), d.count > 4, d[d.startIndex] == 2 { cands.append((real, max(1, Int(d[d.startIndex + 2])), max(1, Int(d[d.startIndex + 3])))) }
             }
         }
-        return Battlefield(ground: patch, obstacles: cands, seed: seed)
+        return Battlefield(obstacles: cands, seed: seed)
     }
 
     /// Set up a battle between a hero's army and a wandering stack.
@@ -86,6 +94,13 @@ final class CombatScreen {
         guard let t = g.tables, let c = t.creature(g.monsters[i].creature) else { return }
         hero = h; monsterIndex = i; placed = p
         let seed = g.day * 977 + h.x * 31 + h.y
+        // the field window is centred between the hero and the monster on the map canvas
+        let (hx, hy) = g.scene.screen(x: h.x, y: h.y)
+        let (mx, my) = g.scene.screen(x: p.cellX, y: p.cellY)
+        origin = (Float(hx + mx) / 2 - Float(Battlefield.backdropWidth) / 2, Float(hy + my) / 2 - Float(Battlefield.backdropHeight) / 2)
+        // keep the window on the map canvas
+        origin.0 = max(0, min(Float(g.scene.width - Battlefield.backdropWidth), origin.0))
+        origin.1 = max(0, min(Float(g.scene.height - Battlefield.backdropHeight), origin.1))
         fieldName = "generated.\(terrain).\(variant).\(seed)"
         field = generatedField(terrain: terrain, variant: variant, seed: seed) ?? loadField("neutral.single")
         guard let f = field else { return }

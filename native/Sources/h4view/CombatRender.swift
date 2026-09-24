@@ -21,12 +21,19 @@ extension Renderer {
         guard let cs = combat, let b = cs.battle, let ui = ui, let f = cs.field else { return [] }
         var out: [Quad] = []
         let sc = CombatScreen.sceneScale
-        // the backdrop (1180x1024) scaled into the battle scene
+        // the ground: a ship's backdrop, or the map's terrain around the fight (1:1, scaled into the scene)
         if let bd = f.backdrop {
             out.append(Quad(texture: uiTexture("battlefield|\(cs.fieldName)", { bd.bitmap }), x: 0, y: 0, w: Int(Float(bd.width) * sc), h: Int(Float(bd.height) * sc)))
+        } else {
+            let (ox, oy) = cs.origin
+            for q in terrain {
+                let x = (Float(q.x) - ox) * sc, y = (Float(q.y) - oy) * sc
+                if x + Float(q.w) * sc < 0 || y + Float(q.h) * sc < 0 || x > 885 || y > 768 { continue }
+                out.append(Quad(texture: q.texture, x: Int(x), y: Int(y), w: Int(Float(q.w) * sc), h: Int(Float(q.h) * sc)))
+            }
         }
-        // the acting unit's reach as a faint shade, and its ring
-        if let cur = b.current, cur.side == 0, !cs.busy, cs.result == nil {
+        // the acting unit's reach as a faint shade (the game's "movement shadow" option)
+        if showReach, let cur = b.current, cur.side == 0, !cs.busy, cs.result == nil {
             for (key, _) in b.reachable(cur) {
                 let x = key % Battlefield.columns, y = key / Battlefield.columns
                 let (px, py) = CombatScreen.point(Float(x), Float(y))
@@ -73,13 +80,30 @@ extension Renderer {
                 let ox = px + Float(s.origin.x) * sc, oy = py + Float(s.origin.y) * sc
                 if let sh = shadow { q.append(Quad(texture: texture(for: sh, of: entry), x: Int(ox + Float(sh.box.left) * sc), y: Int(oy + Float(sh.box.top) * sc), w: Int(Float(sh.bitmap.width) * sc), h: Int(Float(sh.bitmap.height) * sc))) }
                 if let fr = frame { q.append(Quad(texture: texture(for: fr, of: entry), x: Int(ox + Float(fr.box.left) * sc), y: Int(oy + Float(fr.box.top) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc))) }
-            }
-            // the stack size in a box below the feet
-            if u.alive {
-                let count = String(u.stats.count)
-                let w = ui.numberFont.measure(count)
-                q.append(Quad(texture: shade, x: Int(px) - w / 2 - 4, y: Int(py) + 2, w: w + 8, h: ui.numberFont.size + 2))
-                q.append(Quad(texture: uiTexture("count|\(count)", { ui.numberFont.render(count, colour: u.side == 0 ? (200, 230, 255) : (255, 210, 200)) }), x: Int(px) - w / 2, y: Int(py) + 3, w: w, h: ui.numberFont.size))
+                // the label above the head: a waving banner in the owner's colour with the stack
+                // size, the acting unit's taller "selected" one; heroes show health and mana bars
+                if u.alive, let sheet = cs.labels(u.side == 0 ? AdventureUI.playerColourNames[0].lowercased() : "gray") {
+                    let selected = b.current?.id == u.id && cs.result == nil
+                    let k = Int(now.timeIntervalSince1970 * 8) % (selected ? 8 : 4) + 1
+                    if let l = sheet[selected ? "selected_\(k)" : "frame_\(k)"] {
+                        // the sheet's origin sits 44 px above the sprite's top; the text box is the sheet's "text" hotspot
+                        let top = frame.map { oy + Float($0.box.top) * sc } ?? (py - 100 * sc)
+                        let lx = Int(px) - 22, ly = Int(top) - 44
+                        q.append(Quad(texture: uiTexture("label|\(u.side == 0 ? "red" : "gray")|\(l.name)", { l.bitmap }), x: lx + l.x, y: ly + l.y, w: l.width, h: l.height))
+                        let boxX = lx + 2, boxY = ly + 11, boxW = 34, boxH = 21
+                        if u.stats.isHero, let hs = cs.healthSheet, let bg = hs["background"], let hb = hs["health_bar"], let mb = hs["mana_bar"] {
+                            let bx = boxX + (boxW - bg.width) / 2, by = boxY + (boxH - bg.height) / 2
+                            q.append(Quad(texture: uiTexture("label|health|bg", { bg.bitmap }), x: bx, y: by, w: bg.width, h: bg.height))
+                            let hf = max(0, min(1, Float(u.stats.hitPoints - u.stats.wounds) / Float(max(1, u.stats.hitPoints))))
+                            if hf > 0 { q.append(Quad(texture: uiTexture("label|health|hb", { hb.bitmap }), x: bx + hb.x, y: by + hb.y, w: Int(Float(hb.width) * hf), h: hb.height)) }
+                            q.append(Quad(texture: uiTexture("label|health|mb", { mb.bitmap }), x: bx + mb.x, y: by + mb.y, w: mb.width / 2, h: mb.height))
+                        } else {
+                            let count = String(u.stats.count)
+                            let w = ui.numberFont.measure(count)
+                            q.append(Quad(texture: uiTexture("count|\(count)|dark", { ui.numberFont.render(count, colour: (40, 24, 8)) }), x: boxX + (boxW - w) / 2, y: boxY + (boxH - ui.numberFont.size) / 2, w: w, h: ui.numberFont.size))
+                        }
+                    }
+                }
             }
             drawn.append((py + (u.alive ? 0 : -1000), q))
         }

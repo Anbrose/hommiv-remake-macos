@@ -69,27 +69,8 @@ public struct Battlefield {
     /// the terrain's diamond tiles staggered over the backdrop, obstacles scattered outside the
     /// deployment columns, their footprints (w x h cells up from the anchor) blocked.
     /// `obstacleFootprints` gives the footprint of each candidate sprite name.
-    public init(ground: TerrainPatch, obstacles candidates: [(name: String, w: Int, h: Int)], seed: Int) {
-        var bm = Bitmap(width: Battlefield.backdropWidth, height: Battlefield.backdropHeight)
-        var row = -1
-        while row * 16 < Battlefield.backdropHeight + 32 {
-            var col = -1
-            while col * 64 < Battlefield.backdropWidth + 64 {
-                let ti = (((row % 6) + 6) % 6 + 2) * 10 + (((col % 6) + 6) % 6 + 2)
-                let left = col * 64 + (row & 1) * 32, top = row * 16
-                let tile = ground.tiles[min(ti, ground.tiles.count - 1)]
-                for y in 0..<32 { let yy = top + y; guard yy >= 0, yy < bm.height else { continue }
-                    for x in 0..<64 { let xx = left + x; guard xx >= 0, xx < bm.width else { continue }
-                        let s = (y * 64 + x) * 4
-                        guard tile.pixels[s + 3] != 0 else { continue }
-                        let d = (yy * bm.width + xx) * 4
-                        bm.pixels[d] = tile.pixels[s]; bm.pixels[d + 1] = tile.pixels[s + 1]; bm.pixels[d + 2] = tile.pixels[s + 2]; bm.pixels[d + 3] = 255
-                    } }
-                col += 1
-            }
-            row += 1
-        }
-        backdrop = UILayer(name: "backdrop", kind: 0, x: 0, y: 0, width: bm.width, height: bm.height, bitmap: bm)
+    public init(obstacles candidates: [(name: String, w: Int, h: Int)], seed: Int) {
+        backdrop = nil   // the ground is the adventure map's own terrain around the fight
         var c = [UInt8](repeating: 1, count: Battlefield.columns * Battlefield.rows)
         for y in 0..<Battlefield.rows { for x in 0..<Battlefield.columns where x < 2 || x > 71 || y < 4 || y > 59 { c[y * Battlefield.columns + x] = 0 } }
         var rng = UInt64(truncatingIfNeeded: seed &* 6364136223846793005 &+ 1442695040888963407)

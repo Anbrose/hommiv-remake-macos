@@ -58,6 +58,13 @@ final class Renderer: NSObject, MTKViewDelegate {
     var onTitle: ((String) -> Void)?
     var ui: AdventureUI?
     var uiTextures: [String: MTLTexture] = [:]
+    /// Messages shown over the map for a few seconds.
+    var toasts: [(text: String, until: Date)] = []
+    lazy var shade: MTLTexture = {
+        var bm = Bitmap(width: 2, height: 2)
+        for i in 0..<4 { bm.pixels[i * 4] = 30; bm.pixels[i * 4 + 1] = 20; bm.pixels[i * 4 + 2] = 10; bm.pixels[i * 4 + 3] = 190 }
+        return makeTexture(bm)
+    }()
     var minimapTexture: MTLTexture?
     /// Device pixels per canvas pixel of the 1024x768 UI.
     var uiScale: Float { viewSize.y / Float(AdventureUI.height) }
@@ -151,6 +158,13 @@ final class Renderer: NSObject, MTKViewDelegate {
                 let w = ui.numberFont.measure(t.name)
                 out.append(Quad(texture: tex, x: list.x + (list.width - w) / 2, y: list.y + 30 + i * 72, w: w, h: ui.numberFont.size))
             }
+        }
+        // messages, newest at the bottom, over the top of the map
+        for (i, t) in toasts.suffix(4).enumerated() {
+            let w = ui.dateFont.measure(t.text)
+            let x = (AdventureUI.mapViewportWidth - w) / 2, y = 90 + i * (ui.dateFont.lineHeight + 8)
+            out.append(Quad(texture: shade, x: x - 10, y: y - 4, w: w + 20, h: ui.dateFont.lineHeight + 6))
+            out.append(Quad(texture: uiTexture("toast|\(t.text)", { ui.dateFont.render(t.text, colour: (255, 236, 200)) }), x: x, y: y, w: w, h: ui.dateFont.size))
         }
         // End Turn button (released state) in its hotspot
         if let slot = ui.hotspot("end_turn"), let b = ui.endTurnButton["Released"] {
@@ -342,8 +356,9 @@ final class Renderer: NSObject, MTKViewDelegate {
         lastFrame = now
         if let g = game {
             g.update(dt: Float(min(dt, 0.1)))
-            for line in g.log { print(line) }
+            for line in g.log { print(line); toasts.append((line, now.addingTimeInterval(5))) }
             g.log.removeAll()
+            toasts.removeAll { $0.until < now }
             if let h = g.heroes.first {
                 onTitle?("Heroes IV — \(scene.map.name) — movement \(Int(h.movement.rounded()))/\(Int(h.maxMovement))")
             }

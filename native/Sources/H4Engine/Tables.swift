@@ -35,6 +35,7 @@ public struct RuleTable {
 public struct CreatureDef {
     public let keyword: String, name: String, plural: String, level: Int, alignment: String
     public let hitPoints: Int, damageLow: Int, damageHigh: Int, attack: Int, defense: Int, move: Int, speed: Int, growth: Int, gold: Int
+    public let experience: Int
 }
 
 public struct HeroDef {
@@ -67,7 +68,8 @@ public final class RuleTables {
             CreatureDef(keyword: cr.value($0, "Keyword"), name: cr.value($0, "Name"), plural: cr.value($0, "Plural Name"), level: int(cr.value($0, "Level")),
                         alignment: cr.value($0, "Alignment").lowercased(), hitPoints: int(cr.value($0, "Hit Points")), damageLow: int(cr.value($0, "Low")),
                         damageHigh: int(cr.value($0, "High")), attack: int(cr.value($0, "Attack")), defense: int(cr.value($0, "Defense")),
-                        move: int(cr.value($0, "Move")), speed: int(cr.value($0, "Speed")), growth: int(cr.value($0, "Weekly Growth")), gold: int(cr.value($0, "Gold")))
+                        move: int(cr.value($0, "Move")), speed: int(cr.value($0, "Speed")), growth: int(cr.value($0, "Weekly Growth")), gold: int(cr.value($0, "Gold")),
+                        experience: int(cr.value($0, "Experience")))
         }
         let he = RuleTable(data: try archive.payload("table.heroes.h4d"))
         heroes = he.rows.filter { $0.count > 3 && !$0[0].isEmpty }.map { HeroDef(keyword: $0[0], name: $0[1], sex: $0[2].lowercased(), heroClass: $0[3].lowercased()) }

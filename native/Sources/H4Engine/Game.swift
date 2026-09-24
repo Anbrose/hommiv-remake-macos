@@ -89,6 +89,9 @@ public struct Passability {
     public mutating func free(_ x: Int, _ y: Int) {
         if x >= 0, x < size, y >= 0, y < size { blocked[x * size + y] = false }
     }
+    public mutating func block(_ x: Int, _ y: Int) {
+        if x >= 0, x < size, y >= 0, y < size { blocked[x * size + y] = true }
+    }
 
     public func isFree(_ x: Int, _ y: Int) -> Bool {
         x >= 0 && x < size && y >= 0 && y < size && !blocked[x * size + y]
@@ -155,6 +158,9 @@ public final class Hero {
     public struct Stack { public var creature: String; public var count: Int }
     public var army: [Stack] = []
     public static let armySlots = 7   // the hero plus six stacks
+    public var experience = 0
+    public var level: Int { 1 + experience / 1000 }
+    public var home: (x: Int, y: Int) = (0, 0)   // where a beaten hero regroups
     public var x: Int, y: Int         // current cell
     public var facing = "s"
     public var movement: Float
@@ -218,9 +224,11 @@ public final class GameState {
     public struct Town { public let x: Int, y: Int; public var name: String; public let alignment: String; public var owned: Bool }
     public struct Mine { public let x: Int, y: Int, name: String, resource: String, amount: Int; public var owned: Bool }
     public struct Dwelling { public let x: Int, y: Int, name: String, creature: String; public var available: Int }
+    public struct Monster { public let x: Int, y: Int, name: String, creature: String; public var count: Int }
     public var towns: [Town] = []
     public var mines: [Mine] = []
     public var dwellings: [Dwelling] = []
+    public var monsters: [Monster] = []
     /// Income per day from everything the player owns.
     public var income: [String: Int] {
         var out: [String: Int] = [:]
@@ -255,8 +263,43 @@ public final class GameState {
         dwellings.firstIndex { $0.x == p.cellX && $0.y == p.cellY && $0.name == p.name }
     }
 
-    /// Objects a hero walks up to and uses: pickups, mines and dwellings (towns later).
-    public func isVisitable(_ p: MapScene.Placed) -> Bool { isPickup(p) || mine(for: p) != nil || dwelling(for: p) != nil }
+    public func monster(for p: MapScene.Placed) -> Int? {
+        monsters.firstIndex { $0.x == p.cellX && $0.y == p.cellY && $0.name == p.name }
+    }
+
+    /// Objects a hero walks up to and uses: pickups, mines, dwellings and monsters (towns later).
+    public func isVisitable(_ p: MapScene.Placed) -> Bool {
+        isPickup(p) || mine(for: p) != nil || dwelling(for: p) != nil || monster(for: p) != nil
+    }
+
+    /// The hero's army as combatants, the hero first.
+    func combatants(of hero: Hero) -> [Combatant] {
+        var out = [Combatant(hero: hero.name, level: hero.level)]
+        for s in hero.army { if let c = tables?.creature(s.creature) { out.append(Combatant(creature: c, count: s.count)) } }
+        return out
+    }
+
+    /// Fight a wandering monster stack next to the hero.
+    func fight(hero: Hero, monsterAt i: Int, _ p: MapScene.Placed) {
+        guard let t = tables, let c = t.creature(monsters[i].creature) else { return }
+        let result = QuickCombat.fight(attackers: combatants(of: hero), defenders: [Combatant(creature: c, count: monsters[i].count)],
+                                       seed: day * 131 + hero.x * 17 + hero.y)
+        if ProcessInfo.processInfo.environment["H4DEBUG"] != nil { for l in result.log.prefix(12) { print("  " + l) } }
+        // survivors back into the army
+        hero.army = result.attackers.dropFirst().filter { $0.alive }.map { s in Hero.Stack(creature: t.creatures.first { $0.name == s.name }?.keyword ?? s.name, count: s.count) }
+        if result.attackerWon {
+            hero.experience += result.experience
+            scene.remove(p)
+            passability.free(p.cellX, p.cellY)
+            monsters.remove(at: i)
+            log.append("Victory over \(monsters.count >= 0 ? c.plural : "") after \(result.rounds) rounds: +\(result.experience) experience (level \(hero.level))")
+        } else {
+            monsters[i].count = result.defenders.first?.count ?? monsters[i].count
+            hero.x = hero.home.x; hero.y = hero.home.y; hero.movement = 0; hero.path = []; hero.plan = []
+            log.append("Defeated by \(c.plural) after \(result.rounds) rounds; \(hero.name) limps home")
+        }
+        hero.target = nil
+    }
 
     /// Give a hero the usual starting army: the two cheapest level-1 creatures of his alignment,
     /// half a week's growth each.
@@ -289,6 +332,17 @@ public final class GameState {
                 if let (res, amount) = RuleTables.mineIncome[short] {
                     mines.append(Mine(x: p.cellX, y: p.cellY, name: p.name, resource: res, amount: amount, owned: false))
                 }
+            } else if p.category == "Random creatures", let t = tables, p.name.hasPrefix("actor_sequence.") {
+                // "actor_sequence.<creature>.wait.<facing>.h4d" -> the creature; the stack size follows its level
+                let parts = p.name.dropFirst("actor_sequence.".count).split(separator: ".")
+                if let kw = parts.first, let c = t.creature(String(kw)) {
+                    let sizes = [0, 16, 7, 3, 1]   // typical guard stacks by creature level
+                    let base = sizes[min(4, max(1, c.level))]
+                    let count = base + (p.cellX * 3 + p.cellY * 5) % max(1, base / 2 + 1)
+                    monsters.append(Monster(x: p.cellX, y: p.cellY, name: p.name, creature: c.keyword, count: count))
+                    passability.block(p.cellX, p.cellY)
+                    if ProcessInfo.processInfo.environment["H4DEBUG"] != nil { print("monster: \(count) \(c.plural) at (\(p.cellX),\(p.cellY))") }
+                }
             } else if p.category == "creature generators", let t = tables {
                 var short = p.name.replacingOccurrences(of: "adv_object.creature generators.", with: "").replacingOccurrences(of: ".h4d", with: "").lowercased()
                 if short.hasSuffix(" r") { short.removeLast(2) }
@@ -302,6 +356,7 @@ public final class GameState {
     /// Use an object the hero stands next to.
     func interact(hero: Hero, _ p: MapScene.Placed) {
         if isPickup(p) { take(hero: hero, p); return }
+        if let i = monster(for: p) { fight(hero: hero, monsterAt: i, p); return }
         if let i = mine(for: p) {
             if mines[i].owned { log.append("\(mines[i].resource) mine already yours") }
             else { mines[i].owned = true; log.append("captured a mine: +\(mines[i].amount) \(mines[i].resource) per day") }

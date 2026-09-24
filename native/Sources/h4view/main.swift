@@ -103,6 +103,7 @@ if let town = scene.placed.filter({ $0.category == "castle" }).min(by: { ($0.cel
         let def = candidates.isEmpty ? nil : candidates[(town.cellX + town.cellY) % candidates.count]
         let hero = Hero(actor: "hero.\(align)_might_male", x: cell.0, y: cell.1, movement: 25)
         hero.name = def?.name ?? "Hero"; hero.keyword = def?.keyword ?? ""; hero.alignment = align
+        hero.home = (cell.0, cell.1)
         game.giveStartingArmy(hero)
         game.heroes.append(hero)
         lap("\(hero.name) the \(cls) at \(cell) by \(game.towns.first { $0.owned }?.name ?? town.name)")

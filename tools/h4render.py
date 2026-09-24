@@ -35,10 +35,18 @@ import h4map
 import h4sprite
 import h4terrain
 
-TERRAIN_FILE = {0: 'water.1.1', 1: 'grass.1.1', 2: 'rough.1.1', 3: 'swamp.1.1', 4: 'lava.1.1', 5: 'snow.1.1',
-                6: 'sand.1.1', 7: 'dirt.1.1', 8: 'subterranean.1.1', 9: 'river.water.1', 10: 'river.lava.1',
-                11: 'river.ice.1', 12: 'magic.all', 13: 'magic.life', 14: 'magic.order', 15: 'magic.death.1',
-                16: 'magic.chaos.1', 17: 'magic.nature.1', 18: 'magic.all'}
+# terrain types with two variants (dry/lush grass, shallow/deep water, beach/desert sand, ...)
+# have patch files <name>.<variant+1>.<1|2>; the rest have a single look
+TERRAIN_BASE = {0: 'water', 1: 'grass', 2: 'rough', 3: 'swamp', 4: 'lava', 5: 'snow', 6: 'sand', 7: 'dirt', 8: 'subterranean'}
+TERRAIN_SINGLE = {9: 'river.water.1', 10: 'river.lava.1', 11: 'river.ice.1', 12: 'magic.all', 13: 'magic.life',
+                  14: 'magic.order', 15: 'magic.death.1', 16: 'magic.chaos.1', 17: 'magic.nature.1', 18: 'magic.all'}
+TERRAIN_FILE = {**{t: f'{n}.1.1' for t, n in TERRAIN_BASE.items()}, **TERRAIN_SINGLE}
+
+
+def terrain_file(t, v):
+    if t in TERRAIN_BASE:
+        return f'{TERRAIN_BASE[t]}.{min(v, 1) + 1}.1'
+    return TERRAIN_SINGLE.get(t)
 
 
 ROAD_FILE = {0: 'road.dirt.1', 1: 'road.gravel.1', 2: 'road.cobblestone.1'}
@@ -72,8 +80,7 @@ def load_masks(assets):
     return sets
 
 
-def load_tiles(assets, t, road=False):
-    name = ROAD_FILE[t] if road else TERRAIN_FILE[t]
+def load_tiles(assets, name):
     tiles, pal = h4terrain.parse(open(f'{assets}/terrain/terrain.{name}.h4d', 'rb').read())
     out = []
     for rows in tiles:
@@ -165,19 +172,21 @@ def render(archive, assets, mapfile, level=0):
             ti = tile_index(x, y)
             sx, sy = screen(x, y)
             left, top = sx - 32, sy - 16
-            if t not in tilesets:
-                tilesets[t] = load_tiles(assets, t)
-            blit(canvas, W, H, tilesets[t][ti], 64, 32, left, top)
+
+            def tiles(name):
+                if name not in tilesets:
+                    tilesets[name] = load_tiles(assets, name)
+                return tilesets[name]
+            base = terrain_file(t, v)
+            if base:
+                blit(canvas, W, H, tiles(base)[ti], 64, 32, left, top)
             for k, f, mask, order in sorted(overlays, key=lambda o: o[3]):
-                if k in TERRAIN_FILE and mask < 93:
-                    if k not in tilesets:
-                        tilesets[k] = load_tiles(assets, k)
-                    masked_blit(canvas, W, H, tilesets[k][ti], masks['land 1'][mask], left, top)
+                name = terrain_file(k, f)
+                if name and mask < 93:
+                    masked_blit(canvas, W, H, tiles(name)[ti], masks['land 1'][mask], left, top)
             for kind, mask, _ in roads:
                 if kind in ROAD_FILE and mask < 93:
-                    if kind not in roadsets:
-                        roadsets[kind] = load_tiles(assets, kind, road=True)
-                    masked_blit(canvas, W, H, roadsets[kind][ti], masks['road 1'][mask], left, top)
+                    masked_blit(canvas, W, H, tiles(ROAD_FILE[kind])[ti], masks['road 1'][mask], left, top)
     objs = [o for o in m['objects'] if o['x'] is not None and o['level'] == level
             and -2 <= o['x'] < N + 2 and -2 <= o['y'] < N + 2]
     objs.sort(key=lambda o: (o['x'] + o['y'], o['y'] - o['x']))

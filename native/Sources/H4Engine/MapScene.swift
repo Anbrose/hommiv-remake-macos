@@ -27,11 +27,21 @@ public final class MapScene {
     public private(set) var placed: [Placed] = []
     public private(set) var spriteCache: [String: Sprite] = [:]
 
-    static let terrainFile: [UInt8: String] = [0: "water.1.1", 1: "grass.1.1", 2: "rough.1.1", 3: "swamp.1.1", 4: "lava.1.1", 5: "snow.1.1",
-                                              6: "sand.1.1", 7: "dirt.1.1", 8: "subterranean.1.1", 9: "river.water.1", 10: "river.lava.1",
-                                              11: "river.ice.1", 12: "magic.all", 13: "magic.life", 14: "magic.order", 15: "magic.death.1",
-                                              16: "magic.chaos.1", 17: "magic.nature.1", 18: "magic.all"]
-    static let roadFile: [UInt8: String] = [0: "road.dirt.1", 1: "road.gravel.1", 2: "road.cobblestone.1"]
+    /// Terrain types with two variants (dry/lush grass, shallow/deep water, ...) have patches
+    /// <name>.<variant+1>.<alt>, alt 1 or 2 being two different patches of the same look.
+    static let terrainBase: [UInt8: String] = [0: "water", 1: "grass", 2: "rough", 3: "swamp", 4: "lava", 5: "snow",
+                                              6: "sand", 7: "dirt", 8: "subterranean"]
+    static let terrainSingle: [UInt8: String] = [9: "river.water", 10: "river.lava", 11: "river.ice", 12: "magic.all", 13: "magic.life",
+                                                14: "magic.order", 15: "magic.death", 16: "magic.chaos", 17: "magic.nature", 18: "magic.all"]
+    static let roadFile: [UInt8: String] = [0: "road.dirt", 1: "road.gravel", 2: "road.cobblestone"]
+
+    /// Patch file name for a terrain type/variant at cell (x, y); nil for unknown types.
+    static func terrainFile(type: UInt8, variant: UInt8, x: Int, y: Int) -> String? {
+        let alt = ((x / 10) + (y / 10)) % 2 + 1
+        if let b = terrainBase[type] { return "\(b).\(min(Int(variant), 1) + 1).\(alt)" }
+        if let s = terrainSingle[type] { return s.hasPrefix("river") || s == "magic.death" || s == "magic.chaos" || s == "magic.nature" ? "\(s).\(alt)" : s }
+        return nil
+    }
 
     public init(map: MapFile, level: Int, archive: H4Archive, masks: TransitionMasks) throws {
         self.map = map
@@ -67,15 +77,15 @@ public final class MapScene {
                 let ti = (MapScene.mod(row, 6) + 2) * 10 + (MapScene.mod(col, 6) + 2)
                 let (sx, sy) = screen(x: x, y: y)
                 let left = sx - 32, top = sy - 16
-                let base = try patch(MapScene.terrainFile[cell.type] ?? "grass.1.1")
+                let base = try patch(MapScene.terrainFile(type: cell.type, variant: cell.variant, x: x, y: y) ?? "grass.2.1")
                 MapScene.blit(&canvas, base.tiles[ti], left, top, mask: nil)
                 for ov in cell.overlays.sorted(by: { $0.order < $1.order }) where ov.mask < land.count {
-                    guard let f = MapScene.terrainFile[ov.type] else { continue }
+                    guard let f = MapScene.terrainFile(type: ov.type, variant: ov.variant, x: x, y: y) else { continue }
                     MapScene.blit(&canvas, try patch(f).tiles[ti], left, top, mask: land[ov.mask])
                 }
                 for rd in cell.roads where rd.mask < road.count {
                     guard let f = MapScene.roadFile[rd.kind] else { continue }
-                    MapScene.blit(&canvas, try patch(f).tiles[ti], left, top, mask: road[rd.mask])
+                    MapScene.blit(&canvas, try patch("\(f).\(((x / 10) + (y / 10)) % 2 + 1)").tiles[ti], left, top, mask: road[rd.mask])
                 }
             }
         }

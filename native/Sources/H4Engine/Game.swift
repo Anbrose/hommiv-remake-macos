@@ -8,6 +8,9 @@ public struct Passability {
     /// Pixels a creature standing on the cell is raised: bridge decks are drawn about 56 px above
     /// the river cells they span, their ramps half that.
     public private(set) var elevation: [Float]
+    /// 0 = not a bridge, 1 = bridge running along x, 2 = along y: on a bridge you can only walk
+    /// along it, and you get on and off at its ends.
+    public private(set) var bridgeAxis: [UInt8]
 
     /// Decorative categories that do not block movement even though their footprint says so.
     static let walkable: Set<String> = ["flowers", "moss", "Mushrooms", "Cracks-Holes", "Dunes", "Lava flows-mud", "Stumps", "Logs", "Skeletons"]
@@ -17,6 +20,7 @@ public struct Passability {
         blocked = [Bool](repeating: true, count: size * size)
         cost = [Float](repeating: 1, count: size * size)
         elevation = [Float](repeating: 0, count: size * size)
+        bridgeAxis = [UInt8](repeating: 0, count: size * size)
         let cells = map.cells[level]
         for x in 0..<size {
             for y in 0..<size {
@@ -51,10 +55,31 @@ public struct Passability {
                     let x = p.cellX + i, y = p.cellY + j
                     if x >= 0, x < size, y >= 0, y < size {
                         blocked[x * size + y] = false; cost[x * size + y] = 1; elevation[x * size + y] = raise
+                        bridgeAxis[x * size + y] = 3   // axis decided below
                     }
                 }
             }
         }
+        for x in 0..<size {
+            for y in 0..<size where bridgeAxis[x * size + y] == 3 {
+                let alongX = (x > 0 && bridgeAxis[(x - 1) * size + y] != 0) || (x + 1 < size && bridgeAxis[(x + 1) * size + y] != 0)
+                bridgeAxis[x * size + y] = alongX ? 1 : 2
+            }
+        }
+    }
+
+    /// May a hero step from one cell to a neighbouring one? Bridges only allow moves along their axis.
+    public func canStep(from x0: Int, _ y0: Int, to x1: Int, _ y1: Int) -> Bool {
+        guard isFree(x1, y1) else { return false }
+        let dx = x1 - x0, dy = y1 - y0
+        for i in [x0 * size + y0, x1 * size + y1] {
+            switch bridgeAxis[i] {
+            case 1: if dy != 0 { return false }
+            case 2: if dx != 0 { return false }
+            default: break
+            }
+        }
+        return true
     }
 
     public func elevation(_ x: Int, _ y: Int) -> Float {
@@ -100,7 +125,7 @@ public struct Passability {
             for dx in -1...1 {
                 for dy in -1...1 where dx != 0 || dy != 0 {
                     let nx = x + dx, ny = y + dy
-                    guard isFree(nx, ny) else { continue }
+                    guard canStep(from: x, y, to: nx, ny) else { continue }
                     let j = nx * size + ny
                     if closed[j] { continue }
                     let ng = g[i] + stepCost(from: x, y, to: nx, ny)
@@ -203,9 +228,11 @@ public final class GameState {
     /// Click on a pickup: take it if the hero stands next to it, otherwise plan (then walk) to the
     /// cheapest neighbouring cell; it is taken on arrival.
     public func click(hero: Hero, pickup p: MapScene.Placed) {
-        guard !hero.isWalking else { return }
-        if GameState.adjacent((hero.x, hero.y), (p.cellX, p.cellY)) { take(hero: hero, p); return }
-        if let t = hero.target, t.x == p.cellX, t.y == p.cellY, !hero.plan.isEmpty {
+        let walking = hero.isWalking
+        if walking { interrupt(hero) }
+        let from = standingCell(hero)
+        if !walking, GameState.adjacent(from, (p.cellX, p.cellY)) { take(hero: hero, p); return }
+        if !walking, let t = hero.target, t.x == p.cellX, t.y == p.cellY, !hero.plan.isEmpty {
             hero.path = hero.plan; hero.plan = []; hero.progress = 0
             return
         }
@@ -215,10 +242,10 @@ public final class GameState {
             for dy in -1...1 where dx != 0 || dy != 0 {
                 let c = (p.cellX + dx, p.cellY + dy)
                 guard passability.isFree(c.0, c.1) else { continue }
-                if c == (hero.x, hero.y) { best = []; bestCost = 0; continue }
-                guard let path = passability.path(from: (hero.x, hero.y), to: c) else { continue }
+                if c == from { best = []; bestCost = 0; continue }
+                guard let path = passability.path(from: from, to: c) else { continue }
                 var cost: Float = 0
-                var px = hero.x, py = hero.y
+                var px = from.0, py = from.1
                 for s in path { cost += passability.stepCost(from: px, py, to: s.x, s.y); px = s.x; py = s.y }
                 if cost < bestCost { bestCost = cost; best = path }
             }
@@ -248,9 +275,23 @@ public final class GameState {
         return nil
     }
 
+    /// Where the hero will stand once its current step ends.
+    func standingCell(_ hero: Hero) -> (Int, Int) { hero.path.first.map { ($0.x, $0.y) } ?? (hero.x, hero.y) }
+
+    /// A click while walking: finish the current step, then stop and show the new route.
+    func interrupt(_ hero: Hero) {
+        if hero.isWalking { hero.path = [hero.path[0]] }
+        hero.target = nil
+    }
+
     /// Click handling: first click plans a path to the cell, a second click on the same cell walks it.
     public func click(hero: Hero, x: Int, y: Int) {
-        guard !hero.isWalking else { return }
+        if hero.isWalking {
+            interrupt(hero)
+            let from = standingCell(hero)
+            hero.plan = passability.path(from: from, to: (x, y)) ?? []
+            return
+        }
         if let last = hero.plan.last, last.x == x, last.y == y {
             hero.path = hero.plan
             hero.plan = []

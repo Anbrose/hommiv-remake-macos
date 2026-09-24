@@ -183,19 +183,40 @@ final class AdventureUI {
         }
     }
 
-    /// Minimap colours per terrain type.
-    static let terrainColour: [UInt8: (UInt8, UInt8, UInt8)] = [
-        0: (48, 96, 168), 1: (72, 128, 48), 2: (120, 118, 88), 3: (60, 92, 60), 4: (96, 48, 40), 5: (220, 224, 232),
-        6: (200, 176, 104), 7: (128, 96, 56), 8: (72, 64, 64), 9: (64, 120, 190), 10: (200, 80, 40), 11: (160, 200, 230),
-        12: (150, 100, 170), 13: (150, 100, 170), 14: (150, 100, 170), 15: (150, 100, 170), 16: (150, 100, 170), 17: (150, 100, 170), 18: (150, 100, 170),
-    ]
+    /// Minimap colours per terrain type and variant, sampled from the original's minimap
+    /// (dry grass dark, lush grass brighter, rocky rough grey, sun-baked rough pale, water
+    /// and rivers the same blue).
+    static func terrainColour(_ type: UInt8, _ variant: UInt8) -> (UInt8, UInt8, UInt8) {
+        let v = variant > 0
+        switch type {
+        case 0, 9: return v ? (40, 88, 128) : (48, 120, 168)
+        case 1: return v ? (0, 96, 0) : (8, 56, 0)
+        case 2: return v ? (144, 144, 112) : (96, 96, 80)
+        case 3: return v ? (48, 88, 48) : (40, 72, 40)
+        case 4: return v ? (120, 48, 32) : (96, 32, 0)
+        case 5: return v ? (200, 216, 232) : (224, 224, 232)
+        case 6: return v ? (208, 184, 112) : (216, 200, 136)
+        case 7: return v ? (88, 72, 40) : (80, 64, 32)
+        case 8: return v ? (80, 72, 72) : (64, 56, 56)
+        case 10: return (200, 80, 40)
+        case 11: return (160, 200, 230)
+        case 17: return (0, 144, 96)     // magic garden: the bright green shore rims of the original
+        case 18: return (96, 64, 24)
+        default: return (150, 100, 170)
+        }
+    }
+    /// The players' colours (red, blue, green, orange, purple, teal), as the game names them.
+    static let playerColours: [(UInt8, UInt8, UInt8)] = [(255, 0, 0), (0, 0, 255), (0, 200, 0), (255, 140, 0), (160, 0, 200), (0, 180, 180)]
+    static let playerColourNames = ["Red", "Blue", "Green", "Orange", "Purple", "Teal"]
 
     /// The whole map level as a small square image in screen layout (columns across, rows down),
-    /// the way the game's minimap squashes the 2:1 map into its frame.
-    static func minimap(map: MapFile, level: Int, size: Int) -> Bitmap {
+    /// the way the game's minimap squashes the 2:1 map into its frame: terrain, cells under
+    /// objects darkened, towns as big diamonds and heroes as dots in their owner's colour,
+    /// other visitable places as small grey diamonds.
+    static func minimap(game g: GameState, size: Int) -> Bitmap {
         var bm = Bitmap(width: size, height: size)
-        let n = map.size
-        let cells = map.cells[level]
+        let map = g.map, n = map.size
+        let cells = map.cells[g.level]
         for py in 0..<size {
             for px in 0..<size {
                 // screen column y-x in -n/2..n/2, screen row x+y in n/2..3n/2
@@ -203,11 +224,47 @@ final class AdventureUI {
                 let row = Float(py) / Float(size) * Float(n) + Float(n) / 2
                 let x = Int(((row - col) / 2).rounded()), y = Int(((row + col) / 2).rounded())
                 guard x >= 0, x < n, y >= 0, y < n, let c = cells[x * n + y] else { continue }
-                let rgb = terrainColour[c.type] ?? (255, 0, 255)
+                var rgb = terrainColour(c.type, c.variant)
+                if !g.passability.isFree(x, y), c.type != 0, c.type != 9 { rgb = (rgb.0 / 2 + rgb.0 / 4, rgb.1 / 2 + rgb.1 / 4, rgb.2 / 2 + rgb.2 / 4) }
                 let o = (py * size + px) * 4
                 bm.pixels[o] = rgb.0; bm.pixels[o + 1] = rgb.1; bm.pixels[o + 2] = rgb.2; bm.pixels[o + 3] = 255
             }
         }
+        func point(_ x: Int, _ y: Int) -> (Int, Int) {
+            (Int((Float(y - x) + Float(n) / 2) / Float(n) * Float(size)), Int((Float(x + y) - Float(n) / 2) / Float(n) * Float(size)))
+        }
+        func diamond(_ cx: Int, _ cy: Int, _ r: Int, _ rgb: (UInt8, UInt8, UInt8)) {
+            for dy in -r...r { for dx in -r...r where abs(dx) + abs(dy) <= r {
+                let px = cx + dx, py = cy + dy
+                guard px >= 0, px < size, py >= 0, py < size else { continue }
+                let o = (py * size + px) * 4
+                bm.pixels[o] = rgb.0; bm.pixels[o + 1] = rgb.1; bm.pixels[o + 2] = rgb.2; bm.pixels[o + 3] = 255
+            } }
+        }
+        for m in g.mines { let (px, py) = point(m.x, m.y); diamond(px, py, 2, m.owned ? playerColours[0] : (160, 160, 160)) }
+        for d in g.dwellings { let (px, py) = point(d.x, d.y); diamond(px, py, 2, (160, 160, 160)) }
+        for t in g.towns { let (px, py) = point(t.x + 3, t.y + 3); diamond(px, py, 6, t.owned ? playerColours[0] : (200, 200, 200)) }
+        for h in g.heroes { let (px, py) = point(h.x, h.y); diamond(px, py, 1, playerColours[0]) }
         return bm
+    }
+
+    /// The town list card: layers.town.<alignment>.tiny has a terrain background per terrain
+    /// name, the walls (Village/Fort/Citadel/Castle) and three bar hotspots (creatures, magic, misc).
+    var tinyCards: [String: LayerFile] = [:]
+    func tinyCard(_ alignment: String) -> LayerFile? {
+        if tinyCards[alignment] == nil, let d = try? archive.payload("layers.town.\(alignment).tiny.h4d") { tinyCards[alignment] = try? LayerFile(data: d) }
+        return tinyCards[alignment]
+    }
+
+    /// The waving owner flags (animation.Flags.<colour>: 10 frames of 32x14).
+    var flags: [String: Sprite] = [:]
+    func flag(_ colour: String) -> Sprite? {
+        if flags[colour] == nil, let d = try? archive.payload("animation.Flags.\(colour).h4d") { flags[colour] = try? Sprite(data: d) }
+        return flags[colour]
+    }
+
+    /// The name of a terrain cell as the game's status line gives it ("Grass, Dry").
+    func terrainName(_ c: Cell, tables: RuleTables?) -> String {
+        tables?.terrainText(type: c.type, variant: c.variant)?.name ?? "Terrain"
     }
 }

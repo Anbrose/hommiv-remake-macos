@@ -173,6 +173,12 @@ if let out = snapshot {
     let w = ui == nil ? 1280 : AdventureUI.width, h = ui == nil ? 800 : AdventureUI.height
     renderer.viewSize = SIMD2(Float(w), Float(h))
     aim(renderer, at: center ?? game.heroes.first.map { ($0.x, $0.y) } ?? (map.size / 2, map.size / 2))
+    if let target = inspectAt {   // the status line, then a right click on that cell's centre
+        let (sx, sy) = scene.screen(x: target.0, y: target.1)
+        let m = SIMD2(Float(sx), Float(sy))
+        let canvas = (m - renderer.pan) * renderer.zoom / renderer.uiScale
+        if let text = renderer.statusText(mapPoint: m) { renderer.hover = (text, Int(canvas.x), Int(canvas.y)); print("status: \(text)") }
+    }
     if let target = inspectAt {   // a right click on that cell's centre
         let (sx, sy) = scene.screen(x: target.0, y: target.1)
         let m = SIMD2(Float(sx), Float(sy))
@@ -254,6 +260,7 @@ final class MapView: MTKView {
         }
     }
     func tickCursor() {
+        tickHover()
         guard let s = cursors?.set(cursorName) else { return }
         cursorFrame = (cursorFrame + 1) % s.frames.count
         s.frames[cursorFrame].set()
@@ -271,9 +278,19 @@ final class MapView: MTKView {
             name = renderer.cursorKind(mapPoint: renderer.pan + mouse / renderer.zoom)
         }
         if name != cursorName { cursorName = name; cursorFrame = 0; cursors?.set(name)?.frames.first?.set() }
+        // the status line appears once the pointer rests on the map for a moment
+        renderer.hover = nil
+        hoverPending = name == "normal" && (renderer.ui == nil || cx >= Float(AdventureUI.mapViewportWidth)) ? nil : (mouse, Date())
     }
-    override func mouseExited(with e: NSEvent) { NSCursor.arrow.set(); cursorName = "" }
-    override func mouseDown(with e: NSEvent) { dragged = 0 }
+    var hoverPending: (mouse: SIMD2<Float>, since: Date)?
+    func tickHover() {
+        guard let p = hoverPending, Date().timeIntervalSince(p.since) > 0.4, renderer.hover == nil, renderer.townOpen == nil else { return }
+        if let text = renderer.statusText(mapPoint: renderer.pan + p.mouse / renderer.zoom) {
+            renderer.hover = (text, Int(p.mouse.x / renderer.uiScale), Int(p.mouse.y / renderer.uiScale))
+        }
+    }
+    override func mouseExited(with e: NSEvent) { NSCursor.arrow.set(); cursorName = ""; renderer.hover = nil; hoverPending = nil }
+    override func mouseDown(with e: NSEvent) { dragged = 0; renderer.hover = nil; hoverPending = nil }
     override func mouseDragged(with e: NSEvent) {
         dragged += abs(Float(e.deltaX)) + abs(Float(e.deltaY))
         renderer.pan -= SIMD2(Float(e.deltaX), Float(e.deltaY)) / renderer.zoom

@@ -28,8 +28,12 @@ Format, worked out from the GOG build (little-endian; incomplete):
                           8 subterranean 9 water river 10 lava river 11 ice river 12 magic
                           plains 13 field of life 14 enchanted stone 15 cursed ground
                           16 scorched earth 17 magic garden 18 field of glory
-                    the 5-byte entries look like terrain-transition overlays
-                    (type, variant, ...); the 4-byte ones are still unknown
+                    5-byte entries = terrain overlays: u8 type, u8 variant, u16 mask,
+                        u8 order -- draw that terrain's texture through mask number
+                        `mask` of transition.Transitions (see h4render.py)
+                    4-byte entries = roads: u8 kind (0 dirt, 1 gravel, 2 cobblestone),
+                        u8 mask, u8 0, u8 x
+              A cell is written to the JSON as [type, variant, overlays, roads].
 """
 import gzip
 import json
@@ -76,11 +80,14 @@ def parse_cells(d, pos, count):
         n = d[pos + 9]
         if t > 18 or v > 3 or n > 8:
             return None, pos
+        overlays = [(d[p], d[p + 1], struct.unpack_from('<H', d, p + 2)[0], d[p + 4])
+                    for p in range(pos + 10, pos + 10 + 5 * n, 5)]
         q = pos + 10 + 5 * n
         m = d[q]
         if m > 8:
             return None, pos
-        cells.append((t, v))
+        roads = [(d[p], d[p + 1], d[p + 3]) for p in range(q + 1, q + 1 + 4 * m, 4)]
+        cells.append((t, v, overlays, roads))
         pos = q + 1 + 4 * m
     return cells, pos
 
@@ -135,8 +142,8 @@ def parse(raw, names):
     grids = []
     for lv in range(hdr['levels']):
         g = [[None] * hdr['size'] for _ in range(hdr['size'])]
-        for (r, c), (t, v) in zip(pts, levels_cells[lv * per_level:(lv + 1) * per_level]):
-            g[r][c] = [t, v]
+        for (r, c), (t, v, overlays, roads) in zip(pts, levels_cells[lv * per_level:(lv + 1) * per_level]):
+            g[r][c] = [t, v, overlays, roads]
         grids.append(g)
     return dict(**hdr, objects=objs, terrain=grids)
 

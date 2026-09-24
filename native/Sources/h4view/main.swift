@@ -309,11 +309,17 @@ final class MapView: MTKView {
         if name != cursorName { cursorName = name; cursorFrame = 0; cursors?.set(name)?.frames.first?.set() }
         // the status line appears once the pointer rests on the map for a moment
         renderer.hover = nil
-        hoverPending = name == "normal" && (renderer.ui == nil || cx >= Float(AdventureUI.mapViewportWidth)) ? nil : (mouse, Date())
+        hoverPending = (name == "normal" && (renderer.ui == nil || cx >= Float(AdventureUI.mapViewportWidth))) || (renderer.inCombat && !name.hasPrefix("combat.melee") && name != "combat.shoot") ? nil : (mouse, Date())
     }
     var hoverPending: (mouse: SIMD2<Float>, since: Date)?
     func tickHover() {
         guard let p = hoverPending, Date().timeIntervalSince(p.since) > 0.4, renderer.hover == nil, renderer.townOpen == nil else { return }
+        if renderer.inCombat {
+            if let text = renderer.combatStatusText(x: p.mouse.x / renderer.uiScale, y: p.mouse.y / renderer.uiScale) {
+                renderer.hover = (text, Int(p.mouse.x / renderer.uiScale), Int(p.mouse.y / renderer.uiScale))
+            }
+            return
+        }
         if let text = renderer.statusText(mapPoint: renderer.pan + p.mouse / renderer.zoom) {
             renderer.hover = (text, Int(p.mouse.x / renderer.uiScale), Int(p.mouse.y / renderer.uiScale))
         }

@@ -41,7 +41,7 @@ public final class Battle {
     public private(set) var events: [Event] = []
     public private(set) var experience = 0           // earned by the attacker
     public private(set) var finished: Bool? = nil     // attackerWon once over
-    var rng: UInt64
+    var rng: GameRandom
 
     public var current: Unit? { order.first.flatMap { id in units.first { $0.id == id } } }
     public func unit(_ id: Int) -> Unit { units.first { $0.id == id }! }
@@ -49,7 +49,7 @@ public final class Battle {
     public init(field: Battlefield, attackers: [(Combatant, keyword: String, actor: String, move: Int, shots: Int)],
                 defenders: [(Combatant, keyword: String, actor: String, move: Int, shots: Int)], seed: Int) {
         self.field = field
-        rng = UInt64(truncatingIfNeeded: seed &* 6364136223846793005 &+ 1442695040888963407)
+        rng = GameRandom(seed: seed)
         var id = 0
         // the sides line up on open cells near the left and right edges, spread over the middle rows
         for (side, list) in [(0, attackers), (1, defenders)] {
@@ -73,11 +73,9 @@ public final class Battle {
         startRound()
     }
 
-    func rand() -> Float { rng = rng &* 6364136223846793005 &+ 1442695040888963407; return Float((rng >> 33) % 1000) / 1000 }
-
     func startRound() {
         round += 1
-        for u in units { u.acted = false; u.waited = false; u.defended = false; u.retaliated = false }
+        for u in units { u.acted = false; u.waited = false; u.defended = false; u.stats.defending = false; u.retaliated = false }
         order = units.filter { $0.alive }.sorted { ($0.stats.speed, -$0.side, -$0.id) > ($1.stats.speed, -$1.side, -$1.id) }.map { $0.id }
         events.append(.newRound(round))
     }
@@ -134,14 +132,11 @@ public final class Battle {
         }
     }
 
-    func damage(_ a: Unit, _ b: Unit) -> Int {
-        var d = QuickCombat.damage(a.stats, b.stats, roll: rand())
-        if b.defended { d = max(1, d / 2) }
-        return d
-    }
+    /// The damage range a melee or ranged attack would do (for the attack cursor's text).
+    public func damageRange(_ a: Unit, _ b: Unit, ranged: Bool) -> (Int, Int) { QuickCombat.damageRange(a.stats, b.stats, ranged: ranged) }
 
     func hit(_ a: Unit, _ b: Unit, ranged: Bool) {
-        let dmg = damage(a, b)
+        let dmg = QuickCombat.damage(a.stats, b.stats, rng: &rng, ranged: ranged)
         let killed = b.stats.take(dmg)
         if a.side == 0 { experience += killed * b.stats.experience }
         events.append(ranged ? .shoot(unit: a.id, target: b.id, damage: dmg, killed: killed) : .melee(unit: a.id, target: b.id, damage: dmg, killed: killed))
@@ -213,6 +208,7 @@ public final class Battle {
     public func defend() {
         guard finished == nil, let u = current else { return }
         u.defended = true
+        u.stats.defending = true
         events.append(.defend(unit: u.id))
         endAction(u)
     }

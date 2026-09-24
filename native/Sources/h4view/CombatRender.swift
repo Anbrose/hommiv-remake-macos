@@ -141,6 +141,7 @@ extension Renderer {
                 out.append(Quad(texture: uiTexture("button|combat.\(name)|\(disabled)", { img.bitmap }), x: slot.x + (slot.width - img.width) / 2, y: slot.y + (slot.height - img.height) / 2, w: img.width, h: img.height))
             }
         }
+        out += hoverQuads()
         if cs.showResults { out += combatResultQuads() }
         return out
     }
@@ -228,6 +229,20 @@ extension Renderer {
         g.finishBattle(hero: h, monsterAt: cs.monsterIndex, p, won: won, army: army, monstersLeft: left, experience: b.experience, rounds: b.round)
         _ = t
         cs.battle = nil
+    }
+
+    /// The status line over an enemy: "Attack <creature> for N - M damage" (the game's
+    /// attack.combat and text_damage_range texts), the range from the damage rules.
+    func combatStatusText(x: Float, y: Float) -> String? {
+        guard let cs = combat, let b = cs.battle, !cs.busy, cs.result == nil, let cur = b.current, cur.side == 0, x < 885, let t = game?.tables else { return nil }
+        let c = CombatScreen.cell(at: x, y)
+        guard let target = b.units.first(where: { $0.alive && $0.side == 1 && $0.x == c.0 && $0.y == c.1 }) else { return nil }
+        let ranged = cur.shots > 0 && !combatMeleeMode && !b.units.contains { $0.alive && $0.side == 1 && Battle.adjacent(cur, $0) }
+        let (lo, hi) = b.damageRange(cur, target, ranged: ranged)
+        let range = lo == hi ? (t.strings["text_damage_range_1"] ?? "%damage damage").replacingOccurrences(of: "%damage", with: "\(lo)")
+                             : (t.strings["text_damage_range_2"] ?? "%damage_low - %damage_high damage").replacingOccurrences(of: "%damage_low", with: "\(lo)").replacingOccurrences(of: "%damage_high", with: "\(hi)")
+        let name = target.stats.count == 1 ? target.stats.name : "\(target.stats.count) " + (t.creature(target.keyword)?.plural ?? target.stats.name)
+        return (t.strings["attack.combat"] ?? "Attack %creature_name\nfor %damage").replacingOccurrences(of: "%creature_name", with: name).replacingOccurrences(of: "%damage", with: range).replacingOccurrences(of: "\n", with: " ")
     }
 
     /// Which combat cursor fits the cell under the pointer.

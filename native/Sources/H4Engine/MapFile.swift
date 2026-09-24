@@ -133,17 +133,18 @@ public struct MapFile {
                 p += 1
             }
         }
+        // Each record is `i32 x, i32 y, u8 level, u32 0` followed by the object's name and body:
+        // the position comes BEFORE the name (reading it after the body shifts every object onto
+        // the next record's cell -- it looked plausible because the editor saves neighbours together).
         var objs: [MapObject] = []
-        for (i, p) in starts.enumerated() {
+        for p in starts where p >= 13 {
             var rd = ByteReader(d, at: p)
             let name = rd.string16()
             rd.pos += 2
             var cats: [String] = []
             for _ in 0..<3 { _ = rd.u16(); cats.append(rd.string16()) }
-            let recEnd = i + 1 < starts.count ? starts[i + 1] : (cats[0] == "decorative" ? rd.pos + 15 : -1)
-            guard recEnd - 13 >= rd.pos else { continue }
-            let x = Int(Int32(bitPattern: r.peekU32(at: recEnd - 13))), y = Int(Int32(bitPattern: r.peekU32(at: recEnd - 9)))
-            objs.append(MapObject(name: name, type: cats[0], subtype: cats[1], terrain: cats[2], x: x, y: y, level: Int(r.byte(at: recEnd - 5))))
+            let x = Int(Int32(bitPattern: r.peekU32(at: p - 13))), y = Int(Int32(bitPattern: r.peekU32(at: p - 9)))
+            objs.append(MapObject(name: name, type: cats[0], subtype: cats[1], terrain: cats[2], x: x, y: y, level: Int(r.byte(at: p - 5))))
         }
         return objs
     }

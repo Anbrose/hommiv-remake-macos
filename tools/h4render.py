@@ -9,7 +9,8 @@ Projection: a cell (x, y) of the map is drawn as a 64x32 diamond centred at
 screen (y - x) * 32, (x + y) * 16 (plus an offset): x runs down-left, y runs
 down-right. That orientation was derived from the transition masks -- the
 side of a mask that is filled always faces the neighbouring cell of the
-overlay's terrain type.
+overlay's terrain type -- and checked against the game on "Beyond the lake"
+(the two towns mirror each other across the river).
 
 Each cell is painted in layers, all using the interior tiles of the terrain
 patch chosen by screen position so the texture continues across cells:

@@ -12,9 +12,11 @@ guard args.count >= 3 else {
 var level = 0
 var snapshot: String?
 var center: (Int, Int)?   // --center x,y: map cell to put in the middle of the view
+var zoom: Float = 1       // --zoom z: initial scale
 var i = 3
 while i < args.count {
     if args[i] == "--level", i + 1 < args.count { level = Int(args[i + 1]) ?? 0; i += 2 }
+    else if args[i] == "--zoom", i + 1 < args.count { zoom = Float(args[i + 1]) ?? 1; i += 2 }
     else if args[i] == "--snapshot", i + 1 < args.count { snapshot = args[i + 1]; i += 2 }
     else if args[i] == "--center", i + 1 < args.count {
         let p = args[i + 1].split(separator: ",").compactMap { Int($0) }
@@ -66,10 +68,10 @@ if let out = snapshot {
     lap("textures uploaded")
     let w = 1280, h = 800
     renderer.viewSize = SIMD2(Float(w), Float(h))
-    if let c = center {
-        let (sx, sy) = scene.screen(x: c.0, y: c.1)
-        renderer.pan = SIMD2(Float(sx - w / 2), Float(sy - h / 2))
-    }
+    renderer.zoom = zoom
+    let c = center ?? (map.size / 2, map.size / 2)
+    let (sx, sy) = scene.screen(x: c.0, y: c.1)
+    renderer.pan = SIMD2(Float(sx) - Float(w) / 2 / zoom, Float(sy) - Float(h) / 2 / zoom)
     let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: w, height: h, mipmapped: false)
     td.usage = [.renderTarget, .shaderRead]
     let target = device.makeTexture(descriptor: td)!
@@ -133,10 +135,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         view.renderer = renderer
         view.delegate = renderer
         renderer.viewSize = SIMD2(Float(view.drawableSize.width), Float(view.drawableSize.height))
-        if let c = center {
-            let (sx, sy) = scene.screen(x: c.0, y: c.1)
-            renderer.pan = SIMD2(Float(sx) - renderer.viewSize.x / 2, Float(sy) - renderer.viewSize.y / 2)
-        }
+        renderer.zoom = zoom
+        let c = center ?? (map.size / 2, map.size / 2)
+        let (sx, sy) = scene.screen(x: c.0, y: c.1)
+        renderer.pan = SIMD2(Float(sx) - renderer.viewSize.x / 2 / zoom, Float(sy) - renderer.viewSize.y / 2 / zoom)
         window = NSWindow(contentRect: view.frame, styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "Heroes IV — \(map.name)"
         window.contentView = view

@@ -53,6 +53,8 @@ public final class MapScene {
         try placeObjects(archive: archive)
     }
 
+    /// Cell (x, y) -> screen centre. x runs down-left, y runs down-right (checked against the
+    /// game on "Beyond the lake": the two towns mirror each other across the river).
     public func screen(x: Int, y: Int) -> (Int, Int) {
         ((y - x) * 32 + map.size * 32 + 32, (x + y) * 16 + 32)
     }
@@ -114,11 +116,12 @@ public final class MapScene {
         let objs = map.objects.filter { $0.level == level && $0.x >= -2 && $0.x < n + 2 && $0.y >= -2 && $0.y < n + 2 }
         let resolver = RandomResolver(archive: archive)
         let debug = ProcessInfo.processInfo.environment["H4DEBUG"] != nil
-        var towns = 0
+        // random towns get factions left to right on screen, so the leftmost is Haven
+        let townOrder = objs.filter { $0.type == "random_town" }.sorted { ($0.y - $0.x, $0.x + $0.y) < ($1.y - $1.x, $1.x + $1.y) }
         for o in objs {
             var key = "adv_object.\(o.name).h4d"
-            let candidates = resolver.resolve(o, townOrdinal: towns)
-            if o.type == "random_town" { towns += 1 }
+            let ordinal = townOrder.firstIndex { $0.x == o.x && $0.y == o.y && $0.level == o.level } ?? 0
+            let candidates = resolver.resolve(o, townOrdinal: ordinal)
             // the first candidate that decodes to a real (non-placeholder) sprite wins
             for c in candidates {
                 if spriteCache[c] == nil, let d = try? archive.payload(c), let s = try? Sprite(data: d) { spriteCache[c] = s }

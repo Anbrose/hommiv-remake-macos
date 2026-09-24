@@ -7,8 +7,20 @@ import Foundation
 /// looks the same. The real game rolls these once when the scenario starts.
 public struct RandomResolver {
     /// lower-cased archive entry name -> real entry name
-    let index: [String: String]
-    let archive: H4Archive
+    public let index: [String: String]
+    public let archive: H4Archive
+
+    /// Case-insensitive lookup of an archive entry.
+    public func entry(_ name: String) -> String? { index[name.lowercased()] }
+
+    /// An actor's sequence entry for a state and facing, e.g. ("hero.life_might_male", "walk", "s")
+    /// -> "actor_sequence.hero.life_Might_Male.walk.s.h4d".
+    public func sequence(actor: String, state: String, facing: String) -> String? {
+        guard let actorName = index["adv_actor.\(actor).h4d".lowercased()],
+              let a = try? AdvActor(data: archive.payload(actorName)),
+              let seq = a.sequenceEntry(state: state, facing: facing) else { return nil }
+        return index[seq.lowercased()]
+    }
 
     public init(archive: H4Archive) {
         self.archive = archive
@@ -19,10 +31,7 @@ public struct RandomResolver {
 
     /// The standing ("wait") sequence of an adventure-map creature, facing `facing`.
     public func creatureEntry(_ creature: String, facing: String) -> String? {
-        guard let actorName = index["adv_actor.\(creature).h4d".lowercased()],
-              let actor = try? AdvActor(data: archive.payload(actorName)),
-              let seq = actor.sequenceEntry(state: "wait", facing: facing) else { return nil }
-        return index[seq.lowercased()]
+        sequence(actor: creature, state: "wait", facing: facing)
     }
 
     static let factions = ["Haven", "Academy", "Asylum", "Necropolis", "Preserve", "Stronghold"]

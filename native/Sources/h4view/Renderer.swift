@@ -46,6 +46,16 @@ final class Renderer: NSObject, MTKViewDelegate {
     let start = Date()
     var lastFrame = Date()
     var frameTimes: [Double] = []
+    var game: GameState?
+    var resolver: RandomResolver?
+    var actorSprites: [String: Sprite] = [:]
+    lazy var dot: MTLTexture = {   // path marker
+        var bm = Bitmap(width: 8, height: 8)
+        for y in 0..<8 { for x in 0..<8 where (x - 4) * (x - 4) + (y - 4) * (y - 4) <= 9 {
+            let p = (y * 8 + x) * 4; bm.pixels[p] = 255; bm.pixels[p + 1] = 240; bm.pixels[p + 2] = 160; bm.pixels[p + 3] = 220 } }
+        return makeTexture(bm)
+    }()
+    var onTitle: ((String) -> Void)?
 
     init(device: MTLDevice, scene: MapScene, pixelFormat: MTLPixelFormat) throws {
         self.device = device
@@ -102,10 +112,57 @@ final class Renderer: NSObject, MTKViewDelegate {
         return (e.frame, e.shadow ?? p.shadow)
     }
 
+    /// Screen centre of a (fractional) cell.
+    func screen(_ x: Float, _ y: Float) -> (Float, Float) {
+        ((y - x) * 32 + Float(scene.map.size * 32 + 32), (x + y) * 16 + 32)
+    }
+
+    /// The quads of one hero at time t: its current sequence frame (and shadow) at its map position.
+    func heroQuads(_ h: Hero, at t: Double) -> [Quad] {
+        guard let r = resolver else { print("hero: no resolver"); return [] }
+        let state = h.isWalking ? "walk" : "wait"
+        guard let entry = r.sequence(actor: h.actor, state: state, facing: h.facing) else { print("hero: no sequence for \(h.actor) \(state) \(h.facing)"); return [] }
+        if actorSprites[entry] == nil {
+            do { actorSprites[entry] = try Sprite(data: r.archive.payload(entry)) } catch { print("hero: \(entry): \(error)") }
+        }
+        guard let s = actorSprites[entry] else { return [] }
+        let tl = s.timeline
+        var frame = s.frames.first, shadow = frame.flatMap { s.shadow(for: $0) }
+        if !tl.isEmpty {
+            let period = tl[0].frame.speed > 0 ? Double(tl[0].frame.speed) / 60.0 : 0.125
+            let e = tl[Int(t / period) % tl.count]
+            frame = e.frame; shadow = e.shadow
+        }
+        let (px, py) = h.position
+        let (sx, sy) = screen(px, py)
+        let ox = Int(sx) + Int(s.origin.x), oy = Int(sy) + Int(s.origin.y)
+        var out: [Quad] = []
+        if let sh = shadow { out.append(Quad(texture: texture(for: sh, of: entry), x: ox + sh.box.left, y: oy + sh.box.top, w: sh.bitmap.width, h: sh.bitmap.height)) }
+        if let f = frame { out.append(Quad(texture: texture(for: f, of: entry), x: ox + f.box.left, y: oy + f.box.top, w: f.bitmap.width, h: f.bitmap.height)) }
+        if ProcessInfo.processInfo.environment["H4DEBUG"] != nil {
+            print("hero: \(entry) at cell (\(px),\(py)) screen (\(sx),\(sy)) origin \(s.origin) frame \(frame?.name ?? "-") box \(frame.map { "\($0.box)" } ?? "-") -> \(out.map { "(\($0.x),\($0.y) \($0.w)x\($0.h))" })")
+        }
+        return out
+    }
+
     func quads(at t: Double) -> [Quad] {
         var out = terrain
         let minX = pan.x - 512, minY = pan.y - 512, maxX = pan.x + viewSize.x / zoom + 512, maxY = pan.y + viewSize.y / zoom + 512
+        // heroes are sorted in among the objects by the same depth rule (cell row, then column)
+        var pending: [(depth: Float, quads: [Quad])] = []
+        if let g = game {
+            for h in g.heroes {
+                for c in h.plan {
+                    let (sx, sy) = screen(Float(c.x), Float(c.y))
+                    out.append(Quad(texture: dot, x: Int(sx) - 4, y: Int(sy) - 4, w: 8, h: 8))
+                }
+                let (px, py) = h.position
+                pending.append(((px + py) * 1000 + (py - px) + 500, heroQuads(h, at: t)))
+            }
+            pending.sort { $0.depth < $1.depth }
+        }
         for p in scene.placed {
+            while let first = pending.first, first.depth <= Float(p.depth) { out += first.quads; pending.removeFirst() }
             if Float(p.anchorX) < minX || Float(p.anchorX) > maxX || Float(p.anchorY) < minY || Float(p.anchorY) > maxY { continue }
             let (f, sh) = frame(of: p, at: t)
             let ox = p.anchorX + Int(p.sprite.origin.x), oy = p.anchorY + Int(p.sprite.origin.y)
@@ -118,6 +175,7 @@ final class Renderer: NSObject, MTKViewDelegate {
                 out.append(Quad(texture: texture(for: f, of: p.name), x: ox + f.box.left, y: oy + f.box.top, w: f.bitmap.width, h: f.bitmap.height))
             }
         }
+        for p in pending { out += p.quads }
         return out
     }
 
@@ -128,8 +186,15 @@ final class Renderer: NSObject, MTKViewDelegate {
     func draw(in view: MTKView) {
         guard let drawable = view.currentDrawable, let rpd = view.currentRenderPassDescriptor else { return }
         let now = Date()
-        frameTimes.append(now.timeIntervalSince(lastFrame))
+        let dt = now.timeIntervalSince(lastFrame)
+        frameTimes.append(dt)
         lastFrame = now
+        if let g = game {
+            g.update(dt: Float(min(dt, 0.1)))
+            if let h = g.heroes.first {
+                onTitle?("\(g.dateText) — movement \(Int(h.movement.rounded()))/\(Int(h.maxMovement))  (click: plan / go, Return: end turn)")
+            }
+        }
         if frameTimes.count >= 300 {
             let avg = frameTimes.reduce(0, +) / Double(frameTimes.count)
             print(String(format: "%.1f fps (avg frame %.2f ms)", 1 / avg, avg * 1000))

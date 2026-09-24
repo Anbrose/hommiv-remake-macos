@@ -27,6 +27,12 @@ public struct Sprite {
     public let origin: (x: Int32, y: Int32)   // from the trailer, if present
     /// Footprint in map cells (adv_object headers: u16 w, u16 h at offset 5); (1, 1) when unknown.
     public let footprint: (w: Int, h: Int)
+    /// Cells of the footprint the object occupies (first of the three bit masks after the
+    /// footprint size, bit i = cell (i / h, i % h) relative to the anchor); empty when unknown.
+    public let blocked: [(x: Int, y: Int)]
+    /// Cells a hero may step onto to use the object (second mask; set for pickups such as
+    /// resource piles and chests, empty for trees, mines and towns).
+    public let visitable: [(x: Int, y: Int)]
     public var frames: [SpriteImage] { images.filter { !$0.name.hasPrefix("shadow") && $0.name != "base_frame" } }
     /// Unfinished assets in the game data are a 613x513 "DELETE ME NOW!!!" box (some artifacts,
     /// exhausted mines, stagecoaches, ...); nothing that size is a real adventure object.
@@ -81,9 +87,19 @@ public struct Sprite {
         var rd = ByteReader(d, at: start)
         var list: [SpriteImage] = []
         var fp = (w: 1, h: 1)
+        var occupied: [(x: Int, y: Int)] = [], visit: [(x: Int, y: Int)] = []
         if start >= 9, r.byte(at: 0) == 6 {
             let w = Int(r.peekU16(at: 5)), h = Int(r.peekU16(at: 7))
-            if w >= 1, w <= 16, h >= 1, h <= 16 { fp = (w, h) }
+            if w >= 1, w <= 16, h >= 1, h <= 16 {
+                fp = (w, h)
+                let nb = (w * h + 7) / 8
+                if 9 + 2 * nb <= start {
+                    for i in 0..<(w * h) {
+                        if (r.byte(at: 9 + i / 8) >> UInt8(i % 8)) & 1 == 1 { occupied.append((i / h, i % h)) }
+                        if (r.byte(at: 9 + nb + i / 8) >> UInt8(i % 8)) & 1 == 1 { visit.append((i / h, i % h)) }
+                    }
+                }
+            }
         }
         while paletteOK(rd.pos) {
             let npal = Int(rd.u16()); _ = rd.u16(); let speed = Int(rd.u16()); _ = rd.u8()
@@ -134,5 +150,7 @@ public struct Sprite {
         images = list
         origin = (ox, oy)
         footprint = fp
+        blocked = occupied
+        visitable = visit
     }
 }

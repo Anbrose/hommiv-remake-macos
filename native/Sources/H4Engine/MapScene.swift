@@ -16,6 +16,8 @@ public final class MapScene {
         public let shadow: SpriteImage?
         public let x: Int, y: Int      // screen position of the image's top-left
         public let anchorX: Int, anchorY: Int   // screen position of the anchor cell centre
+        public let cellX: Int, cellY: Int       // anchor cell (top corner of the footprint)
+        public let category: String             // first component of the adv_object name
         public let depth: Int
     }
 
@@ -148,7 +150,8 @@ public final class MapScene {
             }
             out.append(Placed(name: key, sprite: s, image: img, shadow: s.shadow(for: img),
                               x: sx + Int(s.origin.x) + img.box.left, y: sy + Int(s.origin.y) + img.box.top,
-                              anchorX: sx, anchorY: sy, depth: depth))
+                              anchorX: sx, anchorY: sy, cellX: o.x, cellY: o.y,
+                              category: String(o.name.split(separator: ".").first ?? ""), depth: depth))
         }
         placed = out.sorted { $0.depth < $1.depth }
     }

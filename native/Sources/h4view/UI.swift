@@ -58,6 +58,29 @@ final class AdventureUI {
 
     func hotspot(_ name: String) -> UILayer? { frame[name] }
 
+    /// Other sizes of the game's font, loaded on demand.
+    var fonts: [Int: H4Font] = [:]
+    func font(_ size: Int) -> H4Font {
+        if let f = fonts[size] { return f }
+        let f = (try? H4Font(data: archive.payload("font.Prose_Antique.\(size).h4d"))) ?? dateFont
+        fonts[size] = f
+        return f
+    }
+
+    /// Three-state buttons (layers.button.*: Released/Highlighted/Pressed/Disabled), loaded on demand.
+    var buttons: [String: LayerFile] = [:]
+    func button(_ name: String, state: String = "Released") -> UILayer? {
+        if buttons[name] == nil, let d = try? archive.payload("layers.button.\(name).h4d") { buttons[name] = try? LayerFile(data: d) }
+        return buttons[name]?[state]
+    }
+
+    /// Dialog layouts (layers.dialog.*), loaded on demand.
+    var dialogs: [String: LayerFile] = [:]
+    func dialog(_ name: String) -> LayerFile? {
+        if dialogs[name] == nil, let d = try? archive.payload("layers.dialog.\(name).h4d") { dialogs[name] = try? LayerFile(data: d) }
+        return dialogs[name]
+    }
+
     /// The right-click text box: layers.text_background.<small|large> is a nine-slice scroll
     /// (corners, tiled edges, a parchment tile for the middle) with a client_area hotspot.
     var popupFrames: [String: LayerFile] = [:]

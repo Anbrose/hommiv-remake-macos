@@ -269,6 +269,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             out.append(Quad(texture: uiTexture("button|end_turn", { b.bitmap }), x: slot.x, y: slot.y, w: b.width, h: b.height))
         }
         out += popupQuads()
+        out += creatureDialogQuads()
         return out
     }
     var showBlocked = false   // debug: mark every cell a hero cannot enter
@@ -360,6 +361,78 @@ final class Renderer: NSObject, MTKViewDelegate {
         c.0 >= p.cellX && c.0 < p.cellX + p.sprite.footprint.w && c.1 >= p.cellY && c.1 < p.cellY + p.sprite.footprint.h
     }
 
+    /// The creature dialog (layers.dialog.army_right_click) opened by a right click on a
+    /// wandering stack; drawn centred on the canvas.
+    var creatureDialog: (creature: CreatureDef, count: Int)?
+    static let dialogOrigin = ((AdventureUI.width - 464) / 2, (AdventureUI.height - 494) / 2)
+
+    /// Is a canvas point on the open creature dialog (and on its Close button)?
+    func onDialog(_ x: Float, _ y: Float) -> (inside: Bool, close: Bool) {
+        guard creatureDialog != nil, let ui = ui, let d = ui.dialog("army_right_click"), let bg = d["Background"] else { return (false, false) }
+        let (ox, oy) = Renderer.dialogOrigin
+        let inside = x >= Float(ox) && x < Float(ox + bg.width) && y >= Float(oy) && y < Float(oy + bg.height)
+        var close = false
+        if let c = d["Close_Button"] { close = x >= Float(ox + c.x) && x < Float(ox + c.x + c.width) && y >= Float(oy + c.y) && y < Float(oy + c.y + c.height) }
+        return (inside, close)
+    }
+
+    /// The quads of the creature dialog: the layout's images, the stack's portrait in the first
+    /// circle with its size below, name, level, alignment, abilities and the stat values under
+    /// their icons.
+    func creatureDialogQuads() -> [Quad] {
+        guard let cd = creatureDialog, let ui = ui, let d = ui.dialog("army_right_click") else { return [] }
+        let (ox, oy) = Renderer.dialogOrigin
+        var out: [Quad] = []
+        func image(_ name: String) {
+            guard let l = d[name] else { return }
+            out.append(Quad(texture: uiTexture("dlg|army|\(name)", { l.bitmap }), x: ox + l.x, y: oy + l.y, w: l.width, h: l.height))
+        }
+        func text(_ s: String, in name: String, font: H4Font, colour: (UInt8, UInt8, UInt8) = (40, 24, 8)) {
+            guard let l = d[name], !s.isEmpty else { return }
+            let w = font.measure(s)
+            out.append(Quad(texture: uiTexture("dlgtext|\(font.size)|\(s)", { font.render(s, colour: colour) }), x: ox + l.x + (l.width - w) / 2, y: oy + l.y + (l.height - font.size) / 2, w: w, h: font.size))
+        }
+        image("Background")
+        image("creature_circles")
+        image("Skills_Frame")
+        for n in ["Damage", "Melee_Attack", "Melee_Defense", "Hit_Points", "Speed", "Movement", "Shots", "Ranged_Attack", "Ranged_Defense", "Spell_Points", "Experience"] { image(n) }
+        image("Army_Released")
+        if let slot = d["Close_Button"], let b = ui.button("close") {   // the button picture lives in layers.button.close
+            out.append(Quad(texture: uiTexture("button|close", { b.bitmap }), x: ox + slot.x + (slot.width - b.width) / 2, y: oy + slot.y + (slot.height - b.height) / 2, w: b.width, h: b.height))
+        }
+        let c = cd.creature
+        func cap(_ s: String) -> String { s.prefix(1).uppercased() + s.dropFirst() }
+        text("\(cd.count) \(cd.count == 1 ? cap(c.name) : cap(c.plural))", in: "Title", font: ui.font(16))
+        if let p = ui.creatureIcon(c.keyword) {   // the first of the seven circles
+            out.append(Quad(texture: uiTexture("cicon|\(c.keyword)", { p.bitmap }), x: ox + 28, y: oy + 62, w: p.width, h: p.height))
+            let s = "\(cd.count)"
+            let w = ui.numberFont.measure(s)
+            out.append(Quad(texture: uiTexture("num|\(s)", { ui.numberFont.render(s, colour: (40, 24, 8)) }), x: ox + 28 + (52 - w) / 2, y: oy + 124, w: w, h: ui.numberFont.size))
+        }
+        text("Level \(c.level)", in: "Level", font: ui.dateFont)
+        text(cap(c.alignment), in: "Alignment", font: ui.dateFont)
+        text(c.shortHelp, in: "Stealth", font: ui.numberFont)
+        let ranged = c.shots > 0
+        let values: [(String, String)] = [("Damage_Text", "\(c.damageLow)-\(c.damageHigh)"), ("Melee_Attack_Text", "\(c.attack)"), ("Melee_Defense_Text", "\(c.defense)"),
+                                          ("Hit_Points_Text", "\(c.hitPoints)"), ("Morale_Text", "0"), ("Speed_Text", "\(c.speed)"), ("Movement_Text", "\(c.move)"),
+                                          ("Shots_Text", "\(c.shots)"), ("Ranged_Attack_Text", ranged ? "\(c.attack)" : "0"), ("Ranged_Defense_Text", "\(c.defense)"),
+                                          ("Spell_Points_Text", "\(c.spellPoints)"), ("Luck_Text", "0"), ("Experience_Text", "\(c.experience)")]
+        for (slot, v) in values { text(v, in: slot, font: ui.numberFont) }
+        return out
+    }
+
+    /// Which of the game's cursors fits what is under a map point: attack over a wandering
+    /// stack, activate over something to visit, move over walkable ground, blocked elsewhere.
+    func cursorKind(mapPoint m: SIMD2<Float>) -> String {
+        guard let g = game else { return "normal" }
+        let c = cell(at: m)
+        if let p = scene.placed.last(where: { g.isVisitable($0) && (underCursor($0, m) || onFootprint($0, c)) }) {
+            return g.monster(for: p) != nil ? "attack" : "activate"
+        }
+        if g.heroes.contains(where: { $0.x == c.0 && $0.y == c.1 }) { return "normal" }
+        return g.passability.isFree(c.0, c.1) ? "move" : "blocked"
+    }
+
     /// The right-click box: what it says and where its top-left corner is on the canvas.
     var popup: (title: String, lines: [String], x: Int, y: Int)?
     var popupSize = (w: 0, h: 0)
@@ -373,11 +446,18 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// in a box near the canvas point; nothing there clears it.
     func inspect(mapPoint m: SIMD2<Float>, canvas: (Float, Float)) {
         popup = nil
+        creatureDialog = nil
         guard let g = game, let ui = ui else { return }
         let c = cell(at: m)
         var text: (title: String, body: [String])?
         if let h = g.heroes.first(where: { Int($0.position.x.rounded()) == c.0 && Int($0.position.y.rounded()) == c.1 }) { text = g.describe(hero: h) }
-        else if let p = scene.placed.last(where: { underCursor($0, m) || onFootprint($0, c) }) { text = g.describe(p) }
+        else if let p = scene.placed.last(where: { underCursor($0, m) || onFootprint($0, c) }) {
+            if let i = g.monster(for: p), let def = g.tables?.creature(g.monsters[i].creature) {   // a wandering stack gets the creature dialog
+                creatureDialog = (def, g.monsters[i].count)
+                return
+            }
+            text = g.describe(p)
+        }
         else { text = g.describe(cellX: c.0, cellY: c.1) }
         guard let t = text else { return }
         var lines: [String] = []

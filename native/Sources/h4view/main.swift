@@ -172,7 +172,7 @@ if let out = snapshot {
         let m = SIMD2(Float(sx), Float(sy))
         let canvas = (m - renderer.pan) * renderer.zoom / renderer.uiScale
         renderer.inspect(mapPoint: m, canvas: (canvas.x, canvas.y))
-        print("inspect (\(target.0),\(target.1)): \(renderer.popup.map { "\($0.title) | " + $0.lines.joined(separator: " / ") } ?? "nothing")")
+        print("inspect (\(target.0),\(target.1)): \(renderer.popup.map { "\($0.title) | " + $0.lines.joined(separator: " / ") } ?? renderer.creatureDialog.map { "dialog: \($0.count) \($0.creature.plural)" } ?? "nothing")")
     }
     let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: w, height: h, mipmapped: false)
     td.usage = [.renderTarget, .shaderRead]
@@ -197,10 +197,76 @@ if let out = snapshot {
     exit(0)
 }
 
+/// The game's animated mouse pointers (layers.cursor.<name>: frames "1".."4" and a hot_spot
+/// layer whose rectangle marks the hot spot; single-frame files hold "Layer 1").
+final class GameCursors {
+    struct Set { let frames: [NSCursor] }
+    var sets: [String: Set] = [:]
+    let archive: H4Archive
+
+    init(archive: H4Archive) { self.archive = archive }
+
+    static func image(_ bm: Bitmap) -> NSImage? {
+        guard let provider = CGDataProvider(data: Data(bm.pixels) as CFData),
+              let img = CGImage(width: bm.width, height: bm.height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: bm.width * 4,
+                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue),
+                                provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent) else { return nil }
+        return NSImage(cgImage: img, size: NSSize(width: bm.width, height: bm.height))
+    }
+
+    func set(_ name: String) -> Set? {
+        if let s = sets[name] { return s }
+        let file = name == "normal" ? "layers.cursor.combat.normal.h4d" : "layers.cursor.\(name).h4d"
+        guard let d = try? archive.payload(file), let f = try? LayerFile(data: d) else { return nil }
+        let hot = f.layers.first { $0.name.lowercased() == "hot_spot" }.map { NSPoint(x: $0.x, y: $0.y) } ?? NSPoint(x: 0, y: 0)
+        var frames: [NSCursor] = []
+        for l in f.layers where l.name.lowercased() != "hot_spot" && l.width > 0 {
+            if let img = GameCursors.image(l.bitmap) { frames.append(NSCursor(image: img, hotSpot: hot)) }
+        }
+        guard !frames.isEmpty else { return nil }
+        let s = Set(frames: frames)
+        sets[name] = s
+        return s
+    }
+}
+
 final class MapView: MTKView {
     var renderer: Renderer!
     var dragged: Float = 0
+    var cursors: GameCursors?
+    var cursorName = "normal"
+    var cursorFrame = 0
+    var cursorTimer: Timer?
     override var acceptsFirstResponder: Bool { true }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for a in trackingAreas { removeTrackingArea(a) }
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self, userInfo: nil))
+        if cursorTimer == nil {
+            cursorTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self] _ in self?.tickCursor() }
+        }
+    }
+    func tickCursor() {
+        guard let s = cursors?.set(cursorName) else { return }
+        cursorFrame = (cursorFrame + 1) % s.frames.count
+        s.frames[cursorFrame].set()
+    }
+    /// Pick the pointer for what is under the mouse: the plain arrow over the panel, the
+    /// town screen and open boxes; on the map, what a click there would do.
+    override func mouseMoved(with e: NSEvent) {
+        guard let g = renderer.game, g.heroes.first != nil else { return }
+        let p = convert(e.locationInWindow, from: nil)
+        let scale = Float(window?.backingScaleFactor ?? 1)
+        let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
+        let cx = mouse.x / renderer.uiScale
+        var name = "normal"
+        if renderer.townOpen == nil, renderer.popup == nil, renderer.creatureDialog == nil, renderer.ui == nil || cx < Float(AdventureUI.mapViewportWidth) {
+            name = renderer.cursorKind(mapPoint: renderer.pan + mouse / renderer.zoom)
+        }
+        if name != cursorName { cursorName = name; cursorFrame = 0; cursors?.set(name)?.frames.first?.set() }
+    }
+    override func mouseExited(with e: NSEvent) { NSCursor.arrow.set(); cursorName = "" }
     override func mouseDown(with e: NSEvent) { dragged = 0 }
     override func mouseDragged(with e: NSEvent) {
         dragged += abs(Float(e.deltaX)) + abs(Float(e.deltaY))
@@ -215,6 +281,12 @@ final class MapView: MTKView {
         if renderer.popup != nil {   // an open right-click box: a left click outside it closes it, and does nothing else
             let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale
             if !renderer.onPopup(cx, cy) { renderer.popup = nil }
+            return
+        }
+        if renderer.creatureDialog != nil {   // the creature dialog: Close, or a click outside it
+            let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale
+            let hit = renderer.onDialog(cx, cy)
+            if hit.close || !hit.inside { renderer.creatureDialog = nil }
             return
         }
         if let ui = renderer.ui {   // the panel: only its buttons react
@@ -236,8 +308,8 @@ final class MapView: MTKView {
         let scale = Float(window?.backingScaleFactor ?? 1)
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
         let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale
-        if renderer.onPopup(cx, cy) { return }
-        if renderer.ui != nil, cx >= Float(AdventureUI.mapViewportWidth) { renderer.popup = nil; return }
+        if renderer.onPopup(cx, cy) || renderer.onDialog(cx, cy).inside { return }
+        if renderer.ui != nil, cx >= Float(AdventureUI.mapViewportWidth) { renderer.popup = nil; renderer.creatureDialog = nil; return }
         renderer.inspect(mapPoint: renderer.pan + mouse / renderer.zoom, canvas: (cx, cy))
     }
     override func scrollWheel(with e: NSEvent) {
@@ -282,6 +354,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         renderer.town = townScreen
         renderer.onTitle = { [weak self] t in if self?.window.title != t { self?.window.title = t } }
         view.renderer = renderer
+        view.cursors = GameCursors(archive: archive)
         view.delegate = renderer
         renderer.viewSize = SIMD2(Float(view.drawableSize.width), Float(view.drawableSize.height))
         aim(renderer, at: center ?? game.heroes.first.map { ($0.x, $0.y) } ?? (map.size / 2, map.size / 2))

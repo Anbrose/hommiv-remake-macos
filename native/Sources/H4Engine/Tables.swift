@@ -59,6 +59,18 @@ public final class RuleTables {
     }
     /// buildings per town section: "Life Town" -> [BuildingDef] (in the table's order)
     public let buildings: [String: [BuildingDef]]
+    /// The Adventure Object texts: "major|minor|keyword" (all lower-cased) -> text, e.g.
+    /// "mine|sawmill|name" -> "Sawmill", "mine|sawmill|help" -> "This Sawmill earns 2 wood per day...".
+    public let objectTexts: [String: String]
+    /// Lower-cased object name -> (major, minor), to find the rows of an object known only by its sprite.
+    public let objectNames: [String: (String, String)]
+    public struct ArtifactDef { public let keyword: String, name: String, article: String, slot: String, level: String, help: String }
+    public let artifacts: [String: ArtifactDef]   // by keyword
+
+    /// A text of an adventure object type, the minor type's row first, then the major type's generic one.
+    public func objectText(_ major: String, _ minor: String, _ key: String) -> String? {
+        objectTexts["\(major.lowercased())|\(minor.lowercased())|\(key.lowercased())"] ?? objectTexts["\(major.lowercased())||\(key.lowercased())"]
+    }
     /// Sprites whose names differ from the table's dwelling names.
     static let dwellingAliases: [String: String] = [
         "minotaur's maze": "minotaur", "altar of air": "air elemental", "altar of water": "water elemental", "altar of earth": "earth elemental",
@@ -94,6 +106,23 @@ public final class RuleTables {
             dc[row[4].lowercased()] = kw
         }
         dwellingCreature = dc
+        var texts: [String: String] = [:]
+        var byName: [String: (String, String)] = [:]
+        for row in ao.rows where row.count > 4 && !row[0].isEmpty && !row[3].isEmpty {
+            texts["\(row[0].lowercased())|\(row[1].lowercased())|\(row[3].lowercased())"] = row[4]
+            if row[3].lowercased() == "name", !row[4].contains("%") { byName[row[4].lowercased()] = (row[0], row[1]) }
+        }
+        objectTexts = texts
+        objectNames = byName
+        var arts: [String: ArtifactDef] = [:]
+        if let d = try? archive.payload("table.Artifacts.h4d") {
+            let at = RuleTable(data: d)
+            for row in at.rows where row.count > 7 && !row[0].isEmpty {
+                arts[row[0].lowercased()] = ArtifactDef(keyword: row[0], name: at.value(row, "Name"), article: at.value(row, "Name With Article"),
+                                                        slot: at.value(row, "Slot"), level: at.value(row, "Level"), help: at.value(row, "Help Text"))
+            }
+        }
+        artifacts = arts
         let bt = RuleTable(data: try archive.payload("table.buildings.h4d"))
         var sections: [String: [BuildingDef]] = [:]
         var section = ""

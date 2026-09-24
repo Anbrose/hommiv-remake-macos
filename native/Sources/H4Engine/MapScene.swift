@@ -19,6 +19,7 @@ public final class MapScene {
         public let cellX: Int, cellY: Int       // anchor cell (top corner of the footprint)
         public let category: String             // first component of the adv_object name
         public let depth: Int
+        public let type: String, subtype: String   // the map record's kind ("mine"/"gold_mine", "random_monster"/"level_2")
     }
 
     public static let chunkSize = 512
@@ -156,7 +157,8 @@ public final class MapScene {
             out.append(Placed(name: key, sprite: s, image: img, shadow: s.shadow(for: img),
                               x: sx + Int(s.origin.x) + img.box.left, y: sy + Int(s.origin.y) + img.box.top,
                               anchorX: sx, anchorY: sy, cellX: o.x, cellY: o.y,
-                              category: String(o.name.split(separator: ".").first ?? ""), depth: depth))
+                              category: String(o.name.split(separator: ".").first ?? ""), depth: depth,
+                              type: o.type, subtype: o.subtype))
         }
         placed = out.sorted { $0.depth < $1.depth }
     }

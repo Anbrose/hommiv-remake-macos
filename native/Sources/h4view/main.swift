@@ -19,6 +19,7 @@ var openTown = false      // --town (with --snapshot): render the town screen
 var openBuildList = false // --build: the town screen with its build list open
 var heroAt: (Int, Int)?   // --hero x,y: put the hero there instead of at the town gate (debug)
 var plan: (Int, Int)?     // --plan x,y (with --snapshot): show the route there without walking
+var inspectAt: (Int, Int)? // --inspect x,y (with --snapshot): the right-click box for that cell
 var i = 3
 while i < args.count {
     if args[i] == "--level", i + 1 < args.count { level = Int(args[i + 1]) ?? 0; i += 2 }
@@ -26,9 +27,9 @@ while i < args.count {
     else if args[i] == "--blocked" { showBlocked = true; i += 1 }
     else if args[i] == "--town" { openTown = true; i += 1 }
     else if args[i] == "--build" { openTown = true; openBuildList = true; i += 1 }
-    else if (args[i] == "--hero" || args[i] == "--plan"), i + 1 < args.count {
+    else if (args[i] == "--hero" || args[i] == "--plan" || args[i] == "--inspect"), i + 1 < args.count {
         let p = args[i + 1].split(separator: ",").compactMap { Int($0) }
-        if p.count == 2 { if args[i] == "--hero" { heroAt = (p[0], p[1]) } else { plan = (p[0], p[1]) } }
+        if p.count == 2 { if args[i] == "--hero" { heroAt = (p[0], p[1]) } else if args[i] == "--plan" { plan = (p[0], p[1]) } else { inspectAt = (p[0], p[1]) } }
         i += 2
     }
     else if args[i] == "--walk", i + 1 < args.count {
@@ -166,6 +167,13 @@ if let out = snapshot {
     let w = ui == nil ? 1280 : AdventureUI.width, h = ui == nil ? 800 : AdventureUI.height
     renderer.viewSize = SIMD2(Float(w), Float(h))
     aim(renderer, at: center ?? game.heroes.first.map { ($0.x, $0.y) } ?? (map.size / 2, map.size / 2))
+    if let target = inspectAt {   // a right click on that cell's centre
+        let (sx, sy) = scene.screen(x: target.0, y: target.1)
+        let m = SIMD2(Float(sx), Float(sy))
+        let canvas = (m - renderer.pan) * renderer.zoom / renderer.uiScale
+        renderer.inspect(mapPoint: m, canvas: (canvas.x, canvas.y))
+        print("inspect (\(target.0),\(target.1)): \(renderer.popup.map { "\($0.title) | " + $0.lines.joined(separator: " / ") } ?? "nothing")")
+    }
     let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: w, height: h, mipmapped: false)
     td.usage = [.renderTarget, .shaderRead]
     let target = device.makeTexture(descriptor: td)!
@@ -215,6 +223,17 @@ final class MapView: MTKView {
         }
         renderer.click(mapPoint: renderer.pan + mouse / renderer.zoom)
     }
+    /// Right button held: a box describing what is under the cursor (as in the game).
+    override func rightMouseDown(with e: NSEvent) {
+        guard renderer.townOpen == nil else { return }
+        let p = convert(e.locationInWindow, from: nil)
+        let scale = Float(window?.backingScaleFactor ?? 1)
+        let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
+        let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale
+        if renderer.ui != nil, cx >= Float(AdventureUI.mapViewportWidth) { return }
+        renderer.inspect(mapPoint: renderer.pan + mouse / renderer.zoom, canvas: (cx, cy))
+    }
+    override func rightMouseUp(with e: NSEvent) { renderer.popup = nil }
     override func scrollWheel(with e: NSEvent) {
         renderer.pan -= SIMD2(Float(e.scrollingDeltaX), Float(e.scrollingDeltaY)) / renderer.zoom
     }

@@ -58,6 +58,92 @@ final class AdventureUI {
 
     func hotspot(_ name: String) -> UILayer? { frame[name] }
 
+    /// The right-click text box: layers.text_background.<small|large> is a nine-slice scroll
+    /// (corners, tiled edges, a parchment tile for the middle) with a client_area hotspot.
+    var popupFrames: [String: LayerFile] = [:]
+    func popupFrame(_ size: String) -> LayerFile? {
+        if popupFrames[size] == nil, let d = try? archive.payload("layers.text_background.\(size).h4d") { popupFrames[size] = try? LayerFile(data: d) }
+        return popupFrames[size]
+    }
+
+    /// Break text into lines no wider than `width` pixels in the font (on spaces; a single
+    /// overlong word stays on its own line).
+    static func wrap(_ text: String, font: H4Font, width: Int) -> [String] {
+        var out: [String] = []
+        for paragraph in text.components(separatedBy: "\n") {
+            var line = ""
+            for word in paragraph.split(separator: " ", omittingEmptySubsequences: true) {
+                let candidate = line.isEmpty ? String(word) : line + " " + word
+                if font.measure(candidate) <= width || line.isEmpty { line = candidate }
+                else { out.append(line); line = String(word) }
+            }
+            out.append(line)
+        }
+        return out
+    }
+
+    /// Alpha-blend `src` onto `dst` at (x, y), clipped.
+    static func blend(_ src: Bitmap, onto dst: inout Bitmap, x: Int, y: Int) {
+        for sy in 0..<src.height {
+            let dy = y + sy
+            guard dy >= 0, dy < dst.height else { continue }
+            for sx in 0..<src.width {
+                let dx = x + sx
+                guard dx >= 0, dx < dst.width else { continue }
+                let s = (sy * src.width + sx) * 4, d = (dy * dst.width + dx) * 4
+                let a = Int(src.pixels[s + 3])
+                if a == 0 { continue }
+                if a == 255 { dst.pixels[d] = src.pixels[s]; dst.pixels[d + 1] = src.pixels[s + 1]; dst.pixels[d + 2] = src.pixels[s + 2]; dst.pixels[d + 3] = 255; continue }
+                let da = Int(dst.pixels[d + 3])
+                let oa = a + da * (255 - a) / 255
+                for k in 0..<3 {
+                    let sc = Int(src.pixels[s + k]), dc = Int(dst.pixels[d + k])
+                    dst.pixels[d + k] = UInt8(oa == 0 ? 0 : (sc * a + dc * da * (255 - a) / 255) / oa)
+                }
+                dst.pixels[d + 3] = UInt8(oa)
+            }
+        }
+    }
+
+    /// A popup box with a client area of the given size, composed from the nine-slice frame.
+    /// Returns the bitmap and where the client area sits in it.
+    func popupBitmap(clientW: Int, clientH: Int) -> (bitmap: Bitmap, clientX: Int, clientY: Int)? {
+        let size = clientH > 150 || clientW > 260 ? "large" : "small"
+        guard let f = popupFrame(size), let client = f["client_area"],
+              let tl = f.layers.first(where: { $0.name.lowercased() == "top_left" }), let tr = f.layers.first(where: { $0.name.lowercased() == "top_right" }),
+              let bl = f.layers.first(where: { $0.name.lowercased() == "bottom_left" }), let br = f.layers.first(where: { $0.name.lowercased() == "bottom_right" }),
+              let top = f.layers.first(where: { $0.name.lowercased() == "top" }), let bottom = f.layers.first(where: { $0.name.lowercased() == "bottom" }),
+              let left = f.layers.first(where: { $0.name.lowercased() == "left" }), let right = f.layers.first(where: { $0.name.lowercased() == "right" }),
+              let bg = f["Background"], let bgRect = f["background_rect"] else { return nil }
+        // the reference layout: the frame's bounding box, the client inset inside it
+        let x0 = min(tl.x, bl.x, left.x), y0 = min(tl.y, tr.y, top.y)
+        let x1 = max(tr.x + tr.width, br.x + br.width, right.x + right.width), y1 = max(bl.y + bl.height, br.y + br.height, bottom.y + bottom.height)
+        let insetL = client.x - x0, insetT = client.y - y0, insetR = x1 - (client.x + client.width), insetB = y1 - (client.y + client.height)
+        let W = clientW + insetL + insetR, H = clientH + insetT + insetB
+        var bm = Bitmap(width: W, height: H)
+        // parchment: tile the background over the background_rect, offset as in the reference
+        let bx0 = bgRect.x - x0, by0 = bgRect.y - y0, bx1 = W - (x1 - (bgRect.x + bgRect.width)), by1 = H - (y1 - (bgRect.y + bgRect.height))
+        for y in by0..<by1 { for x in bx0..<bx1 where x >= 0 && y >= 0 && x < W && y < H {
+            let s = ((y % bg.height) * bg.width + (x % bg.width)) * 4, d = (y * W + x) * 4
+            for k in 0..<4 { bm.pixels[d + k] = bg.bitmap.pixels[s + k] }
+        } }
+        // edges, tiled between the corners
+        var x = tl.x + tl.width - x0
+        while x < W - (x1 - tr.x) { AdventureUI.blend(top.bitmap, onto: &bm, x: x, y: top.y - y0); x += top.width }
+        x = bl.x + bl.width - x0
+        while x < W - (x1 - br.x) { AdventureUI.blend(bottom.bitmap, onto: &bm, x: x, y: H - (y1 - bottom.y)); x += bottom.width }
+        var y = tl.y + tl.height - y0
+        while y < H - (y1 - bl.y) { AdventureUI.blend(left.bitmap, onto: &bm, x: left.x - x0, y: y); y += left.height }
+        y = tr.y + tr.height - y0
+        while y < H - (y1 - br.y) { AdventureUI.blend(right.bitmap, onto: &bm, x: W - (x1 - right.x), y: y); y += right.height }
+        // corners last
+        AdventureUI.blend(tl.bitmap, onto: &bm, x: tl.x - x0, y: tl.y - y0)
+        AdventureUI.blend(tr.bitmap, onto: &bm, x: W - (x1 - tr.x), y: tr.y - y0)
+        AdventureUI.blend(bl.bitmap, onto: &bm, x: bl.x - x0, y: H - (y1 - bl.y))
+        AdventureUI.blend(br.bitmap, onto: &bm, x: W - (x1 - br.x), y: H - (y1 - br.y))
+        return (bm, insetL, insetT)
+    }
+
     /// Is a canvas point inside a named hotspot?
     func hit(_ name: String, x: Float, y: Float) -> Bool {
         guard let h = hotspot(name) else { return false }

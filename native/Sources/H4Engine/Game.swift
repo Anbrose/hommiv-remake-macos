@@ -287,6 +287,76 @@ public final class GameState {
     /// The town screen to open, set when a hero enters a town; the UI clears it.
     public var enteredTown: Int?
 
+    /// The last name component of a sprite entry: "adv_object.castle.Haven.Village R.h4d" -> "Village".
+    static func shortName(_ entry: String) -> String {
+        var parts = entry.split(separator: ".").map(String.init)
+        if parts.last?.lowercased() == "h4d" { parts.removeLast() }
+        var s = parts.last ?? entry
+        if s.lowercased().hasSuffix(" r") { s.removeLast(2) }
+        return s
+    }
+
+    /// What a right click on an object shows: a title and paragraphs, from the Adventure Object
+    /// table (by the map record's type, or by name for resolved random objects), the artifact
+    /// table, or the creature table; decorations get their name only.
+    public func describe(_ p: MapScene.Placed) -> (title: String, body: [String]) {
+        let short = GameState.shortName(p.name)
+        guard let t = tables else { return (short, []) }
+        func capitalised(_ s: String) -> String { s.prefix(1).uppercased() + s.dropFirst() }
+        if let i = monster(for: p), let c = t.creature(monsters[i].creature) {
+            let n = monsters[i].count
+            return ("\(n) \(n == 1 ? c.name : c.plural)", ["Level \(c.level) \(capitalised(c.alignment)) creature", "Attack \(c.attack), Defense \(c.defense), Damage \(c.damageLow)-\(c.damageHigh), Hit Points \(c.hitPoints)"])
+        }
+        if let i = town(for: p) {
+            let town = towns[i]
+            let kind = t.objectText("town", town.alignment, "name") ?? capitalised(town.alignment)
+            let names = t.buildings(for: town.alignment).filter { town.buildings.contains($0.keyword) }.map { $0.name }
+            return (town.name, ["\(kind) (\(town.owned ? "yours" : "unowned"))", "Buildings: " + (names.isEmpty ? "none" : names.joined(separator: ", "))])
+        }
+        if p.category.lowercased() == "artifacts" || p.type == "artifact" || p.type == "random_artifact" {
+            let a = t.artifacts[p.subtype.lowercased()] ?? t.artifacts.values.first { $0.name.lowercased() == short.lowercased() }
+            guard let a = a else { return (short, ["An artifact."]) }
+            return (a.name, [a.help, "\(a.level) artifact" + (a.slot.isEmpty ? "" : ", worn as \(a.slot.lowercased())")])
+        }
+        var major = p.type, minor = p.subtype
+        if major.isEmpty || major.hasPrefix("random") || major == "nothing", let byName = t.objectNames[short.lowercased()] { (major, minor) = byName }
+        if major == "random_shrine" { major = "shrine" }
+        if major == "random_monster" || major == "random_town" { return (short, []) }
+        var title = t.objectText(major, minor, "name") ?? short
+        var body: [String] = []
+        if let help = t.objectText(major, minor, "help") { body.append(help) }
+        // fill the table's placeholders with what we know
+        var creature: CreatureDef? = nil
+        var count = 0
+        if let i = dwelling(for: p) { creature = t.creature(dwellings[i].creature); count = dwellings[i].available }
+        let level = minor.hasPrefix("level_") ? String(minor.dropFirst(6)) : p.subtype.hasPrefix("level_") ? String(p.subtype.dropFirst(6)) : "1"
+        func fill(_ s: String) -> String {
+            var s = s
+            let subs: [(String, String)] = [("%object_name", title), ("%material_name", title), ("%Creature_name", creature?.plural ?? "creatures"),
+                                            ("%creature_name", creature?.plural.lowercased() ?? "creatures"), ("%the_creatures", "the " + (creature?.plural.lowercased() ?? "creatures")),
+                                            ("%Creatures", "\(count) " + (creature?.plural.lowercased() ?? "creatures")), ("%creatures", "\(count) " + (creature?.plural.lowercased() ?? "creatures")),
+                                            ("%spell_level", level), ("%magic_type ", ""), ("%magic_type", "Magic"), ("%skill_type", "primary"), ("%skill_name", "a skill"), ("%spell_name", "a spell")]
+            for (k, v) in subs { s = s.replacingOccurrences(of: k, with: v) }
+            return s
+        }
+        title = fill(title)
+        body = body.map(fill)
+        if let i = mine(for: p) { body.append(mines[i].owned ? "Owned by you." : "Not owned by anyone.") }
+        if let c = creature { body.append("\(count) \(count == 1 ? c.name : c.plural) available, \(c.gold) gold each.") }
+        if p.type == "decorative", body.isEmpty { body = [] }
+        return (title, body)
+    }
+
+    /// What a right click on a hero shows.
+    public func describe(hero h: Hero) -> (title: String, body: [String]) {
+        var body = ["Level \(h.level) " + (RuleTables.classes[h.alignment]?.might.capitalized ?? "Hero"), "Movement \(Int(h.movement.rounded()))/\(Int(h.maxMovement)), Experience \(h.experience)"]
+        for s in h.army {
+            let c = tables?.creature(s.creature)
+            body.append("\(s.count) \(s.count == 1 ? (c?.name ?? s.creature) : (c?.plural ?? s.creature))")
+        }
+        return (h.name, body)
+    }
+
     /// Daily income of a town from its hall.
     public func hallIncome(_ t: Town) -> Int {
         t.buildings.contains("city hall") ? 1000 : t.buildings.contains("town hall") ? 750 : 500
@@ -450,31 +520,62 @@ public final class GameState {
         return false
     }
 
+    /// The three cells in front of a town's gate, the middle one first. The gate is in the
+    /// middle of the lower-right wall of a right-facing (" R") town, of the lower-left wall
+    /// otherwise; a hero enters the town from these cells only.
+    public func gateCells(_ p: MapScene.Placed) -> [(Int, Int)] {
+        let w = p.sprite.footprint.w, h = p.sprite.footprint.h
+        if p.name.lowercased().hasSuffix(" r.h4d") {
+            let mid = w / 2
+            return [(p.cellX + mid, p.cellY + h), (p.cellX + mid - 1, p.cellY + h), (p.cellX + mid + 1, p.cellY + h)]
+        }
+        let mid = h / 2
+        return [(p.cellX + w, p.cellY + mid), (p.cellX + w, p.cellY + mid - 1), (p.cellX + w, p.cellY + mid + 1)]
+    }
+
+    /// Can a hero standing on the cell use the object? Towns only from their gate cells,
+    /// everything else from any neighbouring cell.
+    func canUse(from c: (Int, Int), _ p: MapScene.Placed) -> Bool {
+        if town(for: p) != nil { return gateCells(p).contains { $0 == c } }
+        return nextTo(c, p)
+    }
+
+    /// Is the cell free to stand on: passable and no other hero on it?
+    func isVacant(_ c: (Int, Int), for hero: Hero) -> Bool {
+        passability.isFree(c.0, c.1) && !heroes.contains { $0 !== hero && standingCell($0) == c }
+    }
+
     /// Click on a visitable object: use it if the hero stands next to it, otherwise plan (then
-    /// walk) to the cheapest neighbouring cell; it is used on arrival.
+    /// walk) to the cheapest neighbouring cell; it is used on arrival. A town is entered through
+    /// the middle gate cell; when that is taken, through the nearer of the other two.
     public func click(hero: Hero, pickup p: MapScene.Placed) {
         let walking = hero.isWalking
         if walking { interrupt(hero) }
         let from = standingCell(hero)
-        if !walking, nextTo(from, p) { interact(hero: hero, p); return }
+        let isTown = town(for: p) != nil
+        var candidates: [(Int, Int)] = []
+        if isTown {
+            let gate = gateCells(p)
+            candidates = isVacant(gate[0], for: hero) ? [gate[0]] : Array(gate.dropFirst())
+        } else {
+            let fw = p.sprite.footprint.w, fh = p.sprite.footprint.h
+            for dx in -1...fw { for dy in -1...fh where dx == -1 || dy == -1 || dx == fw || dy == fh { candidates.append((p.cellX + dx, p.cellY + dy)) } }
+        }
+        if !walking, candidates.contains(where: { $0 == from }), canUse(from: from, p) { interact(hero: hero, p); return }
         if !walking, let t = hero.target, t.x == p.cellX, t.y == p.cellY, !hero.plan.isEmpty {
             hero.path = hero.plan; hero.plan = []; hero.progress = 0
             return
         }
         var best: [(x: Int, y: Int)]? = nil
         var bestCost = Float.infinity
-        let fw = p.sprite.footprint.w, fh = p.sprite.footprint.h
-        for dx in -1...fw {
-            for dy in -1...fh where dx == -1 || dy == -1 || dx == fw || dy == fh {
-                let c = (p.cellX + dx, p.cellY + dy)
-                guard passability.isFree(c.0, c.1) else { continue }
-                if c == from { best = []; bestCost = 0; continue }
-                guard let path = passability.path(from: from, to: c) else { continue }
-                var cost: Float = 0
-                var px = from.0, py = from.1
-                for s in path { cost += passability.stepCost(from: px, py, to: s.x, s.y); px = s.x; py = s.y }
-                if cost < bestCost { bestCost = cost; best = path }
-            }
+        for c in candidates {
+            guard isVacant(c, for: hero) else { continue }
+            if c == from { best = []; bestCost = 0; continue }
+            guard let path = passability.path(from: from, to: c) else { continue }
+            var cost: Float = 0
+            var px = from.0, py = from.1
+            for s in path { cost += passability.stepCost(from: px, py, to: s.x, s.y); px = s.x; py = s.y }
+            if cost < bestCost { bestCost = cost; best = path }
         }
         hero.plan = best ?? []
         hero.target = best == nil ? nil : (p.cellX, p.cellY, p.name)
@@ -553,7 +654,7 @@ public final class GameState {
                 h.path.removeFirst()
                 h.progress = 0
                 if h.path.isEmpty, let t = h.target,
-                   let p = scene.placed.first(where: { $0.cellX == t.x && $0.cellY == t.y && $0.name == t.name }), nextTo((h.x, h.y), p) {
+                   let p = scene.placed.first(where: { $0.cellX == t.x && $0.cellY == t.y && $0.name == t.name }), canUse(from: (h.x, h.y), p) {
                     interact(hero: h, p)
                 }
             }

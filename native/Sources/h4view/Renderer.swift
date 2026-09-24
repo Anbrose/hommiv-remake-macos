@@ -268,6 +268,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         if let slot = ui.hotspot("end_turn"), let b = ui.endTurnButton["Released"] {
             out.append(Quad(texture: uiTexture("button|end_turn", { b.bitmap }), x: slot.x, y: slot.y, w: b.width, h: b.height))
         }
+        out += popupQuads()
         return out
     }
     var showBlocked = false   // debug: mark every cell a hero cannot enter
@@ -341,19 +342,71 @@ final class Renderer: NSObject, MTKViewDelegate {
         return (e.frame, e.shadow ?? p.shadow)
     }
 
+    /// The map cell under a map-canvas point (rounding x and y separately picks the diamond).
+    func cell(at m: SIMD2<Float>) -> (Int, Int) {
+        let u = (m.x - Float(scene.map.size * 32 + 32)) / 32, v = (m.y - 32) / 16   // u = y - x, v = x + y
+        return (Int(((v - u) / 2).rounded()), Int(((v + u) / 2).rounded()))
+    }
+
+    /// Is the point on an opaque pixel of the object's picture?
+    func underCursor(_ p: MapScene.Placed, _ m: SIMD2<Float>) -> Bool {
+        guard Float(p.x) <= m.x, m.x < Float(p.x + p.image.bitmap.width), Float(p.y) <= m.y, m.y < Float(p.y + p.image.bitmap.height) else { return false }
+        let bm = p.image.bitmap
+        return bm.pixels[((Int(m.y) - p.y) * bm.width + Int(m.x) - p.x) * 4 + 3] > 0
+    }
+
+    /// Is the cell inside the object's footprint?
+    func onFootprint(_ p: MapScene.Placed, _ c: (Int, Int)) -> Bool {
+        c.0 >= p.cellX && c.0 < p.cellX + p.sprite.footprint.w && c.1 >= p.cellY && c.1 < p.cellY + p.sprite.footprint.h
+    }
+
+    /// The right-click box: what it says and where its top-left corner is on the canvas.
+    var popup: (title: String, lines: [String], x: Int, y: Int)?
+
+    /// A right click on the map: describe the hero or the object there (topmost drawn wins)
+    /// in a box near the canvas point; nothing there clears it.
+    func inspect(mapPoint m: SIMD2<Float>, canvas: (Float, Float)) {
+        popup = nil
+        guard let g = game, let ui = ui else { return }
+        let c = cell(at: m)
+        var text: (title: String, body: [String])?
+        if let h = g.heroes.first(where: { Int($0.position.x.rounded()) == c.0 && Int($0.position.y.rounded()) == c.1 }) { text = g.describe(hero: h) }
+        else if let p = scene.placed.last(where: { underCursor($0, m) || onFootprint($0, c) }) { text = g.describe(p) }
+        guard let t = text else { return }
+        var lines: [String] = []
+        for para in t.body { lines += AdventureUI.wrap(para, font: ui.numberFont, width: 220); lines.append("") }
+        if lines.last == "" { lines.removeLast() }
+        let w = max(ui.dateFont.measure(t.title), lines.map { ui.numberFont.measure($0) }.max() ?? 0)
+        let h = ui.dateFont.lineHeight + 4 + lines.count * ui.numberFont.lineHeight
+        // near the cursor, kept inside the map viewport
+        var x = Int(canvas.0) + 16, y = Int(canvas.1) + 16
+        if x + w + 40 > AdventureUI.mapViewportWidth { x = Int(canvas.0) - w - 40 }
+        if y + h + 30 > AdventureUI.height { y = Int(canvas.1) - h - 30 }
+        popup = (t.title, lines, max(0, x), max(0, y))
+    }
+
+    /// The quads of the right-click box.
+    func popupQuads() -> [Quad] {
+        guard let p = popup, let ui = ui else { return [] }
+        let w = max(ui.dateFont.measure(p.title), p.lines.map { ui.numberFont.measure($0) }.max() ?? 0)
+        let h = ui.dateFont.lineHeight + 4 + p.lines.count * ui.numberFont.lineHeight
+        guard let box = ui.popupBitmap(clientW: w, clientH: h) else { return [] }
+        var out = [Quad(texture: uiTexture("popup|\(w)x\(h)", { box.bitmap }), x: p.x, y: p.y, w: box.bitmap.width, h: box.bitmap.height)]
+        let cx = p.x + box.clientX, cy = p.y + box.clientY
+        let tw = ui.dateFont.measure(p.title)
+        out.append(Quad(texture: uiTexture("date|\(p.title)", { ui.dateFont.render(p.title, colour: (40, 24, 8)) }), x: cx + (w - tw) / 2, y: cy, w: tw, h: ui.dateFont.size))
+        for (i, line) in p.lines.enumerated() where !line.isEmpty {
+            out.append(Quad(texture: uiTexture("num|\(line)", { ui.numberFont.render(line, colour: (40, 24, 8)) }), x: cx, y: cy + ui.dateFont.lineHeight + 4 + i * ui.numberFont.lineHeight, w: ui.numberFont.measure(line), h: ui.numberFont.size))
+        }
+        return out
+    }
+
     /// A click on the map at a map-canvas point: visit the object there, or walk to the cell.
     func click(mapPoint m: SIMD2<Float>) {
         guard let g = game, let hero = g.heroes.first else { return }
-        let u = (m.x - Float(g.map.size * 32 + 32)) / 32, v = (m.y - 32) / 16   // u = y - x, v = x + y
-        var x = Int(((v - u) / 2).rounded()), y = Int(((v + u) / 2).rounded())
-        func underCursor(_ p: MapScene.Placed) -> Bool {
-            guard Float(p.x) <= m.x, m.x < Float(p.x + p.image.bitmap.width), Float(p.y) <= m.y, m.y < Float(p.y + p.image.bitmap.height) else { return false }
-            let bm = p.image.bitmap
-            return bm.pixels[((Int(m.y) - p.y) * bm.width + Int(m.x) - p.x) * 4 + 3] > 0
-        }
-        func onFootprint(_ p: MapScene.Placed) -> Bool {
-            x >= p.cellX && x < p.cellX + p.sprite.footprint.w && y >= p.cellY && y < p.cellY + p.sprite.footprint.h
-        }
+        var (x, y) = cell(at: m)
+        func underCursor(_ p: MapScene.Placed) -> Bool { self.underCursor(p, m) }
+        func onFootprint(_ p: MapScene.Placed) -> Bool { self.onFootprint(p, (x, y)) }
         // a visitable object under the cursor or on the clicked cell (topmost drawn wins): walk next to it and use it
         if let p = scene.placed.last(where: { g.isVisitable($0) && (underCursor($0) || onFootprint($0)) }) {
             g.click(hero: hero, pickup: p)

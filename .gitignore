@@ -1,2 +1,4 @@
 .DS_Store
 homm4/
+.build/
+native/.build/

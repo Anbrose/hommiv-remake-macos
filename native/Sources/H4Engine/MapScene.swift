@@ -1,0 +1,138 @@
+import Foundation
+
+/// Everything a renderer needs to draw one level of a map: terrain composited into
+/// square chunk bitmaps, and the objects as sprite images with screen positions.
+/// Projection (see tools/h4render.py): cell (x, y) is a 64x32 diamond centred at
+/// ((y - x) * 32 + size * 32 + 32, (x + y) * 16 + 32).
+public final class MapScene {
+    public struct Chunk {
+        public let x: Int, y: Int      // pixel origin on the map canvas
+        public let bitmap: Bitmap
+    }
+    public struct Placed {
+        public let name: String        // adv_object name, identifies the sprite file
+        public let sprite: Sprite
+        public let image: SpriteImage
+        public let shadow: SpriteImage?
+        public let x: Int, y: Int      // screen position of the image's top-left
+        public let depth: Int
+    }
+
+    public static let chunkSize = 512
+    public let map: MapFile
+    public let level: Int
+    public let width: Int, height: Int
+    public private(set) var chunks: [Chunk] = []
+    public private(set) var placed: [Placed] = []
+    public private(set) var spriteCache: [String: Sprite] = [:]
+
+    static let terrainFile: [UInt8: String] = [0: "water.1.1", 1: "grass.1.1", 2: "rough.1.1", 3: "swamp.1.1", 4: "lava.1.1", 5: "snow.1.1",
+                                              6: "sand.1.1", 7: "dirt.1.1", 8: "subterranean.1.1", 9: "river.water.1", 10: "river.lava.1",
+                                              11: "river.ice.1", 12: "magic.all", 13: "magic.life", 14: "magic.order", 15: "magic.death.1",
+                                              16: "magic.chaos.1", 17: "magic.nature.1", 18: "magic.all"]
+    static let roadFile: [UInt8: String] = [0: "road.dirt.1", 1: "road.gravel.1", 2: "road.cobblestone.1"]
+
+    public init(map: MapFile, level: Int, archive: H4Archive, masks: TransitionMasks) throws {
+        self.map = map
+        self.level = level
+        let n = map.size
+        width = 2 * n * 32 + 64
+        height = n * 32 + 96
+        try buildTerrain(archive: archive, masks: masks)
+        try placeObjects(archive: archive)
+    }
+
+    public func screen(x: Int, y: Int) -> (Int, Int) {
+        ((y - x) * 32 + map.size * 32 + 32, (x + y) * 16 + 32)
+    }
+
+    private func buildTerrain(archive: H4Archive, masks: TransitionMasks) throws {
+        let n = map.size, cs = MapScene.chunkSize
+        var canvas = Bitmap(width: width, height: height)
+        var patches: [String: TerrainPatch] = [:]
+        func patch(_ name: String) throws -> TerrainPatch {
+            if let p = patches[name] { return p }
+            let p = try TerrainPatch(data: archive.payload("terrain.\(name).h4d"))
+            patches[name] = p
+            return p
+        }
+        let land = masks.sets["land 1"] ?? []
+        let road = masks.sets["road 1"] ?? []
+        let cells = map.cells[level]
+        for x in 0..<n {
+            for y in 0..<n {
+                guard let cell = cells[x * n + y] else { continue }
+                let row = x + y, col = (y - x - (x + y) % 2) / 2
+                let ti = (MapScene.mod(row, 6) + 2) * 10 + (MapScene.mod(col, 6) + 2)
+                let (sx, sy) = screen(x: x, y: y)
+                let left = sx - 32, top = sy - 16
+                let base = try patch(MapScene.terrainFile[cell.type] ?? "grass.1.1")
+                MapScene.blit(&canvas, base.tiles[ti], left, top, mask: nil)
+                for ov in cell.overlays.sorted(by: { $0.order < $1.order }) where ov.mask < land.count {
+                    guard let f = MapScene.terrainFile[ov.type] else { continue }
+                    MapScene.blit(&canvas, try patch(f).tiles[ti], left, top, mask: land[ov.mask])
+                }
+                for rd in cell.roads where rd.mask < road.count {
+                    guard let f = MapScene.roadFile[rd.kind] else { continue }
+                    MapScene.blit(&canvas, try patch(f).tiles[ti], left, top, mask: road[rd.mask])
+                }
+            }
+        }
+        var list: [Chunk] = []
+        var cy = 0
+        while cy < height {
+            var cx = 0
+            while cx < width {
+                let w = min(cs, width - cx), h = min(cs, height - cy)
+                var b = Bitmap(width: w, height: h)
+                for yy in 0..<h {
+                    let src = ((cy + yy) * width + cx) * 4, dst = yy * w * 4
+                    b.pixels.replaceSubrange(dst..<(dst + w * 4), with: canvas.pixels[src..<(src + w * 4)])
+                }
+                list.append(Chunk(x: cx, y: cy, bitmap: b))
+                cx += cs
+            }
+            cy += cs
+        }
+        chunks = list
+    }
+
+    private func placeObjects(archive: H4Archive) throws {
+        let n = map.size
+        var out: [Placed] = []
+        let objs = map.objects.filter { $0.level == level && $0.x >= -2 && $0.x < n + 2 && $0.y >= -2 && $0.y < n + 2 }
+            .sorted { ($0.x + $0.y, $0.y - $0.x) < ($1.x + $1.y, $1.y - $1.x) }
+        for o in objs {
+            let key = o.name
+            if spriteCache[key] == nil {
+                guard let d = try? archive.payload("adv_object.\(key).h4d"), let s = try? Sprite(data: d) else { continue }
+                spriteCache[key] = s
+            }
+            guard let s = spriteCache[key], let img = s.baseFrame ?? s.frames.first else { continue }
+            let (sx, sy) = screen(x: o.x, y: o.y)
+            out.append(Placed(name: key, sprite: s, image: img, shadow: s.shadow(for: img),
+                              x: sx + Int(s.origin.x) + img.box.left, y: sy + Int(s.origin.y) + img.box.top, depth: o.x + o.y))
+        }
+        placed = out
+    }
+
+    static func mod(_ a: Int, _ m: Int) -> Int { ((a % m) + m) % m }
+
+    /// Copy a 64x32 tile onto the canvas at (left, top), optionally through a 64x32 1-bit mask.
+    static func blit(_ canvas: inout Bitmap, _ tile: Bitmap, _ left: Int, _ top: Int, mask: [UInt8]?) {
+        for y in 0..<32 {
+            let yy = top + y
+            guard yy >= 0, yy < canvas.height else { continue }
+            for x in 0..<64 {
+                let xx = left + x
+                guard xx >= 0, xx < canvas.width else { continue }
+                let s = (y * 64 + x) * 4
+                guard tile.pixels[s + 3] != 0 else { continue }
+                if let m = mask, m[y * 64 + x] == 0 { continue }
+                let d = (yy * canvas.width + xx) * 4
+                canvas.pixels[d] = tile.pixels[s]; canvas.pixels[d + 1] = tile.pixels[s + 1]
+                canvas.pixels[d + 2] = tile.pixels[s + 2]; canvas.pixels[d + 3] = 255
+            }
+        }
+    }
+}

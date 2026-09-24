@@ -17,7 +17,22 @@ final class AdventureUI {
     let numberFont: H4Font
     let resourceNames = ["Wood", "Ore", "Mercury", "Sulfur", "Crystal", "Gems", "Gold"]
 
+    let archive: H4Archive
+    var portraitSheets: [String: LayerFile] = [:]
+
+    /// A hero's 52x52 portrait, from layers.icons.hero.<alignment>.52 keyed by the hero's keyword.
+    func portrait(keyword: String, alignment: String) -> UILayer? {
+        if portraitSheets[alignment] == nil, let d = try? archive.payload("layers.icons.hero.\(alignment).52.h4d"), let f = try? LayerFile(data: d) {
+            portraitSheets[alignment] = f
+        }
+        return portraitSheets[alignment]?[keyword.lowercased()]
+    }
+
+    /// Where the hero list's round slots are on the panel (centres, top to bottom).
+    static let heroSlots = [(789, 393), (789, 465), (789, 537)]
+
     init(archive: H4Archive, index: RandomResolver) throws {
+        self.archive = archive
         frame = try LayerFile(data: archive.payload("layers.adventure.1024.h4d"))
         dayScroll = try LayerFile(data: archive.payload("layers.adventure.day_scroll.h4d"))
         endTurnButton = try LayerFile(data: archive.payload("layers.button.end_turn.h4d"))

@@ -86,14 +86,25 @@ let device = MTLCreateSystemDefaultDevice()!
 // A scenario in progress: one hero of the leftmost town's alignment standing at its gate.
 let resolver = RandomResolver(archive: archive)
 let game = GameState(map: map, level: scene.level, scene: scene)
+let textURL = URL(fileURLWithPath: args[1]).deletingLastPathComponent().appendingPathComponent("text.h4r")
+if let text = try? H4Archive(url: textURL), let tables = try? RuleTables(archive: text) { game.tables = tables; lap("rules: \(tables.creatures.count) creatures, \(tables.heroes.count) heroes") }
 let alignments = ["haven": "life", "academy": "order", "asylum": "chaos", "necropolis": "death", "preserve": "nature", "stronghold": "might"]
+func faction(of name: String) -> String { alignments.first { name.lowercased().contains($0.key) }?.value ?? "life" }
+game.registerObjects(townFactions: Dictionary(uniqueKeysWithValues: scene.placed.filter { $0.category == "castle" }.map { ($0.name, faction(of: $0.name)) }))
 if let town = scene.placed.filter({ $0.category == "castle" }).min(by: { ($0.cellY - $0.cellX) < ($1.cellY - $1.cellX) }) {
-    let faction = alignments.first { town.name.lowercased().contains($0.key) }?.value ?? "life"
+    let align = faction(of: town.name)
+    if let i = game.towns.firstIndex(where: { $0.x == town.cellX && $0.y == town.cellY }) { game.towns[i].owned = true }
     // the gate is in the middle of the lower-right wall of right-facing (" R") towns, lower-left otherwise
     let right = town.name.lowercased().hasSuffix(" r.h4d")
     if let cell = heroAt ?? game.freeCell(near: town.cellX + (right ? 3 : 6), town.cellY + (right ? 6 : 3)) {
-        game.heroes.append(Hero(actor: "hero.\(faction)_might_male", x: cell.0, y: cell.1))
-        lap("hero at \(cell) by \(town.name)")
+        // a might hero of the town's alignment, picked from the heroes table (the male model exists for every class)
+        let cls = RuleTables.classes[align]?.might ?? "knight"
+        let candidates = game.tables?.heroes(ofClass: cls).filter { $0.sex == "male" } ?? []
+        let def = candidates.isEmpty ? nil : candidates[(town.cellX + town.cellY) % candidates.count]
+        let hero = Hero(actor: "hero.\(align)_might_male", x: cell.0, y: cell.1, movement: 25)
+        hero.name = def?.name ?? "Hero"; hero.keyword = def?.keyword ?? ""; hero.alignment = align
+        game.heroes.append(hero)
+        lap("\(hero.name) the \(cls) at \(cell) by \(game.towns.first { $0.owned }?.name ?? town.name)")
     }
 }
 
@@ -120,7 +131,7 @@ if let out = snapshot {
     lap("textures uploaded")
     var snapTime = 0.0
     if let target = walk, let hero = game.heroes.first {
-        if let p = scene.placed.first(where: { $0.cellX == target.0 && $0.cellY == target.1 && game.isPickup($0) }) {
+        if let p = scene.placed.first(where: { $0.cellX == target.0 && $0.cellY == target.1 && game.isVisitable($0) }) {
             game.click(hero: hero, pickup: p)
             print("path to pickup \(p.name): \(hero.plan.map { "(\($0.x),\($0.y))" }.joined(separator: " "))")
             game.click(hero: hero, pickup: p)
@@ -196,7 +207,7 @@ final class MapView: MTKView {
         if let p = renderer.scene.placed.last(where: { p in
             guard Float(p.x) <= m.x, m.x < Float(p.x + p.image.bitmap.width), Float(p.y) <= m.y, m.y < Float(p.y + p.image.bitmap.height) else { return false }
             let bm = p.image.bitmap
-            return bm.pixels[((Int(m.y) - p.y) * bm.width + Int(m.x) - p.x) * 4 + 3] > 0 && g.isPickup(p)
+            return bm.pixels[((Int(m.y) - p.y) * bm.width + Int(m.x) - p.x) * 4 + 3] > 0 && g.isVisitable(p)
         }) {
             g.click(hero: hero, pickup: p)
             return

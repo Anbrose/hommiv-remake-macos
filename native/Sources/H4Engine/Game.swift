@@ -148,6 +148,9 @@ public struct Passability {
 /// A hero on the adventure map.
 public final class Hero {
     public let actor: String          // adv_actor name without prefix, e.g. "hero.life_might_male"
+    public var name = "Hero"
+    public var keyword = ""           // heroes table keyword, also the portrait layer name
+    public var alignment = "life"
     public var x: Int, y: Int         // current cell
     public var facing = "s"
     public var movement: Float
@@ -207,6 +210,18 @@ public final class GameState {
     public var log: [String] = []
     /// The player's treasury (starting amounts of a normal game).
     public var resources: [String: Int] = ["Wood": 15, "Ore": 15, "Mercury": 7, "Sulfur": 7, "Crystal": 7, "Gems": 7, "Gold": 15000]
+    public var tables: RuleTables?
+    public struct Town { public let x: Int, y: Int; public var name: String; public let alignment: String; public var owned: Bool }
+    public struct Mine { public let x: Int, y: Int, name: String, resource: String, amount: Int; public var owned: Bool }
+    public var towns: [Town] = []
+    public var mines: [Mine] = []
+    /// Income per day from everything the player owns.
+    public var income: [String: Int] {
+        var out: [String: Int] = [:]
+        for t in towns where t.owned { out["Gold", default: 0] += 500 }   // village hall
+        for m in mines where m.owned { out[m.resource, default: 0] += m.amount }
+        return out
+    }
     public var day = 1
     public var week: Int { (day - 1) / 7 % 4 + 1 }
     public var month: Int { (day - 1) / 28 + 1 }
@@ -225,23 +240,67 @@ public final class GameState {
         p.sprite.footprint.w * p.sprite.footprint.h == 1 && !p.sprite.visitable.isEmpty && !p.sprite.blocked.isEmpty
     }
 
+    /// The mine record for a placed object, if it is a working mine.
+    public func mine(for p: MapScene.Placed) -> Int? {
+        mines.firstIndex { $0.x == p.cellX && $0.y == p.cellY && $0.name == p.name }
+    }
+
+    /// Objects a hero walks up to and uses: pickups and mines (towns and dwellings later).
+    public func isVisitable(_ p: MapScene.Placed) -> Bool { isPickup(p) || mine(for: p) != nil }
+
+    /// Register the towns and mines on the map (names from the rule tables).
+    public func registerObjects(townFactions: [String: String]) {
+        var townIndex = 0
+        for p in scene.placed {
+            if p.category == "castle" {
+                let faction = townFactions[p.name] ?? "life"
+                let list = tables?.names["\(faction.prefix(1).uppercased() + faction.dropFirst())_Town"] ?? []
+                let name = list.isEmpty ? "Town" : list[(p.cellX * 7 + p.cellY * 13 + townIndex) % list.count]
+                towns.append(Town(x: p.cellX, y: p.cellY, name: name, alignment: faction, owned: false))
+                townIndex += 1
+            } else if p.category == "mine" {
+                let short = p.name.replacingOccurrences(of: "adv_object.mine.", with: "").replacingOccurrences(of: ".h4d", with: "").replacingOccurrences(of: " R", with: "")
+                if let (res, amount) = RuleTables.mineIncome[short] {
+                    mines.append(Mine(x: p.cellX, y: p.cellY, name: p.name, resource: res, amount: amount, owned: false))
+                }
+            }
+        }
+    }
+
+    /// Use an object the hero stands next to.
+    func interact(hero: Hero, _ p: MapScene.Placed) {
+        if isPickup(p) { take(hero: hero, p); return }
+        if let i = mine(for: p) {
+            if mines[i].owned { log.append("\(mines[i].resource) mine already yours") }
+            else { mines[i].owned = true; log.append("captured a mine: +\(mines[i].amount) \(mines[i].resource) per day") }
+            hero.target = nil
+        }
+    }
+
     static func adjacent(_ a: (Int, Int), _ b: (Int, Int)) -> Bool { max(abs(a.0 - b.0), abs(a.1 - b.1)) == 1 }
 
-    /// Click on a pickup: take it if the hero stands next to it, otherwise plan (then walk) to the
-    /// cheapest neighbouring cell; it is taken on arrival.
+    /// Is the cell next to any cell of the object's footprint?
+    func nextTo(_ c: (Int, Int), _ p: MapScene.Placed) -> Bool {
+        for i in 0..<p.sprite.footprint.w { for j in 0..<p.sprite.footprint.h where GameState.adjacent(c, (p.cellX + i, p.cellY + j)) { return true } }
+        return false
+    }
+
+    /// Click on a visitable object: use it if the hero stands next to it, otherwise plan (then
+    /// walk) to the cheapest neighbouring cell; it is used on arrival.
     public func click(hero: Hero, pickup p: MapScene.Placed) {
         let walking = hero.isWalking
         if walking { interrupt(hero) }
         let from = standingCell(hero)
-        if !walking, GameState.adjacent(from, (p.cellX, p.cellY)) { take(hero: hero, p); return }
+        if !walking, nextTo(from, p) { interact(hero: hero, p); return }
         if !walking, let t = hero.target, t.x == p.cellX, t.y == p.cellY, !hero.plan.isEmpty {
             hero.path = hero.plan; hero.plan = []; hero.progress = 0
             return
         }
         var best: [(x: Int, y: Int)]? = nil
         var bestCost = Float.infinity
-        for dx in -1...1 {
-            for dy in -1...1 where dx != 0 || dy != 0 {
+        let fw = p.sprite.footprint.w, fh = p.sprite.footprint.h
+        for dx in -1...fw {
+            for dy in -1...fh where dx == -1 || dy == -1 || dx == fw || dy == fh {
                 let c = (p.cellX + dx, p.cellY + dy)
                 guard passability.isFree(c.0, c.1) else { continue }
                 if c == from { best = []; bestCost = 0; continue }
@@ -328,9 +387,9 @@ public final class GameState {
                 h.movement -= stepCost
                 h.path.removeFirst()
                 h.progress = 0
-                if h.path.isEmpty, let t = h.target, GameState.adjacent((h.x, h.y), (t.x, t.y)),
-                   let p = scene.placed.first(where: { $0.cellX == t.x && $0.cellY == t.y && $0.name == t.name }) {
-                    take(hero: h, p)
+                if h.path.isEmpty, let t = h.target,
+                   let p = scene.placed.first(where: { $0.cellX == t.x && $0.cellY == t.y && $0.name == t.name }), nextTo((h.x, h.y), p) {
+                    interact(hero: h, p)
                 }
             }
         }
@@ -339,6 +398,7 @@ public final class GameState {
     public func endTurn() {
         day += 1
         for h in heroes { h.movement = h.maxMovement; h.path = []; h.plan = [] }
+        for (res, amount) in income { resources[res, default: 0] += amount }
     }
 
     public var dateText: String { "Month \(month), Week \(week), Day \(dayOfWeek)" }

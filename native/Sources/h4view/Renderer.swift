@@ -119,6 +119,20 @@ final class Renderer: NSObject, MTKViewDelegate {
                 }
             }
         }
+        // hero portraits in the hero list, town names in the town list
+        for (i, h) in g.heroes.prefix(AdventureUI.heroSlots.count).enumerated() {
+            if let p = ui.portrait(keyword: h.keyword, alignment: h.alignment) {
+                let (cx, cy) = AdventureUI.heroSlots[i]
+                out.append(Quad(texture: uiTexture("portrait|\(h.alignment)|\(h.keyword)", { p.bitmap }), x: cx - p.width / 2, y: cy - p.height / 2, w: p.width, h: p.height))
+            }
+        }
+        if let list = ui.hotspot("Town_list") {
+            for (i, t) in g.towns.filter({ $0.owned }).prefix(3).enumerated() {
+                let tex = uiTexture("town|\(t.name)", { ui.numberFont.render(t.name, colour: (40, 24, 8)) })
+                let w = ui.numberFont.measure(t.name)
+                out.append(Quad(texture: tex, x: list.x + (list.width - w) / 2, y: list.y + 30 + i * 72, w: w, h: ui.numberFont.size))
+            }
+        }
         // End Turn button (released state) in its hotspot
         if let slot = ui.hotspot("end_turn"), let b = ui.endTurnButton["Released"] {
             out.append(Quad(texture: uiTexture("button|end_turn", { b.bitmap }), x: slot.x, y: slot.y, w: b.width, h: b.height))
@@ -126,6 +140,15 @@ final class Renderer: NSObject, MTKViewDelegate {
         return out
     }
     var showBlocked = false   // debug: mark every cell a hero cannot enter
+    lazy var flag: MTLTexture = {   // the player's colour (blue) with a dark edge
+        var bm = Bitmap(width: 10, height: 14)
+        for y in 0..<14 { for x in 0..<10 {
+            let edge = x == 0 || y == 0 || y == 13 || x == 9
+            let p = (y * 10 + x) * 4
+            bm.pixels[p] = edge ? 20 : 40; bm.pixels[p + 1] = edge ? 20 : 80; bm.pixels[p + 2] = edge ? 40 : 220; bm.pixels[p + 3] = 255
+        } }
+        return makeTexture(bm)
+    }()
     lazy var redDot: MTLTexture = {
         var bm = Bitmap(width: 6, height: 6)
         for i in 0..<36 { bm.pixels[i * 4] = 255; bm.pixels[i * 4 + 3] = 200 }
@@ -272,6 +295,12 @@ final class Renderer: NSObject, MTKViewDelegate {
             }
         }
         for p in pending { out += p.quads }
+        if let g = game {   // owner flags over captured mines
+            for m in g.mines where m.owned {
+                let (sx, sy) = screen(Float(m.x), Float(m.y))
+                out.append(Quad(texture: flag, x: Int(sx) - 5, y: Int(sy) - 60, w: 10, h: 14))
+            }
+        }
         if let g = game, showBlocked {   // on top of everything so buildings do not hide their own cells
             let n = g.map.size
             for x in 0..<n { for y in 0..<n where g.map.cells[g.level][x * n + y] != nil && !g.passability.isFree(x, y) {

@@ -3,10 +3,11 @@
 
     h4terrain.py terrain.dirt.1.1.h4d dirt.png
 
-Each file holds 100 tiles: full diamonds and the transition pieces used to
-blend one terrain into another. They are written as a 10x10 sheet of 64x32
-diamonds (the data is stored as 64 scanlines of up to 31 pixels, i.e. the
-diamond on its side; the sheet transposes it).
+Each file holds 100 diamond tiles (64x32) that together form one big patch
+of terrain with a ragged outline: 10 staggered rows of 10, each row 16 pixels
+below the previous one and odd rows shifted right by 32. The PNG is that
+reassembled patch. (A tile is stored as 64 scanlines of up to 31 pixels, i.e.
+the diamond on its side; the output transposes it.)
 
 Format (little-endian), worked out from the GOG build:
 
@@ -64,18 +65,18 @@ def main():
         sys.exit(__doc__)
     tiles, pal = parse(open(sys.argv[1], 'rb').read())
     cols = 10
-    tw, th = 64, 32
     nrows = (len(tiles) + cols - 1) // cols
-    sheet = [bytearray(cols * tw * 4) for _ in range(nrows * th)]
+    w, h = cols * 64 + 32, nrows * 16 + 16
+    sheet = [bytearray(w * 4) for _ in range(h)]
     for k, rows in enumerate(tiles):
-        ox, oy = (k % cols) * tw, (k // cols) * th
+        ox, oy = (k % cols) * 64 + (k // cols % 2) * 32, (k // cols) * 16
         for x, col in enumerate(rows):
-            y0 = (th - len(col)) // 2
+            y0 = (32 - len(col)) // 2
             for i, v in enumerate(col):
                 if v:
                     p = (ox + x) * 4
                     sheet[oy + y0 + i][p:p + 4] = pal[v] + b'\xff'
-    write_png(sys.argv[2], cols * tw, nrows * th, [bytes(r) for r in sheet])
+    write_png(sys.argv[2], w, h, [bytes(r) for r in sheet])
     print(f"{len(tiles)} tiles -> {sys.argv[2]}")
 
 

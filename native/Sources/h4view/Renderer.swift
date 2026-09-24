@@ -244,6 +244,46 @@ final class Renderer: NSObject, MTKViewDelegate {
         return (e.frame, e.shadow ?? p.shadow)
     }
 
+    /// A click on the map at a map-canvas point: visit the object there, or walk to the cell.
+    func click(mapPoint m: SIMD2<Float>) {
+        guard let g = game, let hero = g.heroes.first else { return }
+        let u = (m.x - Float(g.map.size * 32 + 32)) / 32, v = (m.y - 32) / 16   // u = y - x, v = x + y
+        var x = Int(((v - u) / 2).rounded()), y = Int(((v + u) / 2).rounded())
+        func underCursor(_ p: MapScene.Placed) -> Bool {
+            guard Float(p.x) <= m.x, m.x < Float(p.x + p.image.bitmap.width), Float(p.y) <= m.y, m.y < Float(p.y + p.image.bitmap.height) else { return false }
+            let bm = p.image.bitmap
+            return bm.pixels[((Int(m.y) - p.y) * bm.width + Int(m.x) - p.x) * 4 + 3] > 0
+        }
+        func onFootprint(_ p: MapScene.Placed) -> Bool {
+            x >= p.cellX && x < p.cellX + p.sprite.footprint.w && y >= p.cellY && y < p.cellY + p.sprite.footprint.h
+        }
+        // a visitable object under the cursor or on the clicked cell (topmost drawn wins): walk next to it and use it
+        if let p = scene.placed.last(where: { g.isVisitable($0) && (underCursor($0) || onFootprint($0)) }) {
+            g.click(hero: hero, pickup: p)
+            return
+        }
+        if !g.passability.isFree(x, y) {
+            // Clicked on something you cannot stand on. If an object's picture is under the cursor
+            // (a bridge deck is drawn well above its cells), go to the nearest free cell of its
+            // footprint; otherwise to the nearest free cell around the click.
+            var best: (Int, Int)?
+            var bestD = Float.infinity
+            for p in scene.placed where underCursor(p) {
+                for i in 0..<p.sprite.footprint.w {
+                    for j in 0..<p.sprite.footprint.h where g.passability.isFree(p.cellX + i, p.cellY + j) {
+                        let (cx, cy) = screen(Float(p.cellX + i), Float(p.cellY + j))
+                        let d = (cx - m.x) * (cx - m.x) + (cy - m.y) * (cy - m.y)
+                        if d < bestD { bestD = d; best = (p.cellX + i, p.cellY + j) }
+                    }
+                }
+            }
+            if best == nil, let c = g.freeCell(near: x, y), max(abs(c.0 - x), abs(c.1 - y)) <= 2 { best = c }
+            guard let b = best else { return }
+            (x, y) = b
+        }
+        g.click(hero: hero, x: x, y: y)
+    }
+
     /// The game's own path arrows: adv_object.internal.<green|red>_arrow.<straight|left|right>.<dir> / .dest
     func arrowSprite(_ name: String) -> Sprite? {
         if let s = actorSprites[name] { return s }

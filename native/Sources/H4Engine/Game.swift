@@ -512,13 +512,25 @@ public final class GameState {
     /// "green_arrow.left.ne"). Green while the hero can still afford the step this turn, red after;
     /// the last cell gets the destination marker.
     public func arrows(for h: Hero) -> [(x: Int, y: Int, name: String)] {
-        let plan = h.plan
+        var plan = h.plan
         guard !plan.isEmpty else { return [] }
+        // a route to an object ends on the object itself (as in the game), though the hero stops
+        // on the cell before it: the last arrow points into it and the X sits on it
+        var visiting = false
+        if let t = h.target, let last = plan.last, let p = scene.placed.first(where: { $0.cellX == t.x && $0.cellY == t.y && $0.name == t.name }) {
+            var cell = (x: t.x, y: t.y)
+            var best = Int.max
+            for i in 0..<p.sprite.footprint.w { for j in 0..<p.sprite.footprint.h {
+                let d = max(abs(p.cellX + i - last.x), abs(p.cellY + j - last.y))
+                if d < best { best = d; cell = (p.cellX + i, p.cellY + j) }
+            } }
+            plan.append(cell); visiting = true
+        }
         var out: [(Int, Int, String)] = []
         var left = h.movement
         var px = h.x, py = h.y
         for (k, c) in plan.enumerated() {
-            let stepCost = passability.stepCost(from: px, py, to: c.x, c.y)
+            let stepCost = visiting && k == plan.count - 1 ? 0 : passability.stepCost(from: px, py, to: c.x, c.y)
             let colour = left + 0.001 >= stepCost ? "green_arrow" : "red_arrow"
             left -= stepCost
             if k == plan.count - 1 { out.append((c.x, c.y, "\(colour).dest")); break }

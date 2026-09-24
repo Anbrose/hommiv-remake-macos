@@ -151,8 +151,9 @@ if let out = snapshot {
         let near = scene.placed.filter { game.isPickup($0) && abs($0.cellX - hero.x) <= 6 && abs($0.cellY - hero.y) <= 6 }
         print("pickups nearby: \(near.map { "\($0.name.dropFirst(11).dropLast(4))@(\($0.cellX),\($0.cellY))" }.joined(separator: ", "))")
     }
-    if let target = plan, let hero = game.heroes.first {
-        game.click(hero: hero, x: target.0, y: target.1)
+    if let target = plan, let hero = game.heroes.first {   // a click on that cell's centre, as the mouse would do it
+        let (sx, sy) = scene.screen(x: target.0, y: target.1)
+        renderer.click(mapPoint: SIMD2(Float(sx), Float(sy)))
         print("plan: \(game.arrows(for: hero).map { "\($0.name)@(\($0.x),\($0.y))" }.joined(separator: " "))")
     }
     let w = ui == nil ? 1280 : AdventureUI.width, h = ui == nil ? 800 : AdventureUI.height
@@ -203,41 +204,7 @@ final class MapView: MTKView {
                 return
             }
         }
-        let m = renderer.pan + mouse / renderer.zoom
-        let u = (m.x - Float(g.map.size * 32 + 32)) / 32, v = (m.y - 32) / 16   // u = y - x, v = x + y
-        var x = Int(((v - u) / 2).rounded()), y = Int(((v + u) / 2).rounded())
-        // a pickup under the cursor (topmost drawn wins): walk next to it and take it
-        if let p = renderer.scene.placed.last(where: { p in
-            guard Float(p.x) <= m.x, m.x < Float(p.x + p.image.bitmap.width), Float(p.y) <= m.y, m.y < Float(p.y + p.image.bitmap.height) else { return false }
-            let bm = p.image.bitmap
-            return bm.pixels[((Int(m.y) - p.y) * bm.width + Int(m.x) - p.x) * 4 + 3] > 0 && g.isVisitable(p)
-        }) {
-            g.click(hero: hero, pickup: p)
-            return
-        }
-        if !g.passability.isFree(x, y) {
-            // Clicked on something you cannot stand on. If an object's picture is under the cursor
-            // (a bridge deck is drawn well above its cells), go to the nearest free cell of its
-            // footprint; otherwise to the nearest free cell around the click.
-            var best: (Int, Int)?
-            var bestD = Float.infinity
-            for p in renderer.scene.placed where Float(p.x) <= m.x && m.x < Float(p.x + p.image.bitmap.width) && Float(p.y) <= m.y && m.y < Float(p.y + p.image.bitmap.height) {
-                let bm = p.image.bitmap
-                let px = Int(m.x) - p.x, py = Int(m.y) - p.y
-                guard bm.pixels[(py * bm.width + px) * 4 + 3] > 0 else { continue }
-                for i in 0..<p.sprite.footprint.w {
-                    for j in 0..<p.sprite.footprint.h where g.passability.isFree(p.cellX + i, p.cellY + j) {
-                        let (cx, cy) = renderer.screen(Float(p.cellX + i), Float(p.cellY + j))
-                        let d = (cx - m.x) * (cx - m.x) + (cy - m.y) * (cy - m.y)
-                        if d < bestD { bestD = d; best = (p.cellX + i, p.cellY + j) }
-                    }
-                }
-            }
-            if best == nil, let c = g.freeCell(near: x, y), max(abs(c.0 - x), abs(c.1 - y)) <= 2 { best = c }
-            guard let b = best else { return }
-            (x, y) = b
-        }
-        g.click(hero: hero, x: x, y: y)
+        renderer.click(mapPoint: renderer.pan + mouse / renderer.zoom)
     }
     override func scrollWheel(with e: NSEvent) {
         renderer.pan -= SIMD2(Float(e.scrollingDeltaX), Float(e.scrollingDeltaY)) / renderer.zoom

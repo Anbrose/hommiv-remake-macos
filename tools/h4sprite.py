@@ -15,14 +15,20 @@ Image records (little-endian), worked out from the GOG build:
 
     palette u16 npal  u16 1  u16 speed  u8 0   (npal-1) x BGR   -- index 0 is transparent
     image   u16 len + name ("frame 001", "shadow 001", ...)
-            u8 flag (4)   u32 left, top, right, bottom
+            u8 kind       4 = full image, 1 = delta frame, 0 = empty
+            u32 left, top, right, bottom
             (bottom-top) rows of: u16 x0, u16 x1, u32 offset   -- the opaque span of the row
             pixels     one palette index per span pixel, rows concatenated
+            kind 4 only:
             alpha      one nibble per span pixel, low nibble first, 0..15
             summary    ceil((pixels+4)/64) nibbles (0 if no pixels), a coarse
                        per-64-pixel alpha the game uses to skip blocks; ignored here
 
-Records repeat while the next bytes form a valid palette header.
+Animated towns store a full base_frame (kind 4), then per frame only the pixels
+that change (kind 1: indices only, opaque, drawn over the base), "frame 001"
+often being empty (kind 0: zero box, no rows). Records repeat while the next
+bytes form a valid palette header. A few files are unfinished assets: a single
+613x513 "DELETE ME NOW!!!" box (some artifacts, exhausted mines, stagecoaches).
 
     actor_sequence  header u16 2, u16 kind (2; 3 = mounted/ranged, +6 bytes), u16 count
                     trailer i32 ox, i32 oy (origin, usually -361,-347),
@@ -48,7 +54,9 @@ def palette_ok(b, pos):
         return False
     ln = struct.unpack_from('<H', b, q)[0]
     name = b[q + 2:q + 2 + ln]
-    return 1 <= ln <= 512 and len(name) == ln and all(32 <= c < 127 for c in name) and b[q + 2 + ln:q + 3 + ln] == b'\x04'
+    # the byte after the name is the image kind: 4 = full image, 1 = delta frame over base_frame
+    # (sparse rows), 0 = empty (box all zero, no rows); the layout is the same for all of them
+    return 1 <= ln <= 512 and len(name) == ln and all(32 <= c < 127 for c in name) and b[q + 2 + ln] in (0, 1, 4)
 
 
 def parse(b):
@@ -65,6 +73,7 @@ def parse(b):
         ln = struct.unpack_from('<H', b, pos)[0]
         name = b[pos + 2:pos + 2 + ln].decode('latin1')
         pos += 2 + ln
+        kind = b[pos]
         L, T, R, B = struct.unpack_from('<4I', b, pos + 1)
         pos += 17
         rows = [struct.unpack_from('<HHI', b, pos + i * 8) for i in range(B - T)]
@@ -72,9 +81,12 @@ def parse(b):
         px = sum(x1 - x0 for x0, x1, _ in rows)
         pix = b[pos:pos + px]
         pos += px
-        alpha = b[pos:pos + (px + 1) // 2]
-        pos += (px + 1) // 2
-        pos += ((px + 4 + 63) // 64 + 1) // 2 if px else 0
+        if kind == 4:   # full image: 4-bit alpha per pixel, then the summary nibbles
+            alpha = b[pos:pos + (px + 1) // 2]
+            pos += (px + 1) // 2
+            pos += ((px + 4 + 63) // 64 + 1) // 2 if px else 0
+        else:           # delta frame: palette indices only, opaque where non-zero
+            alpha = b'\xff' * ((px + 1) // 2)
         images.append(dict(name=name, box=(L, T, R, B), rows=rows, pix=pix, alpha=alpha, pal=pal, speed=speed))
     return dict(images=images, header=b[:start], trailer=b[pos:])
 

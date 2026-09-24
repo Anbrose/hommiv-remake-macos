@@ -28,6 +28,9 @@ public struct Sprite {
     /// Footprint in map cells (adv_object headers: u16 w, u16 h at offset 5); (1, 1) when unknown.
     public let footprint: (w: Int, h: Int)
     public var frames: [SpriteImage] { images.filter { !$0.name.hasPrefix("shadow") && $0.name != "base_frame" } }
+    /// Unfinished assets in the game data are a 613x513 "DELETE ME NOW!!!" box (some artifacts,
+    /// exhausted mines, stagecoaches, ...); nothing that size is a real adventure object.
+    public var isPlaceholder: Bool { images.first.map { $0.bitmap.width == 613 && $0.bitmap.height == 513 } ?? false }
     public var baseFrame: SpriteImage? { images.first { $0.name == "base_frame" } }
     public func shadow(for frame: SpriteImage) -> SpriteImage? {
         guard let n = Sprite.frameNumbers(frame.name).first else { return nil }
@@ -68,7 +71,9 @@ public struct Sprite {
             let q = p + 7 + (npal - 1) * 3
             guard q + 7 <= d.count else { return false }
             let ln = Int(r.peekU16(at: q))
-            guard ln >= 1, ln <= 512, q + 2 + ln < d.count, r.byte(at: q + 2 + ln) == 4 else { return false }
+            // the byte after the name is the image kind: 4 = full image, 1 = delta frame over base_frame
+            // (sparse rows), 0 = empty (zero box, no rows); the layout is the same for all of them
+            guard ln >= 1, ln <= 512, q + 2 + ln < d.count, [0, 1, 4].contains(r.byte(at: q + 2 + ln)) else { return false }
             for i in 0..<ln { let c = r.byte(at: q + 2 + i); if c < 32 || c >= 127 { return false } }
             return true
         }
@@ -88,7 +93,7 @@ public struct Sprite {
                 pal[i * 3] = rr; pal[i * 3 + 1] = g; pal[i * 3 + 2] = b
             }
             let name = rd.string16()
-            _ = rd.u8()
+            let kind = rd.u8()   // 4 = full image with 4-bit alpha, 1 = delta frame (indices only), 0 = empty
             let L = Int(rd.u32()), T = Int(rd.u32()), R = Int(rd.u32()), B = Int(rd.u32())
             let w = R - L, h = B - T
             var rows: [(Int, Int, Int)] = []
@@ -101,15 +106,19 @@ public struct Sprite {
             }
             let pixStart = rd.pos
             let alphaStart = pixStart + px
-            rd.pos = alphaStart + (px + 1) / 2 + (px > 0 ? ((px + 4 + 63) / 64 + 1) / 2 : 0)
+            let hasAlpha = kind == 4
+            rd.pos = hasAlpha ? alphaStart + (px + 1) / 2 + (px > 0 ? ((px + 4 + 63) / 64 + 1) / 2 : 0) : alphaStart
             var bm = Bitmap(width: max(w, 1), height: max(h, 1))
             var k = 0
             for (y, row) in rows.enumerated() {
                 let (x0, x1, off) = row
                 for i in 0..<(x1 - x0) {
                     let idx = Int(r.byte(at: pixStart + off + i))
-                    let ab = r.byte(at: alphaStart + k / 2)
-                    let a = (k % 2 == 0) ? (ab & 0xF) : (ab >> 4)
+                    var a: UInt8 = 15
+                    if hasAlpha {
+                        let ab = r.byte(at: alphaStart + k / 2)
+                        a = (k % 2 == 0) ? (ab & 0xF) : (ab >> 4)
+                    }
                     k += 1
                     if idx != 0 && a != 0 {
                         let p = (y * bm.width + x0 + i) * 4

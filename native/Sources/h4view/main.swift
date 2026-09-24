@@ -11,16 +11,47 @@ guard args.count >= 3 else {
 }
 var level = 0
 var snapshot: String?
+var center: (Int, Int)?   // --center x,y: map cell to put in the middle of the view
 var i = 3
 while i < args.count {
     if args[i] == "--level", i + 1 < args.count { level = Int(args[i + 1]) ?? 0; i += 2 }
     else if args[i] == "--snapshot", i + 1 < args.count { snapshot = args[i + 1]; i += 2 }
-    else { i += 1 }
+    else if args[i] == "--center", i + 1 < args.count {
+        let p = args[i + 1].split(separator: ",").compactMap { Int($0) }
+        if p.count == 2 { center = (p[0], p[1]) }
+        i += 2
+    } else { i += 1 }
 }
 
 var t0 = Date()
 func lap(_ what: String) { print("\(what): \(Int(Date().timeIntervalSince(t0) * 1000)) ms"); t0 = Date() }
 let archive = try H4Archive(url: URL(fileURLWithPath: args[1]))
+func writePNG(_ bm: Bitmap, to path: String) {
+    // straight (non-premultiplied) RGBA: CGImage accepts it, CGContext would not
+    guard let provider = CGDataProvider(data: Data(bm.pixels) as CFData),
+          let img = CGImage(width: bm.width, height: bm.height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: bm.width * 4,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue),
+                            provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent),
+          let dest = CGImageDestinationCreateWithURL(URL(fileURLWithPath: path) as CFURL, "public.png" as CFString, 1, nil) else {
+        print("  could not write \(path)"); return
+    }
+    CGImageDestinationAddImage(dest, img, nil)
+    CGImageDestinationFinalize(dest)
+}
+
+if args[2] == "--dump" {   // h4view <h4r> --dump <entry>...: describe sprite entries, write each image as PNG (debugging aid)
+    for name in args.dropFirst(3) {
+        guard let e = archive.byName[name] else { print("\(name): not in archive"); continue }
+        print("\(name): size \(e.size) unpacked \(e.unpackedSize) type \(e.type) alias '\(e.alias)'")
+        if let s = try? Sprite(data: archive.payload(name)) {
+            print("  \(s.images.count) images \(s.images.prefix(4).map { "\($0.name) \($0.box)" }) origin \(s.origin) footprint \(s.footprint)")
+            if let dir = ProcessInfo.processInfo.environment["H4DUMP_DIR"] {
+                for img in s.images { writePNG(img.bitmap, to: "\(dir)/\(name).\(img.name).png") }
+            }
+        } else { print("  sprite decode failed") }
+    }
+    exit(0)
+}
 let objNames = Set(archive.names(prefix: "adv_object.").map { String($0.dropFirst("adv_object.".count).dropLast(4)) })
 let map = try MapFile(data: Data(contentsOf: URL(fileURLWithPath: args[2])), objectNames: objNames)
 let masks = try TransitionMasks(data: archive.payload("transition.Transitions.h4d"))
@@ -35,6 +66,10 @@ if let out = snapshot {
     lap("textures uploaded")
     let w = 1280, h = 800
     renderer.viewSize = SIMD2(Float(w), Float(h))
+    if let c = center {
+        let (sx, sy) = scene.screen(x: c.0, y: c.1)
+        renderer.pan = SIMD2(Float(sx - w / 2), Float(sy - h / 2))
+    }
     let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: w, height: h, mipmapped: false)
     td.usage = [.renderTarget, .shaderRead]
     let target = device.makeTexture(descriptor: td)!
@@ -98,6 +133,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         view.renderer = renderer
         view.delegate = renderer
         renderer.viewSize = SIMD2(Float(view.drawableSize.width), Float(view.drawableSize.height))
+        if let c = center {
+            let (sx, sy) = scene.screen(x: c.0, y: c.1)
+            renderer.pan = SIMD2(Float(sx) - renderer.viewSize.x / 2, Float(sy) - renderer.viewSize.y / 2)
+        }
         window = NSWindow(contentRect: view.frame, styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "Heroes IV — \(map.name)"
         window.contentView = view

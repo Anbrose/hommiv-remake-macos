@@ -10,7 +10,7 @@ public final class MapScene {
         public let bitmap: Bitmap
     }
     public struct Placed {
-        public let name: String        // adv_object name, identifies the sprite file
+        public let name: String        // archive entry of the sprite file (random placeholders already resolved)
         public let sprite: Sprite
         public let image: SpriteImage  // base frame (or first frame)
         public let shadow: SpriteImage?
@@ -112,16 +112,37 @@ public final class MapScene {
         let n = map.size
         var out: [Placed] = []
         let objs = map.objects.filter { $0.level == level && $0.x >= -2 && $0.x < n + 2 && $0.y >= -2 && $0.y < n + 2 }
+        let resolver = RandomResolver(archive: archive)
+        let debug = ProcessInfo.processInfo.environment["H4DEBUG"] != nil
+        var towns = 0
         for o in objs {
-            let key = o.name
+            var key = "adv_object.\(o.name).h4d"
+            let candidates = resolver.resolve(o, townOrdinal: towns)
+            if o.type == "random_town" { towns += 1 }
+            // the first candidate that decodes to a real (non-placeholder) sprite wins
+            for c in candidates {
+                if spriteCache[c] == nil, let d = try? archive.payload(c), let s = try? Sprite(data: d) { spriteCache[c] = s }
+                if let s = spriteCache[c], !s.isPlaceholder { key = c; break }
+            }
+            if debug, o.type.hasPrefix("random") { print("resolve \(o.name) [\(o.type)/\(o.subtype)] -> \(candidates) => \(key)") }
             if spriteCache[key] == nil {
-                guard let d = try? archive.payload("adv_object.\(key).h4d"), let s = try? Sprite(data: d) else { continue }
+                guard let d = try? archive.payload(key), let s = try? Sprite(data: d) else { continue }
                 spriteCache[key] = s
             }
-            guard let s = spriteCache[key], let img = s.baseFrame ?? s.frames.first else { continue }
+            guard let s = spriteCache[key], !s.isPlaceholder, let img = s.baseFrame ?? s.frames.first else { continue }
             let (sx, sy) = screen(x: o.x, y: o.y)
             // (x, y) is the top corner of the footprint; paint order follows the bottom corner
             let depth = (o.x + o.y + s.footprint.w + s.footprint.h - 2) * 1000 + (o.y - o.x) + 500
+            if let pick = ProcessInfo.processInfo.environment["H4PICK"] {   // H4PICK=x,y (map cell): list sprites covering that cell's centre
+                let c = pick.split(separator: ",").compactMap { Int($0) }
+                if c.count == 2 {
+                    let (px, py) = screen(x: c[0], y: c[1])
+                    let ix = sx + Int(s.origin.x) + img.box.left, iy = sy + Int(s.origin.y) + img.box.top
+                    if px >= ix, px < ix + img.bitmap.width, py >= iy, py < iy + img.bitmap.height {
+                        print("pick: \(o.name) at (\(o.x),\(o.y)) -> \(key) image \(img.name) \(img.bitmap.width)x\(img.bitmap.height) origin \(s.origin)")
+                    }
+                }
+            }
             out.append(Placed(name: key, sprite: s, image: img, shadow: s.shadow(for: img),
                               x: sx + Int(s.origin.x) + img.box.left, y: sy + Int(s.origin.y) + img.box.top,
                               anchorX: sx, anchorY: sy, depth: depth))

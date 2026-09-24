@@ -56,6 +56,75 @@ final class Renderer: NSObject, MTKViewDelegate {
         return makeTexture(bm)
     }()
     var onTitle: ((String) -> Void)?
+    var ui: AdventureUI?
+    var uiTextures: [String: MTLTexture] = [:]
+    var minimapTexture: MTLTexture?
+    /// Device pixels per canvas pixel of the 1024x768 UI.
+    var uiScale: Float { viewSize.y / Float(AdventureUI.height) }
+    lazy var white: MTLTexture = {
+        var bm = Bitmap(width: 2, height: 2)
+        for i in 0..<4 { bm.pixels[i * 4] = 255; bm.pixels[i * 4 + 1] = 255; bm.pixels[i * 4 + 2] = 255; bm.pixels[i * 4 + 3] = 255 }
+        return makeTexture(bm)
+    }()
+
+    func uiTexture(_ key: String, _ make: () -> Bitmap) -> MTLTexture {
+        if let t = uiTextures[key] { return t }
+        let t = makeTexture(make())
+        uiTextures[key] = t
+        return t
+    }
+
+    /// Quads of the screen chrome on the 1024x768 canvas.
+    func uiQuads() -> [Quad] {
+        guard let ui = ui, let g = game else { return [] }
+        var out: [Quad] = []
+        for l in ui.frameImages {
+            out.append(Quad(texture: uiTexture("frame|\(l.name)|\(l.x),\(l.y)", { l.bitmap }), x: l.x, y: l.y, w: l.width, h: l.height))
+        }
+        // minimap: the map squashed into the panel's frame, with the visible area outlined
+        if let mm = ui.hotspot("mini_map") {
+            if minimapTexture == nil { minimapTexture = makeTexture(AdventureUI.minimap(map: g.map, level: g.level, size: mm.width)) }
+            out.append(Quad(texture: minimapTexture!, x: mm.x, y: mm.y, w: mm.width, h: mm.height))
+            let n = Float(scene.map.size)
+            // the playable rectangle on the map canvas: columns -n/2..n/2, rows n/2..3n/2
+            let mapW = n * 64, mapH = n * 16
+            let originX: Float = 32, originY: Float = n * 8 + 32
+            let vx0 = (pan.x - originX) / mapW, vy0 = (pan.y - originY) / mapH
+            let vx1 = vx0 + Float(AdventureUI.mapViewportWidth) * uiScale / zoom / mapW, vy1 = vy0 + viewSize.y / zoom / mapH
+            let rx0 = mm.x + Int(max(0, min(1, vx0)) * Float(mm.width)), rx1 = mm.x + Int(max(0, min(1, vx1)) * Float(mm.width))
+            let ry0 = mm.y + Int(max(0, min(1, vy0)) * Float(mm.height)), ry1 = mm.y + Int(max(0, min(1, vy1)) * Float(mm.height))
+            if rx1 > rx0, ry1 > ry0 {
+                out.append(Quad(texture: white, x: rx0, y: ry0, w: rx1 - rx0, h: 1)); out.append(Quad(texture: white, x: rx0, y: ry1 - 1, w: rx1 - rx0, h: 1))
+                out.append(Quad(texture: white, x: rx0, y: ry0, w: 1, h: ry1 - ry0)); out.append(Quad(texture: white, x: rx1 - 1, y: ry0, w: 1, h: ry1 - ry0))
+            }
+        }
+        // resource numbers, right-aligned in their fields
+        for name in ui.resourceNames {
+            guard let field = ui.hotspot("\(name)_Number") else { continue }
+            let text = String(g.resources[name] ?? 0)
+            let t = uiTexture("num|\(text)", { ui.numberFont.render(text, colour: (40, 24, 8)) })
+            let w = ui.numberFont.measure(text)
+            out.append(Quad(texture: t, x: field.x + field.width - w - 2, y: field.y + (field.height - ui.numberFont.size) / 2, w: w, h: ui.numberFont.size))
+        }
+        // the day scroll and its two text lines
+        if let slot = ui.hotspot("day_scroll") {
+            if let bg = ui.dayScroll["Background"] { out.append(Quad(texture: uiTexture("scroll|bg", { bg.bitmap }), x: slot.x + bg.x, y: slot.y + bg.y, w: bg.width, h: bg.height)) }
+            if let rt = ui.dayScroll["Right"] { out.append(Quad(texture: uiTexture("scroll|right", { rt.bitmap }), x: slot.x + rt.x, y: slot.y + rt.y, w: rt.width, h: rt.height)) }
+            if let field = ui.dayScroll["text"] {
+                let lines = ["Day \(g.dayOfWeek) of Week \(g.week)", "Month \(g.month)"]
+                for (i, line) in lines.enumerated() {
+                    let w = ui.dateFont.measure(line)
+                    let t = uiTexture("date|\(line)", { ui.dateFont.render(line, colour: (40, 24, 8)) })
+                    out.append(Quad(texture: t, x: slot.x + field.x + (field.width - w) / 2, y: slot.y + field.y + i * ui.dateFont.lineHeight - 2, w: w, h: ui.dateFont.size))
+                }
+            }
+        }
+        // End Turn button (released state) in its hotspot
+        if let slot = ui.hotspot("end_turn"), let b = ui.endTurnButton["Released"] {
+            out.append(Quad(texture: uiTexture("button|end_turn", { b.bitmap }), x: slot.x, y: slot.y, w: b.width, h: b.height))
+        }
+        return out
+    }
     var showBlocked = false   // debug: mark every cell a hero cannot enter
     lazy var redDot: MTLTexture = {
         var bm = Bitmap(width: 6, height: 6)
@@ -228,7 +297,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             for line in g.log { print(line) }
             g.log.removeAll()
             if let h = g.heroes.first {
-                onTitle?("\(g.dateText) — movement \(Int(h.movement.rounded()))/\(Int(h.maxMovement))  (click: plan / go, Return: end turn)")
+                onTitle?("Heroes IV — \(scene.map.name) — movement \(Int(h.movement.rounded()))/\(Int(h.maxMovement))")
             }
         }
         if frameTimes.count >= 300 {
@@ -240,7 +309,9 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
 
     func encode(rpd: MTLRenderPassDescriptor, present: MTLDrawable?, time: Double) {
-        let list = quads(at: time)
+        let mapList = quads(at: time)
+        let uiList = uiQuads()
+        let list = mapList + uiList
         var verts: [Vertex] = []
         verts.reserveCapacity(list.count * 6)
         for q in list {
@@ -255,14 +326,27 @@ final class Renderer: NSObject, MTKViewDelegate {
         let cmd = queue.makeCommandBuffer()!
         let enc = cmd.makeRenderCommandEncoder(descriptor: rpd)!
         enc.setRenderPipelineState(pipeline)
-        var cam = Camera(vw: viewSize.x, vh: viewSize.y, px: pan.x, py: pan.y, zoom: zoom, pad: 0)
         enc.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
+        // pass 1: the map, clipped to the viewport left of the panel
+        var cam = Camera(vw: viewSize.x, vh: viewSize.y, px: pan.x, py: pan.y, zoom: zoom, pad: 0)
         enc.setVertexBytes(&cam, length: MemoryLayout<Camera>.stride, index: 1)
-        let minX = pan.x, minY = pan.y, maxX = pan.x + viewSize.x / zoom, maxY = pan.y + viewSize.y / zoom
-        for (i, q) in list.enumerated() {
+        let viewportW = ui == nil ? Int(viewSize.x) : min(Int(viewSize.x), Int(Float(AdventureUI.mapViewportWidth) * uiScale))
+        enc.setScissorRect(MTLScissorRect(x: 0, y: 0, width: max(1, viewportW), height: Int(viewSize.y)))
+        let minX = pan.x, minY = pan.y, maxX = pan.x + Float(viewportW) / zoom, maxY = pan.y + viewSize.y / zoom
+        for (i, q) in mapList.enumerated() {
             if Float(q.x + q.w) < minX || Float(q.x) > maxX || Float(q.y + q.h) < minY || Float(q.y) > maxY { continue }
             enc.setFragmentTexture(q.texture, index: 0)
             enc.drawPrimitives(type: .triangle, vertexStart: i * 6, vertexCount: 6)
+        }
+        // pass 2: the chrome on the 1024x768 canvas
+        if !uiList.isEmpty {
+            enc.setScissorRect(MTLScissorRect(x: 0, y: 0, width: Int(viewSize.x), height: Int(viewSize.y)))
+            var uiCam = Camera(vw: viewSize.x, vh: viewSize.y, px: 0, py: 0, zoom: uiScale, pad: 0)
+            enc.setVertexBytes(&uiCam, length: MemoryLayout<Camera>.stride, index: 1)
+            for (i, q) in uiList.enumerated() {
+                enc.setFragmentTexture(q.texture, index: 0)
+                enc.drawPrimitives(type: .triangle, vertexStart: (mapList.count + i) * 6, vertexCount: 6)
+            }
         }
         enc.endEncoding()
         if let p = present { cmd.present(p) }

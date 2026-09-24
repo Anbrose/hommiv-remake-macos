@@ -205,6 +205,8 @@ public final class GameState {
     public var heroes: [Hero] = []
     /// Things that happened this frame, for the UI (e.g. "picked up Resources.Gold").
     public var log: [String] = []
+    /// The player's treasury (starting amounts of a normal game).
+    public var resources: [String: Int] = ["Wood": 15, "Ore": 15, "Mercury": 7, "Sulfur": 7, "Crystal": 7, "Gems": 7, "Gold": 15000]
     public var day = 1
     public var week: Int { (day - 1) / 7 % 4 + 1 }
     public var month: Int { (day - 1) / 28 + 1 }
@@ -260,6 +262,16 @@ public final class GameState {
         passability.free(p.cellX, p.cellY)
         hero.movement -= 1
         hero.target = nil
+        // what a pile is worth (rough HoMM IV amounts; the real tables come later)
+        let kind = p.name.replacingOccurrences(of: "adv_object.Resources.", with: "").replacingOccurrences(of: ".h4d", with: "")
+        switch kind {
+        case "Gold": resources["Gold", default: 0] += 750
+        case "Wood", "Ore": resources[kind, default: 0] += 8
+        case "Mercury", "Sulfur", "Crystal", "Gems": resources[kind, default: 0] += 4
+        case "Treasure Chest": resources["Gold", default: 0] += 1500
+        case "Campfire": resources["Gold", default: 0] += 500; resources["Wood", default: 0] += 5
+        default: break
+        }
         log.append("picked up \(p.name) at (\(p.cellX),\(p.cellY))")
     }
 

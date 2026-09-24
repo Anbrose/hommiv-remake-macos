@@ -56,6 +56,12 @@ func writePNG(_ bm: Bitmap, to path: String) {
     CGImageDestinationFinalize(dest)
 }
 
+if args[2] == "--text", args.count >= 6 {   // h4view <h4r> --text <font entry> <text> <out.png>: render text with a game font (debugging aid)
+    let font = try H4Font(data: archive.payload(args[3]))
+    writePNG(font.render(args[4], colour: (40, 24, 8)), to: args[5])
+    print("size \(font.size) line \(font.lineHeight) ascent \(font.ascent) glyphs \(font.glyphs.count); '\(args[4])' measures \(font.measure(args[4])) -> \(args[5])")
+    exit(0)
+}
 if args[2] == "--dump" {   // h4view <h4r> --dump <entry>...: describe sprite entries, write each image as PNG (debugging aid)
     for name in args.dropFirst(3) {
         guard let e = archive.byName[name] else { print("\(name): not in archive"); continue }
@@ -91,12 +97,26 @@ if let town = scene.placed.filter({ $0.category == "castle" }).min(by: { ($0.cel
     }
 }
 
+// The adventure screen chrome (frame, panel, fonts); the map alone if the UI files are missing.
+var ui: AdventureUI? = nil
+do { ui = try AdventureUI(archive: archive, index: resolver); lap("ui loaded") } catch { print("no UI: \(error)") }
+
+/// Camera setup shared by the window and the snapshot: 1 map pixel per canvas pixel times
+/// the requested zoom, the requested cell in the middle of the map viewport.
+func aim(_ renderer: Renderer, at c: (Int, Int)) {
+    renderer.zoom = zoom * (ui == nil ? 1 : renderer.uiScale)
+    let viewportW = ui == nil ? renderer.viewSize.x : Float(AdventureUI.mapViewportWidth) * renderer.uiScale
+    let (sx, sy) = scene.screen(x: c.0, y: c.1)
+    renderer.pan = SIMD2(Float(sx) - viewportW / 2 / renderer.zoom, Float(sy) - renderer.viewSize.y / 2 / renderer.zoom)
+}
+
 if let out = snapshot {
-    // Render one 1280x800 frame centred on the map into a texture and save it as PNG.
+    // Render one 1024x768 frame centred on the map into a texture and save it as PNG.
     let renderer = try Renderer(device: device, scene: scene, pixelFormat: .rgba8Unorm)
     renderer.game = game
     renderer.resolver = resolver
     renderer.showBlocked = showBlocked
+    renderer.ui = ui
     lap("textures uploaded")
     var snapTime = 0.0
     if let target = walk, let hero = game.heroes.first {
@@ -121,12 +141,9 @@ if let out = snapshot {
         game.click(hero: hero, x: target.0, y: target.1)
         print("plan: \(game.arrows(for: hero).map { "\($0.name)@(\($0.x),\($0.y))" }.joined(separator: " "))")
     }
-    let w = 1280, h = 800
+    let w = ui == nil ? 1280 : AdventureUI.width, h = ui == nil ? 800 : AdventureUI.height
     renderer.viewSize = SIMD2(Float(w), Float(h))
-    renderer.zoom = zoom
-    let c = center ?? game.heroes.first.map { ($0.x, $0.y) } ?? (map.size / 2, map.size / 2)
-    let (sx, sy) = scene.screen(x: c.0, y: c.1)
-    renderer.pan = SIMD2(Float(sx) - Float(w) / 2 / zoom, Float(sy) - Float(h) / 2 / zoom)
+    aim(renderer, at: center ?? game.heroes.first.map { ($0.x, $0.y) } ?? (map.size / 2, map.size / 2))
     let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: w, height: h, mipmapped: false)
     td.usage = [.renderTarget, .shaderRead]
     let target = device.makeTexture(descriptor: td)!
@@ -165,6 +182,13 @@ final class MapView: MTKView {
         let p = convert(e.locationInWindow, from: nil)
         let scale = Float(window?.backingScaleFactor ?? 1)
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
+        if let ui = renderer.ui {   // the panel: only its buttons react
+            let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale
+            if cx >= Float(AdventureUI.mapViewportWidth) {
+                if ui.hit("end_turn", x: cx, y: cy) { g.endTurn() }
+                return
+            }
+        }
         let m = renderer.pan + mouse / renderer.zoom
         let u = (m.x - Float(g.map.size * 32 + 32)) / 32, v = (m.y - 32) / 16   // u = y - x, v = x + y
         var x = Int(((v - u) / 2).rounded()), y = Int(((v + u) / 2).rounded())
@@ -229,7 +253,8 @@ final class MapView: MTKView {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow!
     func applicationDidFinishLaunching(_ n: Notification) {
-        let view = MapView(frame: NSRect(x: 0, y: 0, width: 1280, height: 800), device: device)
+        let size = ui == nil ? NSSize(width: 1280, height: 800) : NSSize(width: AdventureUI.width, height: AdventureUI.height)
+        let view = MapView(frame: NSRect(origin: .zero, size: size), device: device)
         view.colorPixelFormat = .bgra8Unorm
         view.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
         view.preferredFramesPerSecond = 60
@@ -237,15 +262,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         renderer.game = game
         renderer.resolver = resolver
         renderer.showBlocked = showBlocked
+        renderer.ui = ui
         renderer.onTitle = { [weak self] t in if self?.window.title != t { self?.window.title = t } }
         view.renderer = renderer
         view.delegate = renderer
         renderer.viewSize = SIMD2(Float(view.drawableSize.width), Float(view.drawableSize.height))
-        renderer.zoom = zoom
-        let c = center ?? game.heroes.first.map { ($0.x, $0.y) } ?? (map.size / 2, map.size / 2)
-        let (sx, sy) = scene.screen(x: c.0, y: c.1)
-        renderer.pan = SIMD2(Float(sx) - renderer.viewSize.x / 2 / zoom, Float(sy) - renderer.viewSize.y / 2 / zoom)
+        aim(renderer, at: center ?? game.heroes.first.map { ($0.x, $0.y) } ?? (map.size / 2, map.size / 2))
         window = NSWindow(contentRect: view.frame, styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
+        window.contentAspectRatio = size
         window.title = "Heroes IV — \(map.name)"
         window.contentView = view
         window.makeFirstResponder(view)

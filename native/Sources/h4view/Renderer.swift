@@ -146,9 +146,10 @@ final class Renderer: NSObject, MTKViewDelegate {
                 if let icon = icon {
                     out.append(Quad(texture: uiTexture("icon|\(icon.name)", { icon.bitmap }), x: cx - icon.width / 2, y: cy - icon.height / 2, w: icon.width, h: icon.height))
                 }
-                if !count.isEmpty {
+                if !count.isEmpty {   // the stack size in a small dark box at the ring's bottom, like the game
                     let w = ui.numberFont.measure(count)
-                    out.append(Quad(texture: uiTexture("num|\(count)", { ui.numberFont.render(count, colour: (40, 24, 8)) }), x: cx + 24 - w, y: cy + 14, w: w, h: ui.numberFont.size))
+                    out.append(Quad(texture: shade, x: cx - w / 2 - 3, y: cy + 16, w: w + 6, h: ui.numberFont.size + 2))
+                    out.append(Quad(texture: uiTexture("count|\(count)", { ui.numberFont.render(count, colour: (255, 236, 200)) }), x: cx - w / 2, y: cy + 17, w: w, h: ui.numberFont.size))
                 }
             }
         }

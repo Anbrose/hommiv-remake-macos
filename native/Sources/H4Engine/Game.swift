@@ -151,6 +151,10 @@ public final class Hero {
     public var name = "Hero"
     public var keyword = ""           // heroes table keyword, also the portrait layer name
     public var alignment = "life"
+    /// The army travelling with the hero (the hero is a stack of his own, drawn first).
+    public struct Stack { public var creature: String; public var count: Int }
+    public var army: [Stack] = []
+    public static let armySlots = 7   // the hero plus six stacks
     public var x: Int, y: Int         // current cell
     public var facing = "s"
     public var movement: Float
@@ -213,8 +217,10 @@ public final class GameState {
     public var tables: RuleTables?
     public struct Town { public let x: Int, y: Int; public var name: String; public let alignment: String; public var owned: Bool }
     public struct Mine { public let x: Int, y: Int, name: String, resource: String, amount: Int; public var owned: Bool }
+    public struct Dwelling { public let x: Int, y: Int, name: String, creature: String; public var available: Int }
     public var towns: [Town] = []
     public var mines: [Mine] = []
+    public var dwellings: [Dwelling] = []
     /// Income per day from everything the player owns.
     public var income: [String: Int] {
         var out: [String: Int] = [:]
@@ -245,8 +251,28 @@ public final class GameState {
         mines.firstIndex { $0.x == p.cellX && $0.y == p.cellY && $0.name == p.name }
     }
 
-    /// Objects a hero walks up to and uses: pickups and mines (towns and dwellings later).
-    public func isVisitable(_ p: MapScene.Placed) -> Bool { isPickup(p) || mine(for: p) != nil }
+    public func dwelling(for p: MapScene.Placed) -> Int? {
+        dwellings.firstIndex { $0.x == p.cellX && $0.y == p.cellY && $0.name == p.name }
+    }
+
+    /// Objects a hero walks up to and uses: pickups, mines and dwellings (towns later).
+    public func isVisitable(_ p: MapScene.Placed) -> Bool { isPickup(p) || mine(for: p) != nil || dwelling(for: p) != nil }
+
+    /// Give a hero the usual starting army: the two cheapest level-1 creatures of his alignment,
+    /// half a week's growth each.
+    public func giveStartingArmy(_ hero: Hero) {
+        guard let t = tables else { return }
+        let l1 = t.creatures.filter { $0.level == 1 && $0.alignment == hero.alignment }.sorted { $0.gold < $1.gold }
+        hero.army = l1.prefix(2).map { Hero.Stack(creature: $0.keyword, count: max(1, $0.growth / 2)) }
+    }
+
+    /// Add creatures to a hero's army, merging with a stack of the same kind.
+    public func add(_ creature: String, _ count: Int, to hero: Hero) -> Bool {
+        if let i = hero.army.firstIndex(where: { $0.creature == creature }) { hero.army[i].count += count; return true }
+        guard hero.army.count < Hero.armySlots - 1 else { return false }
+        hero.army.append(Hero.Stack(creature: creature, count: count))
+        return true
+    }
 
     /// Register the towns and mines on the map (names from the rule tables).
     public func registerObjects(townFactions: [String: String]) {
@@ -263,6 +289,12 @@ public final class GameState {
                 if let (res, amount) = RuleTables.mineIncome[short] {
                     mines.append(Mine(x: p.cellX, y: p.cellY, name: p.name, resource: res, amount: amount, owned: false))
                 }
+            } else if p.category == "creature generators", let t = tables {
+                var short = p.name.replacingOccurrences(of: "adv_object.creature generators.", with: "").replacingOccurrences(of: ".h4d", with: "").lowercased()
+                if short.hasSuffix(" r") { short.removeLast(2) }
+                if let kw = t.dwellingCreature[short], let c = t.creature(kw) {
+                    dwellings.append(Dwelling(x: p.cellX, y: p.cellY, name: p.name, creature: c.keyword, available: c.growth))
+                }
             }
         }
     }
@@ -273,6 +305,18 @@ public final class GameState {
         if let i = mine(for: p) {
             if mines[i].owned { log.append("\(mines[i].resource) mine already yours") }
             else { mines[i].owned = true; log.append("captured a mine: +\(mines[i].amount) \(mines[i].resource) per day") }
+            hero.target = nil
+        }
+        if let i = dwelling(for: p), let c = tables?.creature(dwellings[i].creature) {
+            // recruit everything you can afford (a proper dialog comes later)
+            let affordable = c.gold > 0 ? resources["Gold", default: 0] / c.gold : dwellings[i].available
+            let n = min(dwellings[i].available, affordable)
+            if n <= 0 { log.append("\(c.plural): none to recruit / not enough gold") }
+            else if add(c.keyword, n, to: hero) {
+                dwellings[i].available -= n
+                resources["Gold", default: 0] -= n * c.gold
+                log.append("recruited \(n) \(n == 1 ? c.name : c.plural) for \(n * c.gold) gold")
+            } else { log.append("no room in the army for \(c.plural)") }
             hero.target = nil
         }
     }
@@ -399,6 +443,9 @@ public final class GameState {
         day += 1
         for h in heroes { h.movement = h.maxMovement; h.path = []; h.plan = [] }
         for (res, amount) in income { resources[res, default: 0] += amount }
+        if dayOfWeek == 1, let t = tables {   // a new week: dwellings restock
+            for i in dwellings.indices { dwellings[i].available += t.creature(dwellings[i].creature)?.growth ?? 0 }
+        }
     }
 
     public var dateText: String { "Month \(month), Week \(week), Day \(dayOfWeek)" }

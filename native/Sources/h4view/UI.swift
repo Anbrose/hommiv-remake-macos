@@ -30,6 +30,22 @@ final class AdventureUI {
 
     /// Where the hero list's round slots are on the panel (centres, top to bottom).
     static let heroSlots = [(789, 393), (789, 465), (789, 537)]
+    /// The seven rings of the army panel (the "IGNORE" image at 737,575), centres on the canvas.
+    static let armySlots = [(769, 611), (833, 611), (897, 611), (961, 611), (801, 679), (865, 679), (929, 679)]
+
+    var creatureIcons: LayerFile?
+    /// A creature's 52x52 icon from layers.icons.creatures.52 (keyed by creature name, any case).
+    func creatureIcon(_ keyword: String) -> UILayer? {
+        if creatureIcons == nil, let d = try? archive.payload("layers.icons.creatures.52.h4d") { creatureIcons = try? LayerFile(data: d) }
+        return creatureIcons?.layers.first { $0.name.lowercased() == keyword.lowercased() }
+    }
+    var armyRings: LayerFile?
+    /// The ring drawn around a hero's portrait in the hero list (layers.control.army_rings).
+    func heroRing() -> (frame: UILayer, portraitAt: (Int, Int))? {
+        if armyRings == nil, let d = try? archive.payload("layers.control.army_rings.h4d") { armyRings = try? LayerFile(data: d) }
+        guard let f = armyRings?["Army_Frame"], let p = armyRings?["portrait"] else { return nil }
+        return (f, (p.x, p.y))
+    }
 
     init(archive: H4Archive, index: RandomResolver) throws {
         self.archive = archive
@@ -51,7 +67,7 @@ final class AdventureUI {
     /// Image layers of the frame in drawing order: opaque backgrounds, then the big translucent
     /// borders, then the small icons (the file order would bury the icons under the panel).
     var frameImages: [UILayer] {
-        let imgs = frame.layers.filter { $0.isImage && $0.name != "DONTUSE" && $0.name != "IGNORE" }
+        let imgs = frame.layers.filter { $0.isImage && $0.name != "DONTUSE" }   // "IGNORE" is the army panel's rings
         return imgs.sorted { a, b in
             if (a.kind == 0) != (b.kind == 0) { return a.kind == 0 }
             return a.width * a.height > b.width * b.height

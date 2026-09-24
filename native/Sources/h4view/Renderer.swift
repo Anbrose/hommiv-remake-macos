@@ -119,11 +119,30 @@ final class Renderer: NSObject, MTKViewDelegate {
                 }
             }
         }
-        // hero portraits in the hero list, town names in the town list
+        // hero portraits (in their rings) in the hero list, town names in the town list
         for (i, h) in g.heroes.prefix(AdventureUI.heroSlots.count).enumerated() {
             if let p = ui.portrait(keyword: h.keyword, alignment: h.alignment) {
                 let (cx, cy) = AdventureUI.heroSlots[i]
-                out.append(Quad(texture: uiTexture("portrait|\(h.alignment)|\(h.keyword)", { p.bitmap }), x: cx - p.width / 2, y: cy - p.height / 2, w: p.width, h: p.height))
+                let px = cx - p.width / 2, py = cy - p.height / 2
+                if let ring = ui.heroRing() {
+                    out.append(Quad(texture: uiTexture("ring|frame", { ring.frame.bitmap }), x: px - ring.portraitAt.0 + ring.frame.x, y: py - ring.portraitAt.1 + ring.frame.y, w: ring.frame.width, h: ring.frame.height))
+                }
+                out.append(Quad(texture: uiTexture("portrait|\(h.alignment)|\(h.keyword)", { p.bitmap }), x: px, y: py, w: p.width, h: p.height))
+            }
+        }
+        // the selected hero's army: the hero, then his stacks with their counts
+        if let h = g.heroes.first {
+            var slots: [(UILayer?, String)] = [(ui.portrait(keyword: h.keyword, alignment: h.alignment), "")]
+            slots += h.army.map { (ui.creatureIcon($0.creature), String($0.count)) }
+            for (i, (icon, count)) in slots.prefix(AdventureUI.armySlots.count).enumerated() {
+                let (cx, cy) = AdventureUI.armySlots[i]
+                if let icon = icon {
+                    out.append(Quad(texture: uiTexture("icon|\(icon.name)", { icon.bitmap }), x: cx - icon.width / 2, y: cy - icon.height / 2, w: icon.width, h: icon.height))
+                }
+                if !count.isEmpty {
+                    let w = ui.numberFont.measure(count)
+                    out.append(Quad(texture: uiTexture("num|\(count)", { ui.numberFont.render(count, colour: (40, 24, 8)) }), x: cx + 24 - w, y: cy + 14, w: w, h: ui.numberFont.size))
+                }
             }
         }
         if let list = ui.hotspot("Town_list") {

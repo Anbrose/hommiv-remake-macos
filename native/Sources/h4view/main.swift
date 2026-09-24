@@ -103,6 +103,7 @@ if let town = scene.placed.filter({ $0.category == "castle" }).min(by: { ($0.cel
         let def = candidates.isEmpty ? nil : candidates[(town.cellX + town.cellY) % candidates.count]
         let hero = Hero(actor: "hero.\(align)_might_male", x: cell.0, y: cell.1, movement: 25)
         hero.name = def?.name ?? "Hero"; hero.keyword = def?.keyword ?? ""; hero.alignment = align
+        game.giveStartingArmy(hero)
         game.heroes.append(hero)
         lap("\(hero.name) the \(cls) at \(cell) by \(game.towns.first { $0.owned }?.name ?? town.name)")
     }
@@ -140,8 +141,9 @@ if let out = snapshot {
             print("path: \(hero.plan.map { "(\($0.x),\($0.y))" }.joined(separator: " "))")
             game.click(hero: hero, x: target.0, y: target.1)
         }
-        for _ in 0..<90 { game.update(dt: 1.0 / 60) }   // 1.5 s of walking
-        snapTime = 1.5
+        var frames = 0
+        while frames < 600, game.heroes.first?.isWalking == true || frames < 90 { game.update(dt: 1.0 / 60); frames += 1 }   // walk until arrival (at least 1.5 s)
+        snapTime = Double(frames) / 60
         for line in game.log { print(line) }
         game.log.removeAll()
         print("hero now at (\(hero.x),\(hero.y)) facing \(hero.facing), movement \(hero.movement), still walking: \(hero.isWalking)")

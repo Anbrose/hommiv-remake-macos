@@ -47,6 +47,15 @@ public final class RuleTables {
     public let heroes: [HeroDef]
     /// "Life_Town" -> ["Angel Point", ...]
     public let names: [String: [String]]
+    /// dwelling sprite name (lower-cased, e.g. "squire's guild") -> creature keyword ("squire")
+    public let dwellingCreature: [String: String]
+    /// Sprites whose names differ from the table's dwelling names.
+    static let dwellingAliases: [String: String] = [
+        "minotaur's maze": "minotaur", "altar of air": "air elemental", "altar of water": "water elemental", "altar of earth": "earth elemental",
+        "altar of fire": "fire elemental", "funeral pyre": "phoenix", "harpy nest": "harpy", "pirates cove": "pirate", "hot_house": "waspwort",
+        "crypt": "zombie", "berserker dwelling": "berserker", "homestead": "elf", "wine_keg": "satyr", "pillarofeyes": "beholder",
+        "lava tube": "efreet", "embalmers lab": "mummy", "orc camp": "orc", "monestary": "monk", "troglodyte warren": "troglodyte",
+    ]
     /// mine keyword -> (resource, amount per day), from the mine help texts
     public static let mineIncome: [String: (String, Int)] = ["Gold": ("Gold", 1000), "Sawmill": ("Wood", 2), "Ore Pit": ("Ore", 2), "ore pit": ("Ore", 2),
                                                             "Crystal": ("Crystal", 1), "Sulfur": ("Sulfur", 1), "Gem": ("Gems", 1), "Alchemists Lab": ("Mercury", 1)]
@@ -66,6 +75,14 @@ public final class RuleTables {
         var n: [String: [String]] = [:]
         for row in rn.rows where row.count >= 2 && !row[0].isEmpty { n[row[0], default: []].append(row[1]) }
         names = n
+        let ao = RuleTable(data: try archive.payload("table.Adventure Object.h4d"))
+        var dc = RuleTables.dwellingAliases
+        for row in ao.rows where row.count > 4 && row[0] == "creature_dwelling" && row[3].lowercased() == "name" {
+            var kw = row[1].replacingOccurrences(of: "_dwelling", with: "").replacingOccurrences(of: "_", with: " ")
+            kw = ["angel": "archangel", "devil": "archdevil", "saytr": "satyr"][kw] ?? kw
+            dc[row[4].lowercased()] = kw
+        }
+        dwellingCreature = dc
     }
 
     /// The classes whose heroes ride the "<alignment>_might" / "<alignment>_magic" models.

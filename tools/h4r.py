@@ -75,6 +75,20 @@ def write_png(path, raw):
         f.write(chunk(b'IEND', b''))
 
 
+def write_audio(stem, raw):
+    # u16 fmt (0 = PCM, 1 = MP3), u8 0, u8 bits, u8 channels, u32 rate,
+    # u32 decoded length, u16 1, then (MP3 only) u32 encoded length
+    fmt, _, bits, ch, rate, n = struct.unpack_from('<HBBBII', raw, 0)
+    if fmt == 1:
+        open(stem + '.mp3', 'wb').write(raw[19:])
+        return
+    pcm = raw[15:15 + n]
+    hdr = b'RIFF' + struct.pack('<I', 36 + len(pcm)) + b'WAVEfmt ' \
+        + struct.pack('<IHHIIHH', 16, 1, ch, rate, rate * ch * bits // 8, ch * bits // 8, bits) \
+        + b'data' + struct.pack('<I', len(pcm))
+    open(stem + '.wav', 'wb').write(hdr + pcm)
+
+
 def main():
     if len(sys.argv) < 3 or sys.argv[1] not in ('list', 'extract'):
         sys.exit(__doc__)
@@ -104,6 +118,8 @@ def main():
         open(dest, 'wb').write(raw)
         if category == 'bitmap_raw':
             write_png(dest[:-4] + '.png', raw)
+        elif category == 'sound':
+            write_audio(dest[:-4], raw)
         n += 1
     print(f"extracted {n} entries to {out}")
 

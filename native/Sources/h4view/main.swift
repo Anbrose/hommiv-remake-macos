@@ -15,6 +15,8 @@ var center: (Int, Int)?   // --center x,y: map cell to put in the middle of the 
 var zoom: Float = 1       // --zoom z: initial scale
 var walk: (Int, Int)?     // --walk x,y (with --snapshot): send the hero there and render 1.5 s later
 var showBlocked = false   // --blocked: mark impassable cells (debug)
+var openTown = false      // --town (with --snapshot): render the town screen
+var openBuildList = false // --build: the town screen with its build list open
 var heroAt: (Int, Int)?   // --hero x,y: put the hero there instead of at the town gate (debug)
 var plan: (Int, Int)?     // --plan x,y (with --snapshot): show the route there without walking
 var i = 3
@@ -22,6 +24,8 @@ while i < args.count {
     if args[i] == "--level", i + 1 < args.count { level = Int(args[i + 1]) ?? 0; i += 2 }
     else if args[i] == "--zoom", i + 1 < args.count { zoom = Float(args[i + 1]) ?? 1; i += 2 }
     else if args[i] == "--blocked" { showBlocked = true; i += 1 }
+    else if args[i] == "--town" { openTown = true; i += 1 }
+    else if args[i] == "--build" { openTown = true; openBuildList = true; i += 1 }
     else if (args[i] == "--hero" || args[i] == "--plan"), i + 1 < args.count {
         let p = args[i + 1].split(separator: ",").compactMap { Int($0) }
         if p.count == 2 { if args[i] == "--hero" { heroAt = (p[0], p[1]) } else { plan = (p[0], p[1]) } }
@@ -112,7 +116,8 @@ if let town = scene.placed.filter({ $0.category == "castle" }).min(by: { ($0.cel
 
 // The adventure screen chrome (frame, panel, fonts); the map alone if the UI files are missing.
 var ui: AdventureUI? = nil
-do { ui = try AdventureUI(archive: archive, index: resolver); lap("ui loaded") } catch { print("no UI: \(error)") }
+var townScreen: TownScreen? = nil
+do { ui = try AdventureUI(archive: archive, index: resolver); townScreen = try TownScreen(archive: archive); lap("ui loaded") } catch { print("no UI: \(error)") }
 
 /// Camera setup shared by the window and the snapshot: 1 map pixel per canvas pixel times
 /// the requested zoom, the requested cell in the middle of the map viewport.
@@ -130,6 +135,8 @@ if let out = snapshot {
     renderer.resolver = resolver
     renderer.showBlocked = showBlocked
     renderer.ui = ui
+    renderer.town = townScreen
+    if openTown { renderer.townOpen = game.towns.firstIndex { $0.owned }; townScreen?.showBuildList = openBuildList }
     lap("textures uploaded")
     var snapTime = 0.0
     if let target = walk, let hero = game.heroes.first {
@@ -199,8 +206,10 @@ final class MapView: MTKView {
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
         if let ui = renderer.ui {   // the panel: only its buttons react
             let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale
+            if renderer.townOpen != nil { renderer.townClick(x: cx, y: cy); return }
             if cx >= Float(AdventureUI.mapViewportWidth) {
                 if ui.hit("end_turn", x: cx, y: cy) { g.endTurn() }
+                else if ui.hit("Town_list", x: cx, y: cy), let i = g.towns.firstIndex(where: { $0.owned }) { renderer.townOpen = i }
                 return
             }
         }
@@ -224,8 +233,9 @@ final class MapView: MTKView {
         case 124: renderer.pan.x += step
         case 125: renderer.pan.y += step
         case 126: renderer.pan.y -= step
-        case 36, 76: renderer.game?.endTurn()   // Return / Enter
-        case 14: renderer.game?.endTurn()       // E
+        case 36, 76: if renderer.townOpen == nil { renderer.game?.endTurn() }   // Return / Enter
+        case 14: if renderer.townOpen == nil { renderer.game?.endTurn() }       // E
+        case 53: renderer.townOpen = nil; renderer.town?.showBuildList = false   // Escape leaves the town
         default: break
         }
     }
@@ -244,6 +254,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         renderer.resolver = resolver
         renderer.showBlocked = showBlocked
         renderer.ui = ui
+        renderer.town = townScreen
         renderer.onTitle = { [weak self] t in if self?.window.title != t { self?.window.title = t } }
         view.renderer = renderer
         view.delegate = renderer

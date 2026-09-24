@@ -57,7 +57,104 @@ final class Renderer: NSObject, MTKViewDelegate {
     }()
     var onTitle: ((String) -> Void)?
     var ui: AdventureUI?
+    var town: TownScreen?
+    var townOpen: Int? = nil      // index into game.towns while the town screen is up
     var uiTextures: [String: MTLTexture] = [:]
+
+    /// Quads of the town screen (replaces the map and the adventure chrome).
+    func townQuads() -> [Quad] {
+        guard let ts = town, let g = game, let i = townOpen, i < g.towns.count, let ui = ui else { return [] }
+        let t = g.towns[i]
+        var out: [Quad] = []
+        // the view: background, the built buildings (shadow then image, back to front), the foreground bits
+        if let v = ts.view(t.alignment, t.terrain) {
+            if let bg = v["background"] {
+                let r = TownScreen.place(bg); out.append(Quad(texture: uiTexture("town|\(t.alignment)|\(t.terrain)|bg", { bg.bitmap }), x: r.x, y: r.y, w: r.w, h: r.h))
+            }
+            if let lay = ts.layout(t.alignment) {
+                let built = lay.layers.filter { t.buildings.contains($0.name.lowercased()) && $0.width > 0 }.sorted { $0.y + $0.height < $1.y + $1.height }
+                for b in built {
+                    if let sh = lay.layers.first(where: { $0.name.lowercased() == b.name.lowercased() + " shadow" }), sh.width > 0 {
+                        let r = TownScreen.place(sh); out.append(Quad(texture: uiTexture("town|\(t.alignment)|\(sh.name)", { sh.bitmap }), x: r.x, y: r.y, w: r.w, h: r.h))
+                    }
+                    let r = TownScreen.place(b); out.append(Quad(texture: uiTexture("town|\(t.alignment)|\(b.name)", { b.bitmap }), x: r.x, y: r.y, w: r.w, h: r.h))
+                }
+            }
+            for f in v.layers where f.name.hasPrefix("foreground") {
+                let r = TownScreen.place(f); out.append(Quad(texture: uiTexture("town|\(t.alignment)|\(t.terrain)|\(f.name)", { f.bitmap }), x: r.x, y: r.y, w: r.w, h: r.h))
+            }
+        }
+        // the frame: opaque images, then the rest except the pressed/highlighted button states
+        for l in ts.frame.layers where l.isImage && !l.name.hasSuffix("_Pressed") && !l.name.hasSuffix("_Highlighted") {
+            out.append(Quad(texture: uiTexture("townframe|\(l.name)", { l.bitmap }), x: l.x, y: l.y, w: l.width, h: l.height))
+        }
+        if let slot = ts.hotspot("Lord_Portrait"), let h = g.heroes.first, let p = ui.portrait(keyword: h.keyword, alignment: h.alignment) {
+            out.append(Quad(texture: uiTexture("portrait|\(h.alignment)|\(h.keyword)", { p.bitmap }), x: slot.x + (slot.width - p.width) / 2, y: slot.y + (slot.height - p.height) / 2, w: p.width, h: p.height))
+        }
+        if let f = ts.hotspot("Town_Name") {
+            let text = t.name
+            let w = ui.dateFont.measure(text)
+            out.append(Quad(texture: uiTexture("date|\(text)", { ui.dateFont.render(text, colour: (40, 24, 8)) }), x: f.x + (f.width - w) / 2, y: f.y + (f.height - ui.dateFont.size) / 2, w: w, h: ui.dateFont.size))
+        }
+        for name in ui.resourceNames {
+            guard let f = ts.hotspot("\(name)_Number") ?? ts.hotspot("\(name)_number") else { continue }
+            let text = String(g.resources[name] ?? 0)
+            let w = ui.numberFont.measure(text)
+            out.append(Quad(texture: uiTexture("num|\(text)", { ui.numberFont.render(text, colour: (40, 24, 8)) }), x: f.x + (f.width - w) / 2, y: f.y, w: w, h: ui.numberFont.size))
+        }
+        // the dwellings: one slot per built dwelling, creature icon and how many wait
+        if let tables = g.tables {
+            let dwellings = tables.buildings(for: t.alignment).filter { $0.creature != nil && t.buildings.contains($0.keyword) }
+            for (k, b) in dwellings.prefix(6).enumerated() {
+                guard let slot = ts.hotspot("dwelling_\(k + 1)"), let c = b.creature, let icon = ui.creatureIcon(c) else { continue }
+                out.append(Quad(texture: uiTexture("icon|\(icon.name)", { icon.bitmap }), x: slot.x, y: slot.y, w: slot.width, h: slot.height))
+                let count = String(t.available[c] ?? 0)
+                let w = ui.numberFont.measure(count)
+                out.append(Quad(texture: shade, x: slot.x + slot.width - w - 6, y: slot.y + slot.height - ui.numberFont.size - 2, w: w + 6, h: ui.numberFont.size + 2))
+                out.append(Quad(texture: uiTexture("count|\(count)", { ui.numberFont.render(count, colour: (255, 236, 200)) }), x: slot.x + slot.width - w - 3, y: slot.y + slot.height - ui.numberFont.size - 1, w: w, h: ui.numberFont.size))
+            }
+            // the build list over the view
+            ts.buildRows = []
+            if ts.showBuildList {
+                let rows = tables.buildings(for: t.alignment).filter { !t.buildings.contains($0.keyword) && !$0.cost.isEmpty }
+                let x0 = 40, y0 = 30, rowH = ui.numberFont.lineHeight + 6
+                out.append(Quad(texture: shade, x: x0 - 10, y: y0 - 10, w: 520, h: rows.count * rowH + 40))
+                let title = "Build in \(t.name) (click a building; one per day)"
+                out.append(Quad(texture: uiTexture("date|\(title)", { ui.dateFont.render(title, colour: (255, 236, 200)) }), x: x0, y: y0, w: ui.dateFont.measure(title), h: ui.dateFont.size))
+                for (k, b) in rows.enumerated() {
+                    let y = y0 + 24 + k * rowH
+                    let cost = b.cost.sorted { $0.key < $1.key }.map { "\($0.value) \($0.key)" }.joined(separator: ", ")
+                    let line = "\(b.name)  -  \(cost)"
+                    let colour: (UInt8, UInt8, UInt8) = g.canBuild(b, in: t) ? (255, 236, 200) : (150, 130, 110)
+                    out.append(Quad(texture: uiTexture("bl|\(line)|\(colour.0)", { ui.numberFont.render(line, colour: colour) }), x: x0, y: y, w: ui.numberFont.measure(line), h: ui.numberFont.size))
+                    ts.buildRows.append(((x0, y, 500, rowH), b))
+                }
+            }
+        }
+        return out
+    }
+
+    /// A click on the town screen (canvas coordinates).
+    func townClick(x: Float, y: Float) {
+        guard let ts = town, let g = game, let i = townOpen, let hero = g.heroes.first else { return }
+        if ts.showBuildList {
+            for row in ts.buildRows where x >= Float(row.rect.0) && x < Float(row.rect.0 + row.rect.2) && y >= Float(row.rect.1) && y < Float(row.rect.1 + row.rect.3) {
+                g.build(row.building, in: i)
+            }
+            ts.showBuildList = false
+            return
+        }
+        if ts.hit(ts.hotspot("OK_Button"), x, y) { townOpen = nil; return }
+        if let tables = g.tables {
+            let dwellings = tables.buildings(for: g.towns[i].alignment).filter { $0.creature != nil && g.towns[i].buildings.contains($0.keyword) }
+            for (k, b) in dwellings.prefix(6).enumerated() where ts.hit(ts.hotspot("dwelling_\(k + 1)"), x, y) {
+                if let c = b.creature { g.recruit(c, in: i, to: hero) }
+                return
+            }
+        }
+        // anywhere in the town view: the build list
+        if y < 568 { ts.showBuildList = true }
+    }
     /// Messages shown over the map for a few seconds.
     var toasts: [(text: String, until: Date)] = []
     lazy var shade: MTLTexture = {
@@ -413,8 +510,10 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
 
     func encode(rpd: MTLRenderPassDescriptor, present: MTLDrawable?, time: Double) {
-        let mapList = quads(at: time)
-        let uiList = uiQuads()
+        if let g = game, let t = g.enteredTown { townOpen = t; g.enteredTown = nil }
+        let inTown = townOpen != nil && town != nil
+        let mapList = inTown ? [] : quads(at: time)
+        let uiList = inTown ? townQuads() : uiQuads()
         let list = mapList + uiList
         var verts: [Vertex] = []
         verts.reserveCapacity(list.count * 6)

@@ -221,7 +221,16 @@ public final class GameState {
     /// The player's treasury (starting amounts of a normal game).
     public var resources: [String: Int] = ["Wood": 15, "Ore": 15, "Mercury": 7, "Sulfur": 7, "Crystal": 7, "Gems": 7, "Gold": 15000]
     public var tables: RuleTables?
-    public struct Town { public let x: Int, y: Int; public var name: String; public let alignment: String; public var owned: Bool }
+    public struct Town {
+        public let x: Int, y: Int
+        public var name: String
+        public let alignment: String
+        public var owned: Bool
+        public var buildings: Set<String> = []          // building keywords, as in the buildings table
+        public var available: [String: Int] = [:]      // creature keyword -> recruits waiting
+        public var builtToday = false
+        public var terrain: UInt8 = 1
+    }
     public struct Mine { public let x: Int, y: Int, name: String, resource: String, amount: Int; public var owned: Bool }
     public struct Dwelling { public let x: Int, y: Int, name: String, creature: String; public var available: Int }
     public struct Monster { public let x: Int, y: Int, name: String, creature: String; public var count: Int }
@@ -232,7 +241,7 @@ public final class GameState {
     /// Income per day from everything the player owns.
     public var income: [String: Int] {
         var out: [String: Int] = [:]
-        for t in towns where t.owned { out["Gold", default: 0] += 500 }   // village hall
+        for t in towns where t.owned { out["Gold", default: 0] += hallIncome(t) }
         for m in mines where m.owned { out[m.resource, default: 0] += m.amount }
         return out
     }
@@ -266,10 +275,51 @@ public final class GameState {
     public func monster(for p: MapScene.Placed) -> Int? {
         monsters.firstIndex { $0.x == p.cellX && $0.y == p.cellY && $0.name == p.name }
     }
+    public func town(for p: MapScene.Placed) -> Int? {
+        p.category == "castle" ? towns.firstIndex { $0.x == p.cellX && $0.y == p.cellY } : nil
+    }
 
-    /// Objects a hero walks up to and uses: pickups, mines, dwellings and monsters (towns later).
+    /// Objects a hero walks up to and uses: pickups, mines, dwellings, monsters and towns.
     public func isVisitable(_ p: MapScene.Placed) -> Bool {
-        isPickup(p) || mine(for: p) != nil || dwelling(for: p) != nil || monster(for: p) != nil
+        isPickup(p) || mine(for: p) != nil || dwelling(for: p) != nil || monster(for: p) != nil || town(for: p) != nil
+    }
+
+    /// The town screen to open, set when a hero enters a town; the UI clears it.
+    public var enteredTown: Int?
+
+    /// Daily income of a town from its hall.
+    public func hallIncome(_ t: Town) -> Int {
+        t.buildings.contains("city hall") ? 1000 : t.buildings.contains("town hall") ? 750 : 500
+    }
+
+    /// Can the town build this now? One building per day; halls and walls in order; mage guilds in order.
+    public func canBuild(_ b: RuleTables.BuildingDef, in t: Town) -> Bool {
+        guard !t.buildings.contains(b.keyword), !t.builtToday, !b.cost.isEmpty || b.keyword == "prison" else { return false }
+        for (r, v) in b.cost where resources[r, default: 0] < v { return false }
+        let chain: [String: String] = ["town hall": "village hall", "city hall": "town hall", "citadel": "fort", "castle": "citadel",
+                                       "mage guild 2": "mage guild 1", "mage guild 3": "mage guild 2", "mage guild 4": "mage guild 3", "mage guild 5": "mage guild 4"]
+        if let req = chain[b.keyword], !t.buildings.contains(req) { return false }
+        return true
+    }
+
+    public func build(_ b: RuleTables.BuildingDef, in i: Int) {
+        guard canBuild(b, in: towns[i]) else { return }
+        for (r, v) in b.cost { resources[r, default: 0] -= v }
+        towns[i].buildings.insert(b.keyword)
+        towns[i].builtToday = true
+        if let c = b.creature, let def = tables?.creature(c) { towns[i].available[c, default: 0] += def.growth }
+        log.append("built \(b.name) in \(towns[i].name)")
+    }
+
+    /// Recruit from a town's dwelling into the hero's army: as many as available and affordable.
+    public func recruit(_ creature: String, in i: Int, to hero: Hero) {
+        guard let c = tables?.creature(creature) else { return }
+        let n = min(towns[i].available[creature, default: 0], c.gold > 0 ? resources["Gold", default: 0] / c.gold : 0)
+        if n <= 0 { log.append("no \(c.plural) to recruit / not enough gold"); return }
+        guard add(c.keyword, n, to: hero) else { log.append("no room in the army for \(c.plural)"); return }
+        towns[i].available[creature, default: 0] -= n
+        resources["Gold", default: 0] -= n * c.gold
+        log.append("recruited \(n) \(n == 1 ? c.name : c.plural) for \(n * c.gold) gold")
     }
 
     /// The hero's army as combatants, the hero first.
@@ -325,7 +375,17 @@ public final class GameState {
                 let faction = townFactions[p.name] ?? "life"
                 let list = tables?.names["\(faction.prefix(1).uppercased() + faction.dropFirst())_Town"] ?? []
                 let name = list.isEmpty ? "Town" : list[(p.cellX * 7 + p.cellY * 13 + townIndex) % list.count]
-                towns.append(Town(x: p.cellX, y: p.cellY, name: name, alignment: faction, owned: false))
+                var town = Town(x: p.cellX, y: p.cellY, name: name, alignment: faction, owned: false)
+                // a new town: village hall, walls matching the sprite, and the first dwelling
+                town.buildings = ["village hall"]
+                let lower = p.name.lowercased()
+                for wall in ["fort", "citadel", "castle"] where lower.contains(".\(wall)") { town.buildings.insert(wall) }
+                if let t = tables, let first = t.buildings(for: faction).first(where: { $0.creature != nil }) {
+                    town.buildings.insert(first.keyword)
+                    if let c = first.creature, let def = t.creature(c) { town.available[c] = def.growth }
+                }
+                town.terrain = map.cells[level][p.cellX * map.size + p.cellY]?.type ?? 1
+                towns.append(town)
                 townIndex += 1
             } else if p.category == "mine" {
                 let short = p.name.replacingOccurrences(of: "adv_object.mine.", with: "").replacingOccurrences(of: ".h4d", with: "").replacingOccurrences(of: " R", with: "")
@@ -357,6 +417,12 @@ public final class GameState {
     func interact(hero: Hero, _ p: MapScene.Placed) {
         if isPickup(p) { take(hero: hero, p); return }
         if let i = monster(for: p) { fight(hero: hero, monsterAt: i, p); return }
+        if let i = town(for: p) {
+            if !towns[i].owned { towns[i].owned = true; log.append("\(towns[i].name) is yours") }
+            enteredTown = i
+            hero.target = nil
+            return
+        }
         if let i = mine(for: p) {
             if mines[i].owned { log.append("\(mines[i].resource) mine already yours") }
             else { mines[i].owned = true; log.append("captured a mine: +\(mines[i].amount) \(mines[i].resource) per day") }
@@ -498,8 +564,14 @@ public final class GameState {
         day += 1
         for h in heroes { h.movement = h.maxMovement; h.path = []; h.plan = [] }
         for (res, amount) in income { resources[res, default: 0] += amount }
-        if dayOfWeek == 1, let t = tables {   // a new week: dwellings restock
+        for i in towns.indices { towns[i].builtToday = false }
+        if dayOfWeek == 1, let t = tables {   // a new week: dwellings restock, in towns too
             for i in dwellings.indices { dwellings[i].available += t.creature(dwellings[i].creature)?.growth ?? 0 }
+            for i in towns.indices {
+                for b in t.buildings(for: towns[i].alignment) where towns[i].buildings.contains(b.keyword) {
+                    if let c = b.creature, let def = t.creature(c) { towns[i].available[c, default: 0] += def.growth }
+                }
+            }
         }
     }
 

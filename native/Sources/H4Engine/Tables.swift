@@ -50,6 +50,15 @@ public final class RuleTables {
     public let names: [String: [String]]
     /// dwelling sprite name (lower-cased, e.g. "squire's guild") -> creature keyword ("squire")
     public let dwellingCreature: [String: String]
+
+    public struct BuildingDef {
+        public let keyword: String, name: String, help: String
+        public let cost: [String: Int]
+        /// creature keyword for dwellings ("Generates Squires."), else nil
+        public let creature: String?
+    }
+    /// buildings per town section: "Life Town" -> [BuildingDef] (in the table's order)
+    public let buildings: [String: [BuildingDef]]
     /// Sprites whose names differ from the table's dwelling names.
     static let dwellingAliases: [String: String] = [
         "minotaur's maze": "minotaur", "altar of air": "air elemental", "altar of water": "water elemental", "altar of earth": "earth elemental",
@@ -85,6 +94,28 @@ public final class RuleTables {
             dc[row[4].lowercased()] = kw
         }
         dwellingCreature = dc
+        let bt = RuleTable(data: try archive.payload("table.buildings.h4d"))
+        var sections: [String: [BuildingDef]] = [:]
+        var section = ""
+        let resources = ["Gold", "Wood", "Ore", "Crystal", "Sulfur", "Mercury", "Gems"]
+        for row in bt.rows where row.count >= 10 {
+            if row[0].isEmpty { section = row[1]; continue }
+            var cost: [String: Int] = [:]
+            for r in resources { if let v = Int(bt.value(row, r)), v > 0 { cost[r] = v } }
+            var creature: String? = nil
+            if let range = row[9].range(of: "Generates ") {
+                let plural = row[9][range.upperBound...].split(separator: ".").first.map { String($0).lowercased() } ?? ""
+                creature = creatures.first { $0.plural.lowercased() == plural }?.keyword
+                    ?? creatures.first { plural.contains($0.name.lowercased()) || $0.plural.lowercased().contains(plural) }?.keyword
+            }
+            sections[section, default: []].append(BuildingDef(keyword: row[0].lowercased(), name: row[1], help: row[9], cost: cost, creature: creature))
+        }
+        buildings = sections
+    }
+
+    /// The buildings of a town alignment ("life" -> the "Life Town" section).
+    public func buildings(for alignment: String) -> [BuildingDef] {
+        buildings.first { $0.key.lowercased().hasPrefix(alignment.lowercased()) }?.value ?? []
     }
 
     /// The classes whose heroes ride the "<alignment>_might" / "<alignment>_magic" models.

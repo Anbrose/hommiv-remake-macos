@@ -66,6 +66,39 @@ public final class RuleTables {
     public let objectNames: [String: (String, String)]
     public struct ArtifactDef { public let keyword: String, name: String, article: String, slot: String, level: String, help: String }
     public let artifacts: [String: ArtifactDef]   // by keyword
+    /// The general string table (strings.Text.h4d): key -> text, e.g. "grass_1" -> "Grass, Dry",
+    /// "grass_1.description" -> "Dry Grass terrain has a movement cost of 1 per tile...".
+    public let strings: [String: String]
+
+    /// The strings table's name and description of a terrain cell (type ids as in the map
+    /// file: 0 water, 1 grass, 2 rough, 3 swamp, 4 volcanic, 5 snow, 6 sand, 7 dirt,
+    /// 8 subterranean, 9 water river, 10 lava river, 11 ice river, 12..18 magic terrains).
+    public func terrainText(type: UInt8, variant: UInt8) -> (name: String, description: String)? {
+        let key: String
+        switch type {
+        case 0...8:
+            let names = ["water", "grass", "rough", "swamp", "volcanic", "snow", "sand", "dirt", "subterranean"]
+            key = "\(names[Int(type)])_\(min(Int(variant), 1) + 1)"
+        case 9: key = "water_river"
+        case 10: key = "lava_river"
+        case 11: key = "ice_river"
+        case 12, 18: key = "all.special"
+        case 13: key = "life.special"
+        case 14: key = "order.special"
+        case 15: key = "death.special"
+        case 16: key = "chaos.special"
+        case 17: key = "nature.special"
+        default: return nil
+        }
+        guard let name = strings[key] else { return nil }
+        return (name, strings["\(key).description"] ?? "")
+    }
+    /// The strings table's name and description of a road type (1 stone, 2 dirt, 3 cobble).
+    public func roadText(_ type: UInt8) -> (name: String, description: String)? {
+        let key = ["", "Road_1", "Road_2", "road_3"][Int(min(type, 3))]
+        guard let name = strings[key] else { return nil }
+        return (name, strings["\(key).description"] ?? "")
+    }
 
     /// A text of an adventure object type, the minor type's row first, then the major type's generic one.
     public func objectText(_ major: String, _ minor: String, _ key: String) -> String? {
@@ -123,6 +156,19 @@ public final class RuleTables {
             }
         }
         artifacts = arts
+        var st: [String: String] = [:]
+        if let d = try? archive.payload("strings.Text.h4d") {   // u32 rows, rows of u16 n + string16s (key, text, comment)
+            var r = ByteReader(d)
+            let rows = Int(r.u32())
+            for _ in 0..<rows {
+                guard r.remaining >= 2 else { break }
+                let n = Int(r.u16())
+                var row: [String] = []
+                for _ in 0..<n { guard r.remaining >= 2 else { break }; row.append(r.string16()) }
+                if row.count >= 2, !row[0].isEmpty, st[row[0]] == nil { st[row[0]] = row[1] }
+            }
+        }
+        strings = st
         let bt = RuleTable(data: try archive.payload("table.buildings.h4d"))
         var sections: [String: [BuildingDef]] = [:]
         var section = ""

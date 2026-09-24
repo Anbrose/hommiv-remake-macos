@@ -362,6 +362,12 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     /// The right-click box: what it says and where its top-left corner is on the canvas.
     var popup: (title: String, lines: [String], x: Int, y: Int)?
+    var popupSize = (w: 0, h: 0)
+    /// Is a canvas point on the open box?
+    func onPopup(_ x: Float, _ y: Float) -> Bool {
+        guard let p = popup else { return false }
+        return x >= Float(p.x) && x < Float(p.x + popupSize.w) && y >= Float(p.y) && y < Float(p.y + popupSize.h)
+    }
 
     /// A right click on the map: describe the hero or the object there (topmost drawn wins)
     /// in a box near the canvas point; nothing there clears it.
@@ -372,6 +378,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         var text: (title: String, body: [String])?
         if let h = g.heroes.first(where: { Int($0.position.x.rounded()) == c.0 && Int($0.position.y.rounded()) == c.1 }) { text = g.describe(hero: h) }
         else if let p = scene.placed.last(where: { underCursor($0, m) || onFootprint($0, c) }) { text = g.describe(p) }
+        else { text = g.describe(cellX: c.0, cellY: c.1) }
         guard let t = text else { return }
         var lines: [String] = []
         for para in t.body { lines += AdventureUI.wrap(para, font: ui.numberFont, width: 220); lines.append("") }
@@ -391,6 +398,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         let w = max(ui.dateFont.measure(p.title), p.lines.map { ui.numberFont.measure($0) }.max() ?? 0)
         let h = ui.dateFont.lineHeight + 4 + p.lines.count * ui.numberFont.lineHeight
         guard let box = ui.popupBitmap(clientW: w, clientH: h) else { return [] }
+        popupSize = (box.bitmap.width, box.bitmap.height)
         var out = [Quad(texture: uiTexture("popup|\(w)x\(h)", { box.bitmap }), x: p.x, y: p.y, w: box.bitmap.width, h: box.bitmap.height)]
         let cx = p.x + box.clientX, cy = p.y + box.clientY
         let tw = ui.dateFont.measure(p.title)

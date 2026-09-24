@@ -11,9 +11,25 @@ public struct Passability {
     /// 0 = not a bridge, 1 = bridge running along x, 2 = along y: on a bridge you can only walk
     /// along it, and you get on and off at its ends.
     public private(set) var bridgeAxis: [UInt8]
+    /// Road type on the cell (0 none, 1 stone, 2 dirt, 3 cobble); road-to-road moves cost the road's rate.
+    public private(set) var roadType: [UInt8]
 
     /// Decorative categories that do not block movement even though their footprint says so.
     static let walkable: Set<String> = ["flowers", "moss", "Mushrooms", "Cracks-Holes", "Dunes", "Lava flows-mud", "Stumps", "Logs", "Skeletons"]
+
+    /// Movement cost per tile by terrain type, from the game's terrain descriptions
+    /// (grass/dirt/subterranean 1, rough/volcanic 1.25, sand 1.5, snow 1.75, swamp 2, ice river 1.5).
+    public static func terrainCost(_ type: UInt8) -> Float {
+        switch type {
+        case 2, 4, 15, 16: return 1.25
+        case 6, 11: return 1.5
+        case 5: return 1.75
+        case 3: return 2
+        default: return 1
+        }
+    }
+    /// Movement rate of a road type for road-to-road moves.
+    public static func roadRate(_ type: UInt8) -> Float { type == 2 ? 1 : 0.75 }
 
     public init(map: MapFile, level: Int, objects: [MapScene.Placed]) {
         size = map.size
@@ -21,6 +37,7 @@ public struct Passability {
         cost = [Float](repeating: 1, count: size * size)
         elevation = [Float](repeating: 0, count: size * size)
         bridgeAxis = [UInt8](repeating: 0, count: size * size)
+        roadType = MapScene.roadTypes(map: map, level: level)
         let cells = map.cells[level]
         for x in 0..<size {
             for y in 0..<size {
@@ -28,11 +45,8 @@ public struct Passability {
                 let i = x * size + y
                 switch c.type {
                 case 0, 9, 10, 11: blocked[i] = true; continue   // water (no boats yet) and rivers (need a bridge)
-                case 2, 6: cost[i] = 1.25                     // rough, sand
-                case 3, 5: cost[i] = 1.5                      // swamp, snow
-                default: cost[i] = 1
+                default: cost[i] = Passability.terrainCost(c.type)
                 }
-                if !c.roads.isEmpty { cost[i] = 0.67 }
                 blocked[i] = false
             }
         }
@@ -97,9 +111,13 @@ public struct Passability {
         x >= 0 && x < size && y >= 0 && y < size && !blocked[x * size + y]
     }
 
-    /// Cost of stepping from (x0, y0) onto (x1, y1): the target cell's cost, x1.4 diagonally.
+    /// Cost of stepping from (x0, y0) onto (x1, y1): the target cell's terrain cost, or the
+    /// road's rate when both cells have a road ("road-to-road moves, regardless of the
+    /// terrain"); x1.4 diagonally.
     public func stepCost(from x0: Int, _ y0: Int, to x1: Int, _ y1: Int) -> Float {
-        cost[x1 * size + y1] * (x0 != x1 && y0 != y1 ? 1.4 : 1)
+        let i = x1 * size + y1
+        let base = roadType[i] > 0 && roadType[x0 * size + y0] > 0 ? Passability.roadRate(roadType[i]) : cost[i]
+        return base * (x0 != x1 && y0 != y1 ? 1.4 : 1)
     }
 
     /// A* over the 8 neighbours; the path excludes the start and includes the goal, or nil.
@@ -345,6 +363,16 @@ public final class GameState {
         if let c = creature { body.append("\(count) \(count == 1 ? c.name : c.plural) available, \(c.gold) gold each.") }
         if p.type == "decorative", body.isEmpty { body = [] }
         return (title, body)
+    }
+
+    /// What a right click on bare ground shows: the road there, else the terrain, with the
+    /// strings table's description (movement cost per tile).
+    public func describe(cellX x: Int, cellY y: Int) -> (title: String, body: [String])? {
+        guard x >= 0, x < map.size, y >= 0, y < map.size, let c = map.cells[level][x * map.size + y], let t = tables else { return nil }
+        let road = passability.roadType[x * map.size + y]
+        if road > 0, let r = t.roadText(road) { return (r.name, r.description.isEmpty ? [] : [r.description]) }
+        guard let tt = t.terrainText(type: c.type, variant: c.variant) else { return nil }
+        return (tt.name, tt.description.isEmpty ? [] : [tt.description])
     }
 
     /// What a right click on a hero shows.

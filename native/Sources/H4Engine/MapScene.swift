@@ -36,7 +36,46 @@ public final class MapScene {
                                               6: "sand", 7: "dirt", 8: "subterranean"]
     static let terrainSingle: [UInt8: String] = [9: "river.water", 10: "river.lava", 11: "river.ice", 12: "magic.all", 13: "magic.life",
                                                 14: "magic.order", 15: "magic.death", 16: "magic.chaos", 17: "magic.nature", 18: "magic.all"]
-    static let roadFile: [UInt8: String] = [0: "road.dirt", 1: "road.gravel", 2: "road.cobblestone"]
+    /// Road textures by road type (the strings table names them Road_1 "Road, Stone", Road_2
+    /// "Road, Dirt", road_3 "Road, Cobble").
+    static let roadFile: [UInt8: String] = [1: "road.gravel", 2: "road.dirt", 3: "road.cobblestone"]
+
+    /// The road type on every cell of a level (0 = none). Shoulder pieces carry their type;
+    /// body pieces are stored as type 0, so a body cell takes the type its neighbouring
+    /// shoulders (then neighbouring bodies) have.
+    public static func roadTypes(map: MapFile, level: Int) -> [UInt8] {
+        let n = map.size
+        let cells = map.cells[level]
+        var types = [UInt8](repeating: 0, count: n * n)
+        var body = [Bool](repeating: false, count: n * n)
+        for i in 0..<(n * n) {
+            guard let c = cells[i] else { continue }
+            for rd in c.roads {
+                if rd.kind >= 1, rd.kind <= 3 { types[i] = max(types[i], rd.kind) }
+                if rd.kind == 0 { body[i] = true }
+            }
+        }
+        var pending = (0..<(n * n)).filter { body[$0] && types[$0] == 0 }
+        var changed = true
+        while changed, !pending.isEmpty {
+            changed = false
+            var next: [Int] = []
+            for i in pending {
+                let x = i / n, y = i % n
+                var votes = [UInt8: Int]()
+                for dx in -1...1 { for dy in -1...1 where dx != 0 || dy != 0 {
+                    let nx = x + dx, ny = y + dy
+                    guard nx >= 0, nx < n, ny >= 0, ny < n else { continue }
+                    let t = types[nx * n + ny]
+                    if t > 0 { votes[t, default: 0] += 1 }
+                } }
+                if let best = votes.max(by: { $0.value < $1.value })?.key { types[i] = best; changed = true } else { next.append(i) }
+            }
+            pending = next
+        }
+        for i in pending { types[i] = 2 }   // an isolated body: dirt
+        return types
+    }
 
     /// Patch file name for a terrain type/variant at cell (x, y); nil for unknown types.
     static func terrainFile(type: UInt8, variant: UInt8, x: Int, y: Int) -> String? {
@@ -75,6 +114,7 @@ public final class MapScene {
         let land = masks.sets["land 1"] ?? []
         let road = masks.sets["road 1"] ?? []
         let cells = map.cells[level]
+        let roadTypes = MapScene.roadTypes(map: map, level: level)
         for x in 0..<n {
             for y in 0..<n {
                 guard let cell = cells[x * n + y] else { continue }
@@ -84,13 +124,23 @@ public final class MapScene {
                 let left = sx - 32, top = sy - 16
                 let base = try patch(MapScene.terrainFile(type: cell.type, variant: cell.variant, x: x, y: y) ?? "grass.2.1")
                 MapScene.blit(&canvas, base.tiles[ti], left, top, mask: nil)
-                for ov in cell.overlays.sorted(by: { $0.order < $1.order }) where ov.mask < land.count {
-                    guard let f = MapScene.terrainFile(type: ov.type, variant: ov.variant, x: x, y: y) else { continue }
-                    MapScene.blit(&canvas, try patch(f).tiles[ti], left, top, mask: land[ov.mask])
-                }
-                for rd in cell.roads where rd.mask < road.count {
-                    guard let f = MapScene.roadFile[rd.kind] else { continue }
-                    MapScene.blit(&canvas, try patch("\(f).\(((x / 10) + (y / 10)) % 2 + 1)").tiles[ti], left, top, mask: road[rd.mask])
+                // overlays and road pieces interleave by their order byte (roads sit at 10..14,
+                // overlays at 0..9 and 15..19, so terrain drawn after a road nibbles its edges)
+                enum Item { case overlay(Overlay), road(Road) }
+                var items: [(order: UInt8, item: Item)] = cell.overlays.map { ($0.order, .overlay($0)) }
+                items += cell.roads.map { ($0.order, .road($0)) }
+                for (_, item) in items.sorted(by: { $0.order < $1.order }) {
+                    switch item {
+                    case .overlay(let ov):
+                        guard ov.mask < land.count, let f = MapScene.terrainFile(type: ov.type, variant: ov.variant, x: x, y: y) else { continue }
+                        MapScene.blit(&canvas, try patch(f).tiles[ti], left, top, mask: land[ov.mask])
+                    case .road(let rd):
+                        guard rd.mask < road.count else { continue }
+                        let type = rd.kind == 0 ? roadTypes[x * n + y] : rd.kind
+                        guard let f = MapScene.roadFile[type] else { continue }
+                        // the body is the cell minus the mask (terrain shows in the mask), a shoulder is the mask itself
+                        MapScene.blit(&canvas, try patch("\(f).\(((x / 10) + (y / 10)) % 2 + 1)").tiles[ti], left, top, mask: road[rd.mask], invert: rd.kind == 0)
+                    }
                 }
             }
         }
@@ -171,7 +221,7 @@ public final class MapScene {
     static func mod(_ a: Int, _ m: Int) -> Int { ((a % m) + m) % m }
 
     /// Copy a 64x32 tile onto the canvas at (left, top), optionally through a 64x32 1-bit mask.
-    static func blit(_ canvas: inout Bitmap, _ tile: Bitmap, _ left: Int, _ top: Int, mask: [UInt8]?) {
+    static func blit(_ canvas: inout Bitmap, _ tile: Bitmap, _ left: Int, _ top: Int, mask: [UInt8]?, invert: Bool = false) {
         for y in 0..<32 {
             let yy = top + y
             guard yy >= 0, yy < canvas.height else { continue }
@@ -180,7 +230,7 @@ public final class MapScene {
                 guard xx >= 0, xx < canvas.width else { continue }
                 let s = (y * 64 + x) * 4
                 guard tile.pixels[s + 3] != 0 else { continue }
-                if let m = mask, m[y * 64 + x] == 0 { continue }
+                if let m = mask, (m[y * 64 + x] == 0) != invert { continue }
                 let d = (yy * canvas.width + xx) * 4
                 canvas.pixels[d] = tile.pixels[s]; canvas.pixels[d + 1] = tile.pixels[s + 1]
                 canvas.pixels[d + 2] = tile.pixels[s + 2]; canvas.pixels[d + 3] = 255

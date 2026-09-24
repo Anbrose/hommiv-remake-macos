@@ -212,6 +212,11 @@ final class MapView: MTKView {
         let p = convert(e.locationInWindow, from: nil)
         let scale = Float(window?.backingScaleFactor ?? 1)
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
+        if renderer.popup != nil {   // an open right-click box: a left click outside it closes it, and does nothing else
+            let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale
+            if !renderer.onPopup(cx, cy) { renderer.popup = nil }
+            return
+        }
         if let ui = renderer.ui {   // the panel: only its buttons react
             let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale
             if renderer.townOpen != nil { renderer.townClick(x: cx, y: cy); return }
@@ -223,17 +228,18 @@ final class MapView: MTKView {
         }
         renderer.click(mapPoint: renderer.pan + mouse / renderer.zoom)
     }
-    /// Right button held: a box describing what is under the cursor (as in the game).
+    /// Right click: opens a box describing what is under the cursor; it stays until a left
+    /// click lands outside it (as in the game).
     override func rightMouseDown(with e: NSEvent) {
         guard renderer.townOpen == nil else { return }
         let p = convert(e.locationInWindow, from: nil)
         let scale = Float(window?.backingScaleFactor ?? 1)
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
         let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale
-        if renderer.ui != nil, cx >= Float(AdventureUI.mapViewportWidth) { return }
+        if renderer.onPopup(cx, cy) { return }
+        if renderer.ui != nil, cx >= Float(AdventureUI.mapViewportWidth) { renderer.popup = nil; return }
         renderer.inspect(mapPoint: renderer.pan + mouse / renderer.zoom, canvas: (cx, cy))
     }
-    override func rightMouseUp(with e: NSEvent) { renderer.popup = nil }
     override func scrollWheel(with e: NSEvent) {
         renderer.pan -= SIMD2(Float(e.scrollingDeltaX), Float(e.scrollingDeltaY)) / renderer.zoom
     }

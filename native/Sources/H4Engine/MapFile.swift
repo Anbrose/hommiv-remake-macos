@@ -14,8 +14,11 @@ public struct Overlay {
     public let type: UInt8, variant: UInt8, mask: Int, order: UInt8
 }
 
+/// A road piece on a cell: `kind` 0 is the road body (drawn where the mask is CLEAR), 1..3 a
+/// shoulder spilling from a neighbouring road of that type (1 stone, 2 dirt, 3 cobble; drawn
+/// where the mask is SET); `order` (10..14) sorts it among the cell's terrain overlays.
 public struct Road {
-    public let kind: UInt8, mask: Int
+    public let kind: UInt8, mask: Int, order: UInt8
 }
 
 public struct Cell {
@@ -100,7 +103,7 @@ public struct MapFile {
             let m = Int(r.byte(at: q))
             guard m <= 8, q + 1 + 4 * m <= d.count else { return nil }
             var rd: [Road] = []
-            for i in 0..<m { let p = q + 1 + i * 4; rd.append(Road(kind: r.byte(at: p), mask: Int(r.byte(at: p + 1)))) }
+            for i in 0..<m { let p = q + 1 + i * 4; rd.append(Road(kind: r.byte(at: p), mask: Int(r.byte(at: p + 1)), order: r.byte(at: p + 3))) }
             out.append(Cell(type: t, variant: v, overlays: ov, roads: rd))
             pos = q + 1 + 4 * m
         }

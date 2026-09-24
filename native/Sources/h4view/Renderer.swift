@@ -26,18 +26,26 @@ fragment float4 fmain(Out i [[stage_in]], texture2d<float> tex [[texture(0)]]) {
 struct Vertex { var x: Float, y: Float, u: Float, v: Float }
 struct Camera { var vw: Float, vh: Float, px: Float, py: Float, zoom: Float, pad: Float }
 
+/// One textured quad on the map canvas.
+struct Quad {
+    var texture: MTLTexture
+    var x: Int, y: Int, w: Int, h: Int
+}
+
 final class Renderer: NSObject, MTKViewDelegate {
     let device: MTLDevice
     let queue: MTLCommandQueue
     let pipeline: MTLRenderPipelineState
     let scene: MapScene
-    var chunkTextures: [(MTLTexture, Int, Int, Int, Int)] = []   // texture, x, y, w, h
-    var spriteTextures: [String: MTLTexture] = [:]
-    var draws: [(MTLTexture, Int, Int, Int, Int)] = []           // static draw list in map order
+    var terrain: [Quad] = []
+    var textures: [String: MTLTexture] = [:]
     var pan = SIMD2<Float>(0, 0)
     var zoom: Float = 1
     var viewSize = SIMD2<Float>(1, 1)
     var vertexBuffer: MTLBuffer
+    let start = Date()
+    var lastFrame = Date()
+    var frameTimes: [Double] = []
 
     init(device: MTLDevice, scene: MapScene, pixelFormat: MTLPixelFormat) throws {
         self.device = device
@@ -54,37 +62,22 @@ final class Renderer: NSObject, MTKViewDelegate {
         desc.colorAttachments[0].sourceAlphaBlendFactor = .one
         desc.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
         pipeline = try device.makeRenderPipelineState(descriptor: desc)
-        vertexBuffer = device.makeBuffer(length: 6 * MemoryLayout<Vertex>.stride, options: .storageModeShared)!
+        vertexBuffer = device.makeBuffer(length: 1 << 20, options: .storageModeShared)!
         super.init()
         for c in scene.chunks {
-            chunkTextures.append((makeTexture(c.bitmap), c.x, c.y, c.bitmap.width, c.bitmap.height))
+            terrain.append(Quad(texture: makeTexture(c.bitmap), x: c.x, y: c.y, w: c.bitmap.width, h: c.bitmap.height))
         }
-        for c in chunkTextures { draws.append(c) }
-        for p in scene.placed {
-            if let sh = p.shadow {
-                let dx = p.x - p.image.box.left + sh.box.left, dy = p.y - p.image.box.top + sh.box.top
-                draws.append((texture(for: sh, of: p.name), dx, dy, sh.bitmap.width, sh.bitmap.height))
-            }
-            draws.append((texture(for: p.image, of: p.name), p.x, p.y, p.image.bitmap.width, p.image.bitmap.height))
+        for p in scene.placed {   // upload every frame of every object up front
+            for img in p.sprite.images { _ = texture(for: img, of: p.name) }
         }
-        let needed = draws.count * 6 * MemoryLayout<Vertex>.stride
-        vertexBuffer = device.makeBuffer(length: max(needed, 64), options: .storageModeShared)!
-        var verts: [Vertex] = []
-        verts.reserveCapacity(draws.count * 6)
-        for (_, x, y, w, h) in draws {
-            let x0 = Float(x), y0 = Float(y), x1 = Float(x + w), y1 = Float(y + h)
-            verts += [Vertex(x: x0, y: y0, u: 0, v: 0), Vertex(x: x1, y: y0, u: 1, v: 0), Vertex(x: x0, y: y1, u: 0, v: 1),
-                      Vertex(x: x1, y: y0, u: 1, v: 0), Vertex(x: x1, y: y1, u: 1, v: 1), Vertex(x: x0, y: y1, u: 0, v: 1)]
-        }
-        verts.withUnsafeBytes { vertexBuffer.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
         pan = SIMD2(Float(scene.width) / 2 - 640, Float(scene.height) / 2 - 400)
     }
 
     func texture(for img: SpriteImage, of name: String) -> MTLTexture {
         let key = name + "|" + img.name
-        if let t = spriteTextures[key] { return t }
+        if let t = textures[key] { return t }
         let t = makeTexture(img.bitmap)
-        spriteTextures[key] = t
+        textures[key] = t
         return t
     }
 
@@ -96,16 +89,66 @@ final class Renderer: NSObject, MTKViewDelegate {
         return t
     }
 
+    /// The object's current frame (and shadow) at time t.
+    func frame(of p: MapScene.Placed, at t: Double) -> (SpriteImage, SpriteImage?) {
+        let frames = p.sprite.frames
+        guard frames.count > 1 else { return (p.image, p.shadow) }
+        let speed = frames[0].speed
+        let period = speed > 0 ? Double(speed) / 60.0 : 0.125
+        let idx = Int(t / period) % frames.count
+        let f = frames[idx]
+        return (f, p.sprite.shadow(for: f))
+    }
+
+    func quads(at t: Double) -> [Quad] {
+        var out = terrain
+        let minX = pan.x - 512, minY = pan.y - 512, maxX = pan.x + viewSize.x / zoom + 512, maxY = pan.y + viewSize.y / zoom + 512
+        for p in scene.placed {
+            if Float(p.anchorX) < minX || Float(p.anchorX) > maxX || Float(p.anchorY) < minY || Float(p.anchorY) > maxY { continue }
+            let (f, sh) = frame(of: p, at: t)
+            let ox = p.anchorX + Int(p.sprite.origin.x), oy = p.anchorY + Int(p.sprite.origin.y)
+            if let base = p.sprite.baseFrame, f.name != base.name {   // animated towns: frames are deltas over base_frame
+                if let s = sh { out.append(Quad(texture: texture(for: s, of: p.name), x: ox + s.box.left, y: oy + s.box.top, w: s.bitmap.width, h: s.bitmap.height)) }
+                out.append(Quad(texture: texture(for: base, of: p.name), x: ox + base.box.left, y: oy + base.box.top, w: base.bitmap.width, h: base.bitmap.height))
+                out.append(Quad(texture: texture(for: f, of: p.name), x: ox + f.box.left, y: oy + f.box.top, w: f.bitmap.width, h: f.bitmap.height))
+            } else {
+                if let s = sh { out.append(Quad(texture: texture(for: s, of: p.name), x: ox + s.box.left, y: oy + s.box.top, w: s.bitmap.width, h: s.bitmap.height)) }
+                out.append(Quad(texture: texture(for: f, of: p.name), x: ox + f.box.left, y: oy + f.box.top, w: f.bitmap.width, h: f.bitmap.height))
+            }
+        }
+        return out
+    }
+
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
         viewSize = SIMD2(Float(size.width), Float(size.height))
     }
 
     func draw(in view: MTKView) {
         guard let drawable = view.currentDrawable, let rpd = view.currentRenderPassDescriptor else { return }
-        encode(rpd: rpd, present: drawable)
+        let now = Date()
+        frameTimes.append(now.timeIntervalSince(lastFrame))
+        lastFrame = now
+        if frameTimes.count >= 300 {
+            let avg = frameTimes.reduce(0, +) / Double(frameTimes.count)
+            print(String(format: "%.1f fps (avg frame %.2f ms)", 1 / avg, avg * 1000))
+            frameTimes.removeAll()
+        }
+        encode(rpd: rpd, present: drawable, time: now.timeIntervalSince(start))
     }
 
-    func encode(rpd: MTLRenderPassDescriptor, present: MTLDrawable?) {
+    func encode(rpd: MTLRenderPassDescriptor, present: MTLDrawable?, time: Double) {
+        let list = quads(at: time)
+        var verts: [Vertex] = []
+        verts.reserveCapacity(list.count * 6)
+        for q in list {
+            let x0 = Float(q.x), y0 = Float(q.y), x1 = Float(q.x + q.w), y1 = Float(q.y + q.h)
+            verts += [Vertex(x: x0, y: y0, u: 0, v: 0), Vertex(x: x1, y: y0, u: 1, v: 0), Vertex(x: x0, y: y1, u: 0, v: 1),
+                      Vertex(x: x1, y: y0, u: 1, v: 0), Vertex(x: x1, y: y1, u: 1, v: 1), Vertex(x: x0, y: y1, u: 0, v: 1)]
+        }
+        let bytes = verts.count * MemoryLayout<Vertex>.stride
+        if vertexBuffer.length < bytes { vertexBuffer = device.makeBuffer(length: bytes * 2, options: .storageModeShared)! }
+        verts.withUnsafeBytes { vertexBuffer.contents().copyMemory(from: $0.baseAddress!, byteCount: bytes) }
+
         let cmd = queue.makeCommandBuffer()!
         let enc = cmd.makeRenderCommandEncoder(descriptor: rpd)!
         enc.setRenderPipelineState(pipeline)
@@ -113,9 +156,9 @@ final class Renderer: NSObject, MTKViewDelegate {
         enc.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
         enc.setVertexBytes(&cam, length: MemoryLayout<Camera>.stride, index: 1)
         let minX = pan.x, minY = pan.y, maxX = pan.x + viewSize.x / zoom, maxY = pan.y + viewSize.y / zoom
-        for (i, (tex, x, y, w, h)) in draws.enumerated() {
-            if Float(x + w) < minX || Float(x) > maxX || Float(y + h) < minY || Float(y) > maxY { continue }
-            enc.setFragmentTexture(tex, index: 0)
+        for (i, q) in list.enumerated() {
+            if Float(q.x + q.w) < minX || Float(q.x) > maxX || Float(q.y + q.h) < minY || Float(q.y) > maxY { continue }
+            enc.setFragmentTexture(q.texture, index: 0)
             enc.drawPrimitives(type: .triangle, vertexStart: i * 6, vertexCount: 6)
         }
         enc.endEncoding()

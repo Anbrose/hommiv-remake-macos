@@ -43,7 +43,7 @@ if let out = snapshot {
     rpd.colorAttachments[0].loadAction = .clear
     rpd.colorAttachments[0].storeAction = .store
     rpd.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
-    renderer.encode(rpd: rpd, present: nil)
+    renderer.encode(rpd: rpd, present: nil, time: 0)
     lap("frame rendered")
     var pixels = [UInt8](repeating: 0, count: w * h * 4)
     target.getBytes(&pixels, bytesPerRow: w * 4, from: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0)

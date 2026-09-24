@@ -18,12 +18,15 @@ public struct SpriteImage {
     public let name: String
     public let box: (left: Int, top: Int, right: Int, bottom: Int)
     public let bitmap: Bitmap
+    public let speed: Int   // the record's speed field (frame duration, in 1/60 s as far as we know)
 }
 
 /// A decoded sprite .h4d (actor_sequence / adv_object / combat_object / animation). Format: tools/h4sprite.py.
 public struct Sprite {
     public let images: [SpriteImage]
     public let origin: (x: Int32, y: Int32)   // from the trailer, if present
+    /// Footprint in map cells (adv_object headers: u16 w, u16 h at offset 5); (1, 1) when unknown.
+    public let footprint: (w: Int, h: Int)
     public var frames: [SpriteImage] { images.filter { !$0.name.hasPrefix("shadow") && $0.name != "base_frame" } }
     public var baseFrame: SpriteImage? { images.first { $0.name == "base_frame" } }
     public func shadow(for frame: SpriteImage) -> SpriteImage? {
@@ -47,8 +50,13 @@ public struct Sprite {
         guard let start = (0..<min(d.count, 4096)).first(where: paletteOK) else { throw H4Error.corrupt("sprite: no image records") }
         var rd = ByteReader(d, at: start)
         var list: [SpriteImage] = []
+        var fp = (w: 1, h: 1)
+        if start >= 9, r.byte(at: 0) == 6 {
+            let w = Int(r.peekU16(at: 5)), h = Int(r.peekU16(at: 7))
+            if w >= 1, w <= 16, h >= 1, h <= 16 { fp = (w, h) }
+        }
         while paletteOK(rd.pos) {
-            let npal = Int(rd.u16()); _ = rd.u16(); _ = rd.u16(); _ = rd.u8()
+            let npal = Int(rd.u16()); _ = rd.u16(); let speed = Int(rd.u16()); _ = rd.u8()
             var pal = [UInt8](repeating: 0, count: 256 * 3)
             for i in 1..<npal {   // stored BGR, index 0 transparent
                 let b = rd.u8(), g = rd.u8(), rr = rd.u8()
@@ -85,11 +93,12 @@ public struct Sprite {
                     }
                 }
             }
-            list.append(SpriteImage(name: name, box: (L, T, R, B), bitmap: bm))
+            list.append(SpriteImage(name: name, box: (L, T, R, B), bitmap: bm, speed: speed))
         }
         var ox: Int32 = 0, oy: Int32 = 0
         if rd.remaining >= 8 { ox = rd.i32(); oy = rd.i32() }
         images = list
         origin = (ox, oy)
+        footprint = fp
     }
 }

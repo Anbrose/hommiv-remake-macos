@@ -12,9 +12,10 @@ public final class MapScene {
     public struct Placed {
         public let name: String        // adv_object name, identifies the sprite file
         public let sprite: Sprite
-        public let image: SpriteImage
+        public let image: SpriteImage  // base frame (or first frame)
         public let shadow: SpriteImage?
         public let x: Int, y: Int      // screen position of the image's top-left
+        public let anchorX: Int, anchorY: Int   // screen position of the anchor cell centre
         public let depth: Int
     }
 
@@ -101,7 +102,6 @@ public final class MapScene {
         let n = map.size
         var out: [Placed] = []
         let objs = map.objects.filter { $0.level == level && $0.x >= -2 && $0.x < n + 2 && $0.y >= -2 && $0.y < n + 2 }
-            .sorted { ($0.x + $0.y, $0.y - $0.x) < ($1.x + $1.y, $1.y - $1.x) }
         for o in objs {
             let key = o.name
             if spriteCache[key] == nil {
@@ -110,10 +110,13 @@ public final class MapScene {
             }
             guard let s = spriteCache[key], let img = s.baseFrame ?? s.frames.first else { continue }
             let (sx, sy) = screen(x: o.x, y: o.y)
+            // (x, y) is the top corner of the footprint; paint order follows the bottom corner
+            let depth = (o.x + o.y + s.footprint.w + s.footprint.h - 2) * 1000 + (o.y - o.x) + 500
             out.append(Placed(name: key, sprite: s, image: img, shadow: s.shadow(for: img),
-                              x: sx + Int(s.origin.x) + img.box.left, y: sy + Int(s.origin.y) + img.box.top, depth: o.x + o.y))
+                              x: sx + Int(s.origin.x) + img.box.left, y: sy + Int(s.origin.y) + img.box.top,
+                              anchorX: sx, anchorY: sy, depth: depth))
         }
-        placed = out
+        placed = out.sorted { $0.depth < $1.depth }
     }
 
     static func mod(_ a: Int, _ m: Int) -> Int { ((a % m) + m) % m }

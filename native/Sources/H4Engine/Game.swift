@@ -513,7 +513,8 @@ public final class GameState {
             if p.category == "castle" {
                 let faction = townFactions[p.name] ?? "life"
                 let list = tables?.names["\(faction.prefix(1).uppercased() + faction.dropFirst())_Town"] ?? []
-                let name = list.isEmpty ? "Town" : list[(p.cellX * 7 + p.cellY * 13 + townIndex) % list.count]
+                let custom = map.objects.first { ($0.type == "town" || $0.type == "random_town") && $0.x == p.cellX && $0.y == p.cellY && $0.level == level }?.customName
+                let name = custom ?? (list.isEmpty ? "Town" : list[(p.cellX * 7 + p.cellY * 13 + townIndex) % list.count])
                 var town = Town(x: p.cellX, y: p.cellY, name: name, alignment: faction, owned: false)
                 // a new town: village hall, walls matching the sprite, and the first dwelling
                 town.buildings = ["village hall"]

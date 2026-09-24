@@ -169,8 +169,8 @@ public final class MapScene {
         let objs = map.objects.filter { $0.level == level && $0.x >= -2 && $0.x < n + 2 && $0.y >= -2 && $0.y < n + 2 }
         let resolver = RandomResolver(archive: archive)
         let debug = ProcessInfo.processInfo.environment["H4DEBUG"] != nil
-        // random towns get factions left to right on screen, so the leftmost is Haven
-        let townOrder = objs.filter { $0.type == "random_town" }.sorted { ($0.y - $0.x, $0.x + $0.y) < ($1.y - $1.x, $1.x + $1.y) }
+        // random towns get factions in order: the first player's town first (Haven), then left to right on screen
+        let townOrder = objs.filter { $0.type == "random_town" }.sorted { (($0.owner ?? 99), $0.y - $0.x, $0.x + $0.y) < (($1.owner ?? 99), $1.y - $1.x, $1.x + $1.y) }
         for o in objs {
             var key = "adv_object.\(o.name).h4d"
             let ordinal = townOrder.firstIndex { $0.x == o.x && $0.y == o.y && $0.level == o.level } ?? 0

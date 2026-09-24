@@ -90,7 +90,8 @@ let scene = try MapScene(map: map, level: min(level, map.levels - 1), archive: a
 lap("scene built: \(scene.chunks.count) terrain chunks, \(scene.placed.count) objects")
 let device = MTLCreateSystemDefaultDevice()!
 
-// A scenario in progress: one hero of the leftmost town's alignment standing at its gate.
+// A scenario in progress: one hero of the first player's town (the map's owner 0, else the
+// leftmost town) standing at its gate.
 let resolver = RandomResolver(archive: archive)
 let game = GameState(map: map, level: scene.level, scene: scene)
 let textURL = URL(fileURLWithPath: args[1]).deletingLastPathComponent().appendingPathComponent("text.h4r")
@@ -98,7 +99,9 @@ if let text = try? H4Archive(url: textURL), let tables = try? RuleTables(archive
 let alignments = ["haven": "life", "academy": "order", "asylum": "chaos", "necropolis": "death", "preserve": "nature", "stronghold": "might"]
 func faction(of name: String) -> String { alignments.first { name.lowercased().contains($0.key) }?.value ?? "life" }
 game.registerObjects(townFactions: Dictionary(uniqueKeysWithValues: scene.placed.filter { $0.category == "castle" }.map { ($0.name, faction(of: $0.name)) }))
-if let town = scene.placed.filter({ $0.category == "castle" }).min(by: { ($0.cellY - $0.cellX) < ($1.cellY - $1.cellX) }) {
+let ownedByFirst = map.objects.first { ($0.type == "town" || $0.type == "random_town") && $0.owner == 0 && $0.level == scene.level }
+if let town = scene.placed.first(where: { p in ownedByFirst.map { p.category == "castle" && p.cellX == $0.x && p.cellY == $0.y } ?? false })
+    ?? scene.placed.filter({ $0.category == "castle" }).min(by: { ($0.cellY - $0.cellX) < ($1.cellY - $1.cellX) }) {
     let align = faction(of: town.name)
     if let i = game.towns.firstIndex(where: { $0.x == town.cellX && $0.y == town.cellY }) { game.towns[i].owned = true }
     // the gate is in the middle of the lower-right wall of right-facing (" R") towns, lower-left otherwise

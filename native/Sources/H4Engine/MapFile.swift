@@ -8,6 +8,30 @@ public struct MapObject {
     public let x: Int
     public let y: Int
     public let level: Int
+    /// Owning player (0 = the first player) for towns; nil when unowned or not ownable.
+    public var owner: Int? = nil
+    /// A town's name set in the editor ("none" = pick a random one).
+    public var customName: String? = nil
+
+    /// The town body after the three category strings: a random town is `u32 7, string16
+    /// name, u16 8, u32 owner ...`; a placed one `u16 4, u16 2, 24 bytes (built buildings),
+    /// u8, 19 bytes (allowed buildings), u8, u16 8, u32 owner ...`. Then come four "seq"
+    /// event scripts and the garrison.
+    static func parseTownBody(_ rd: inout ByteReader, random: Bool) -> (owner: Int?, name: String?) {
+        var name: String? = nil
+        if random {
+            guard rd.remaining >= 6 else { return (nil, nil) }
+            _ = rd.u32()
+            let n = rd.string16()
+            if n.lowercased() != "none", !n.isEmpty { name = n }
+        } else {
+            guard rd.remaining >= 50 else { return (nil, nil) }
+            rd.pos += 2 + 2 + 24 + 1 + 19 + 1
+        }
+        guard rd.remaining >= 6, rd.u16() == 8 else { return (nil, name) }
+        let o = rd.u32()
+        return (o == 0xffff_ffff ? nil : Int(o), name)
+    }
 }
 
 public struct Overlay {
@@ -147,7 +171,12 @@ public struct MapFile {
             var cats: [String] = []
             for _ in 0..<3 { _ = rd.u16(); cats.append(rd.string16()) }
             let x = Int(Int32(bitPattern: r.peekU32(at: p - 13))), y = Int(Int32(bitPattern: r.peekU32(at: p - 9)))
-            objs.append(MapObject(name: name, type: cats[0], subtype: cats[1], terrain: cats[2], x: x, y: y, level: Int(r.byte(at: p - 5))))
+            var o = MapObject(name: name, type: cats[0], subtype: cats[1], terrain: cats[2], x: x, y: y, level: Int(r.byte(at: p - 5)))
+            if cats[0] == "town" || cats[0] == "random_town" {
+                let t = MapObject.parseTownBody(&rd, random: cats[0] == "random_town")
+                o.owner = t.owner; o.customName = t.name
+            }
+            objs.append(o)
         }
         return objs
     }

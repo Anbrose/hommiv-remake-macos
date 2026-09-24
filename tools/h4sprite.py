@@ -1,27 +1,36 @@
 #!/usr/bin/env python3
-"""Decode Heroes of Might and Magic IV actor_sequence sprites (.h4d) to PNG.
+"""Decode Heroes of Might and Magic IV sprite .h4d files to PNG.
 
     h4sprite.py "actor_sequence.Gold Golem.combat.walk.sw.h4d" out/
 
-Writes one RGBA PNG per frame and per shadow, a strip.png with the shadows
-composited under the frames, and meta.json with each image's bounding box in
-the game's 800x600 combat canvas.
+Works for actor_sequence (creature and hero animations), animation (spell
+effects, flags), adv_object (adventure map objects) and combat_object
+(battlefield obstacles): they all carry the same image records, only the
+header and trailer differ. Writes one RGBA PNG per image, a strip.png with
+shadows composited under their frames, and meta.json with each image's
+bounding box (actor_sequence boxes are on the 800x600 combat canvas) plus the
+undecoded header and trailer bytes.
 
-Format (little-endian), worked out from the GOG build:
+Image records (little-endian), worked out from the GOG build:
 
-    header    u16 version = 2   u16 kind (2, or 3 = mounted/ranged variant)   u16 count
-              kind 3 only: i32 -1, u16 x
-    then repeated until an i32 < 0 is found:
-      palette u16 npal  u16 1  u16 speed  u8 0   (npal-1) x BGR   -- index 0 is transparent
-      image   u16 len + name ("frame 001", "shadow 001", ...)
-              u8 flag (4)   u32 left, top, right, bottom
-              (bottom-top) rows of: u16 x0, u16 x1, u32 offset   -- the opaque span of the row
-              pixels     one palette index per span pixel, rows concatenated
-              alpha      one nibble per span pixel, low nibble first, 0..15
-              summary    ceil((pixels+4)/64) nibbles (0 if no pixels), a coarse
-                         per-64-pixel alpha the game uses to skip blocks; ignored here
-    trailer   i32 ox, i32 oy   (origin, almost always -361,-347)
-              u16 n, then n x (u16 len + name, u16 type)   -- e.g. the owning combat_actor
+    palette u16 npal  u16 1  u16 speed  u8 0   (npal-1) x BGR   -- index 0 is transparent
+    image   u16 len + name ("frame 001", "shadow 001", ...)
+            u8 flag (4)   u32 left, top, right, bottom
+            (bottom-top) rows of: u16 x0, u16 x1, u32 offset   -- the opaque span of the row
+            pixels     one palette index per span pixel, rows concatenated
+            alpha      one nibble per span pixel, low nibble first, 0..15
+            summary    ceil((pixels+4)/64) nibbles (0 if no pixels), a coarse
+                       per-64-pixel alpha the game uses to skip blocks; ignored here
+
+Records repeat while the next bytes form a valid palette header.
+
+    actor_sequence  header u16 2, u16 kind (2; 3 = mounted/ranged, +6 bytes), u16 count
+                    trailer i32 ox, i32 oy (origin, usually -361,-347),
+                            u16 n, n x (u16 len + name, u16 type)  -- e.g. owning combat_actor
+    animation       header u16 10;  trailer u16 2, u16 x, u16 n, n x u32 frame order, ...
+    combat_object   header 25 bytes incl. the object's name;  trailer i32 ox, i32 oy
+    adv_object      header with category strings ("decorative", "rock", ...);
+                    trailer i32 ox, i32 oy, 8 more bytes
 """
 import json
 import os
@@ -30,11 +39,25 @@ import sys
 import zlib
 
 
+def palette_ok(b, pos):
+    if pos + 7 > len(b):
+        return False
+    npal, one = struct.unpack_from('<HH', b, pos)
+    q = pos + 7 + (npal - 1) * 3
+    if not (1 <= npal <= 256 and one == 1 and b[pos + 6] == 0) or q + 7 > len(b):
+        return False
+    ln = struct.unpack_from('<H', b, q)[0]
+    name = b[q + 2:q + 2 + ln]
+    return 1 <= ln <= 512 and len(name) == ln and all(32 <= c < 127 for c in name) and b[q + 2 + ln:q + 3 + ln] == b'\x04'
+
+
 def parse(b):
-    ver, kind, count = struct.unpack_from('<3H', b, 0)
-    pos = 6 + (6 if kind == 3 else 0)
+    start = next((p for p in range(min(len(b), 4096)) if palette_ok(b, p)), None)
+    if start is None:
+        raise ValueError("no image records found")
+    pos = start
     images = []
-    while struct.unpack_from('<i', b, pos)[0] >= 0:
+    while palette_ok(b, pos):
         npal, _, speed = struct.unpack_from('<HHH', b, pos)
         pos += 7
         pal = [None] + [b[pos + i * 3:pos + i * 3 + 3][::-1] for i in range(npal - 1)]
@@ -53,16 +76,7 @@ def parse(b):
         pos += (px + 1) // 2
         pos += ((px + 4 + 63) // 64 + 1) // 2 if px else 0
         images.append(dict(name=name, box=(L, T, R, B), rows=rows, pix=pix, alpha=alpha, pal=pal, speed=speed))
-    ox, oy, n = struct.unpack_from('<iiH', b, pos)
-    pos += 10
-    refs = []
-    for _ in range(n):
-        ln = struct.unpack_from('<H', b, pos)[0]
-        refs.append(b[pos + 2:pos + 2 + ln].decode('latin1'))
-        pos += 4 + ln
-    if pos != len(b):
-        raise ValueError(f"parsed {pos} of {len(b)} bytes")
-    return dict(kind=kind, images=images, origin=(ox, oy), refs=refs)
+    return dict(images=images, header=b[:start], trailer=b[pos:])
 
 
 def rgba(img):
@@ -112,12 +126,13 @@ def blit(dst, dw, rows, ox, oy):
 def strip(images, path):
     L = min(i['box'][0] for i in images); T = min(i['box'][1] for i in images)
     R = max(i['box'][2] for i in images); B = max(i['box'][3] for i in images)
-    frames = [i for i in images if not i['name'].startswith('shadow')]
+    base = next((i for i in images if i['name'] == 'base_frame'), None)
+    frames = [i for i in images if not i['name'].startswith('shadow') and i is not base]
     shadows = {i['name'].split()[-1]: i for i in images if i['name'].startswith('shadow')}
     cw, ch = R - L, B - T
     canvas = [bytearray(cw * len(frames) * 4) for _ in range(ch)]
     for n, fr in enumerate(frames):
-        for img in (shadows.get(fr['name'].split()[-1]), fr):
+        for img in (shadows.get(fr['name'].split()[-1]), base, fr):
             if img:
                 w, h, rows = rgba(img)
                 blit(canvas, cw, rows, img['box'][0] - L + n * cw, img['box'][1] - T)
@@ -130,7 +145,7 @@ def main():
     src, out = sys.argv[1], sys.argv[2]
     seq = parse(open(src, 'rb').read())
     os.makedirs(out, exist_ok=True)
-    meta = dict(kind=seq['kind'], origin=seq['origin'], refs=seq['refs'], images=[])
+    meta = dict(header=seq['header'].hex(' '), trailer=seq['trailer'].hex(' '), images=[])
     for img in seq['images']:
         w, h, rows = rgba(img)
         fname = img['name'].replace(' ', '_') + '.png'

@@ -60,6 +60,13 @@ final class Renderer: NSObject, MTKViewDelegate {
     var town: TownScreen?
     var townOpen: Int? = nil      // index into game.towns while the town screen is up
     var townDialog: TownDialog? = nil
+    var adventureDialog: AdventureDialog? = nil
+    var combat: CombatScreen?
+    var combatMeleeMode = false
+    var inCombat: Bool { combat?.battle != nil }
+    var chestChoice: Bool? = nil          // true = gold, false = experience
+    var floaters: [(text: String, x: Int, y: Int, since: Date)] = []
+    var buildPage = 0
     var buildCells: [(rect: (Int, Int, Int, Int), building: RuleTables.BuildingDef)] = []
     /// The army display of the town bar: 7 ring centres per row (garrison above, visiting army below).
     static let armyRingCentres: [(Int, Int)] = (0..<7).map { (532 + $0 * 66, 613) }
@@ -406,9 +413,12 @@ final class Renderer: NSObject, MTKViewDelegate {
         if let slot = ui.hotspot("end_turn"), let b = ui.endTurnButton["Released"] {
             out.append(Quad(texture: uiTexture("button|end_turn", { b.bitmap }), x: slot.x, y: slot.y, w: b.width, h: b.height))
         }
+        out += panelButtonQuads()
+        out += floaterQuads()
         out += hoverQuads()
         out += popupQuads()
         out += creatureDialogQuads()
+        out += adventureDialogQuads()
         return out
     }
     var showBlocked = false   // debug: mark every cell a hero cannot enter
@@ -662,10 +672,11 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
 
     /// The game's own path arrows: adv_object.internal.<green|red>_arrow.<straight|left|right>.<dir> / .dest
-    func arrowSprite(_ name: String) -> Sprite? {
-        if let s = actorSprites[name] { return s }
-        guard let r = resolver, let e = r.entry("adv_object.internal.\(name).h4d"), let s = try? Sprite(data: r.archive.payload(e)) else { return nil }
-        actorSprites[name] = s
+    func arrowSprite(_ name: String, prefix: String = "adv_object.internal") -> Sprite? {
+        let key = "\(prefix).\(name)"
+        if let s = actorSprites[key] { return s }
+        guard let r = resolver, let e = r.entry("\(prefix).\(name).h4d"), let s = try? Sprite(data: r.archive.payload(e)) else { return nil }
+        actorSprites[key] = s
         return s
     }
 
@@ -789,6 +800,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             g.update(dt: Float(min(dt, 0.1)))
             for line in g.log { print(line); toasts.append((line, now.addingTimeInterval(5))) }
             g.log.removeAll()
+            collectFloaters(now: now)
             toasts.removeAll { $0.until < now }
             if let h = g.heroes.first {
                 onTitle?("Heroes IV — \(scene.map.name) — movement \(Int(h.movement.rounded()))/\(Int(h.maxMovement))")
@@ -804,9 +816,16 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     func encode(rpd: MTLRenderPassDescriptor, present: MTLDrawable?, time: Double) {
         if let g = game, let t = g.enteredTown { townOpen = t; g.enteredTown = nil }
+        if let g = game, let cs = combat, let pb = g.pendingBattle, cs.battle == nil {
+            let cell = g.map.cells[g.level][pb.hero.x * g.map.size + pb.hero.y]
+            cs.start(game: g, hero: pb.hero, monsterAt: pb.monster, pb.placed, terrain: cell?.type ?? 1, variant: cell?.variant ?? 0)
+            g.pendingBattle = nil
+        }
+        let now = Date()
+        combat?.update(now: now)
         let inTown = townOpen != nil && town != nil
-        let mapList = inTown ? [] : quads(at: time)
-        let uiList = inTown ? townQuads() : uiQuads()
+        let mapList = inTown || inCombat ? [] : quads(at: time)
+        let uiList = inCombat ? combatQuads(now: now) : inTown ? townQuads() : uiQuads()
         let list = mapList + uiList
         var verts: [Vertex] = []
         verts.reserveCapacity(list.count * 6)

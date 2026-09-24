@@ -49,8 +49,12 @@ public struct TerrainPatch {
     }
 }
 
-/// transition.Transitions.h4d: named sets of 93 one-bit 64x32 diamond masks. Format: tools/h4render.py.
-/// `sets[name][k]` is a 64x32 array of 0/1 bytes (row-major).
+/// transition.Transitions.h4d: named sets of 93 64x32 diamond masks. Format: tools/h4render.py.
+/// `sets[name][k]` is a 64x32 array (row-major) of coverage 0..15: the land/road/water/river
+/// sets are one bit per pixel (0 or 15), the water_to_land/land_to_water sets carry a 4-bit
+/// alpha per pixel (the soft shorelines). Each record is a 5-byte header (u32 shape code,
+/// u8 kind: 1 hard, 4 soft) then the diamond's columns (widths 1,1,3,3,...,31,31 and back),
+/// each column padded to whole bytes: bits for hard masks, nibbles (low first) for soft ones.
 public struct TransitionMasks {
     public let sets: [String: [[UInt8]]]
 
@@ -66,19 +70,28 @@ public struct TransitionMasks {
         for _ in 0..<nsec {
             let name = r.string16()
             let count = Int(r.u32())
-            let size = (name.hasPrefix("water_to") || name.hasPrefix("land_to")) ? 549 : 165
+            let soft = name.hasPrefix("water_to") || name.hasPrefix("land_to")
+            let size = soft ? 549 : 165
             var masks: [[UInt8]] = []
             masks.reserveCapacity(count)
             for i in 0..<count {
                 var p = r.pos + i * size + 5
                 var m = [UInt8](repeating: 0, count: 64 * 32)
                 for (x, w) in widths.enumerated() {
-                    let nb = (w + 7) / 8
-                    var bits: UInt64 = 0
-                    for k in 0..<nb { bits |= UInt64(r.byte(at: p + k)) << (8 * UInt64(k)) }
-                    p += nb
                     let y0 = (32 - w) / 2
-                    for j in 0..<w where (bits >> UInt64(j)) & 1 == 1 { m[(y0 + j) * 64 + x] = 1 }
+                    if soft {
+                        for j in 0..<w {
+                            let b = r.byte(at: p + j / 2)
+                            m[(y0 + j) * 64 + x] = j % 2 == 0 ? (b & 0xF) : (b >> 4)
+                        }
+                        p += (w + 1) / 2
+                    } else {
+                        let nb = (w + 7) / 8
+                        var bits: UInt64 = 0
+                        for k in 0..<nb { bits |= UInt64(r.byte(at: p + k)) << (8 * UInt64(k)) }
+                        p += nb
+                        for j in 0..<w where (bits >> UInt64(j)) & 1 == 1 { m[(y0 + j) * 64 + x] = 15 }
+                    }
                 }
                 masks.append(m)
             }

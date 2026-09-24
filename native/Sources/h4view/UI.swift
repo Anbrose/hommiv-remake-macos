@@ -20,12 +20,13 @@ final class AdventureUI {
     let archive: H4Archive
     var portraitSheets: [String: LayerFile] = [:]
 
-    /// A hero's 52x52 portrait, from layers.icons.hero.<alignment>.52 keyed by the hero's keyword.
-    func portrait(keyword: String, alignment: String) -> UILayer? {
-        if portraitSheets[alignment] == nil, let d = try? archive.payload("layers.icons.hero.\(alignment).52.h4d"), let f = try? LayerFile(data: d) {
-            portraitSheets[alignment] = f
+    /// A hero's portrait (52 or 82 px), from layers.icons.hero.<alignment>.<size> keyed by the hero's keyword.
+    func portrait(keyword: String, alignment: String, size: Int = 52) -> UILayer? {
+        let key = "\(alignment).\(size)"
+        if portraitSheets[key] == nil, let d = try? archive.payload("layers.icons.hero.\(alignment).\(size).h4d"), let f = try? LayerFile(data: d) {
+            portraitSheets[key] = f
         }
-        return portraitSheets[alignment]?[keyword.lowercased()]
+        return portraitSheets[key]?[keyword.lowercased()]
     }
 
     /// Where the hero list's round slots are on the panel (centres, top to bottom).

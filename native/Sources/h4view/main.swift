@@ -18,6 +18,11 @@ var showBlocked = false   // --blocked: mark impassable cells (debug)
 var openTown = false      // --town (with --snapshot): render the town screen
 var openBuildList = false // --build: the town screen with its build list open
 var openRecruit = false   // --recruit: the town screen with the first dwelling's recruit dialog open
+var openHeroScreen = false // --heroscreen: the hero screen open
+var openChest = false      // --chest: the treasure chest dialog open
+var battleAt: (Int, Int)?  // --battle x,y (with --snapshot): open the combat screen against the monster on that cell
+var battleSteps = 0        // --steps n: let the battle play n automatic actions first
+var battleResults = false  // --results: show the results dialog (after --steps ran the battle to its end)
 var heroAt: (Int, Int)?   // --hero x,y: put the hero there instead of at the town gate (debug)
 var plan: (Int, Int)?     // --plan x,y (with --snapshot): show the route there without walking
 var inspectAt: (Int, Int)? // --inspect x,y (with --snapshot): the right-click box for that cell
@@ -31,6 +36,11 @@ while i < args.count {
     else if args[i] == "--town" { openTown = true; i += 1 }
     else if args[i] == "--build" { openTown = true; openBuildList = true; i += 1 }
     else if args[i] == "--recruit" { openTown = true; openRecruit = true; i += 1 }
+    else if args[i] == "--heroscreen" { openHeroScreen = true; i += 1 }
+    else if args[i] == "--battle", i + 1 < args.count { let p = args[i + 1].split(separator: ",").compactMap { Int($0) }; if p.count == 2 { battleAt = (p[0], p[1]) }; i += 2 }
+    else if args[i] == "--steps", i + 1 < args.count { battleSteps = Int(args[i + 1]) ?? 0; i += 2 }
+    else if args[i] == "--results" { battleResults = true; i += 1 }
+    else if args[i] == "--chest" { openChest = true; i += 1 }
     else if (args[i] == "--hero" || args[i] == "--plan" || args[i] == "--inspect"), i + 1 < args.count {
         let p = args[i + 1].split(separator: ",").compactMap { Int($0) }
         if p.count == 2 { if args[i] == "--hero" { heroAt = (p[0], p[1]) } else if args[i] == "--plan" { plan = (p[0], p[1]) } else { inspectAt = (p[0], p[1]) } }
@@ -126,7 +136,8 @@ if let town = scene.placed.first(where: { p in ownedByFirst.map { p.category == 
 // The adventure screen chrome (frame, panel, fonts); the map alone if the UI files are missing.
 var ui: AdventureUI? = nil
 var townScreen: TownScreen? = nil
-do { ui = try AdventureUI(archive: archive, index: resolver); townScreen = try TownScreen(archive: archive); lap("ui loaded") } catch { print("no UI: \(error)") }
+var combatScreen: CombatScreen? = nil
+do { ui = try AdventureUI(archive: archive, index: resolver); townScreen = try TownScreen(archive: archive); combatScreen = try CombatScreen(archive: archive); lap("ui loaded") } catch { print("no UI: \(error)") }
 
 /// Camera setup shared by the window and the snapshot: 1 map pixel per canvas pixel times
 /// the requested zoom, the requested cell in the middle of the map viewport.
@@ -145,6 +156,16 @@ if let out = snapshot {
     renderer.showBlocked = showBlocked
     renderer.ui = ui
     renderer.town = townScreen
+    renderer.combat = combatScreen
+    if walk != nil { game.quickCombatOnly = true }   // --walk snapshots resolve fights at once
+    if let target = battleAt, let hero = game.heroes.first, let cs = combatScreen,
+       let p = scene.placed.first(where: { $0.cellX == target.0 && $0.cellY == target.1 }), let mi = game.monster(for: p) {
+        cs.start(game: game, hero: hero, monsterAt: mi, p, terrain: 1)
+        if let b = cs.battle { for _ in 0..<battleSteps { b.autoAct() }; _ = b.takeEvents(); cs.pump(); if b.finished != nil { cs.result = (b.finished!, b.round); cs.showResults = battleResults } }
+        print("battle: round \(cs.battle?.round ?? 0), units \(cs.battle?.units.map { "\($0.stats.name)x\($0.stats.count)@(\($0.x),\($0.y))" }.joined(separator: " ") ?? "")")
+    }
+    if openHeroScreen { renderer.adventureDialog = .hero(0) }
+    if openChest, let h = game.heroes.first { game.chestOffer = (h, 1500, 1000); renderer.adventureDialog = .chest; renderer.chestChoice = true }
     if openTown {
         renderer.townOpen = game.towns.firstIndex { $0.owned }
         if openBuildList { renderer.townDialog = .buildList }
@@ -235,6 +256,7 @@ final class GameCursors {
     func set(_ name: String) -> Set? {
         if let s = sets[name] { return s }
         let file = name == "normal" ? "layers.cursor.combat.normal.h4d" : "layers.cursor.\(name).h4d"
+        if name == "combat.normal" { return set("normal") }
         guard let d = try? archive.payload(file), let f = try? LayerFile(data: d) else { return nil }
         let hot = f.layers.first { $0.name.lowercased() == "hot_spot" }.map { NSPoint(x: $0.x, y: $0.y) } ?? NSPoint(x: 0, y: 0)
         var frames: [NSCursor] = []
@@ -280,7 +302,8 @@ final class MapView: MTKView {
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
         let cx = mouse.x / renderer.uiScale
         var name = "normal"
-        if renderer.townOpen == nil, renderer.popup == nil, renderer.creatureDialog == nil, renderer.ui == nil || cx < Float(AdventureUI.mapViewportWidth) {
+        if renderer.inCombat { name = renderer.combatCursor(x: cx, y: mouse.y / renderer.uiScale) }
+        else if renderer.townOpen == nil, renderer.popup == nil, renderer.creatureDialog == nil, renderer.adventureDialog == nil, renderer.ui == nil || cx < Float(AdventureUI.mapViewportWidth) {
             name = renderer.cursorKind(mapPoint: renderer.pan + mouse / renderer.zoom)
         }
         if name != cursorName { cursorName = name; cursorFrame = 0; cursors?.set(name)?.frames.first?.set() }
@@ -307,9 +330,18 @@ final class MapView: MTKView {
         let p = convert(e.locationInWindow, from: nil)
         let scale = Float(window?.backingScaleFactor ?? 1)
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
+        if renderer.inCombat {
+            renderer.combatClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale)
+            return
+        }
         if renderer.popup != nil {   // an open right-click box: a left click outside it closes it, and does nothing else
             let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale
             if !renderer.onPopup(cx, cy) { renderer.popup = nil }
+            return
+        }
+        if renderer.adventureDialog != nil {
+            let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale
+            _ = renderer.adventureDialogClick(x: cx, y: cy)
             return
         }
         if renderer.creatureDialog != nil {   // the creature dialog: Close, or a click outside it
@@ -324,6 +356,9 @@ final class MapView: MTKView {
             if cx >= Float(AdventureUI.mapViewportWidth) {
                 if ui.hit("end_turn", x: cx, y: cy) { g.endTurn() }
                 else if ui.hit("Town_list", x: cx, y: cy), let i = g.towns.firstIndex(where: { $0.owned }) { renderer.townOpen = i }
+                else if ui.hit("Hero_List", x: cx, y: cy) {   // a portrait opens the hero screen
+                    for (i, (hx, hy)) in AdventureUI.heroSlots.enumerated() where i < g.heroes.count && abs(cx - Float(hx)) < 30 && abs(cy - Float(hy)) < 30 { renderer.adventureDialog = .hero(i) }
+                }
                 return
             }
         }
@@ -342,6 +377,11 @@ final class MapView: MTKView {
         renderer.inspect(mapPoint: renderer.pan + mouse / renderer.zoom, canvas: (cx, cy))
     }
     override func scrollWheel(with e: NSEvent) {
+        if renderer.townOpen != nil {   // the build list pages with the wheel
+            if case .buildList? = renderer.townDialog, abs(e.scrollingDeltaY) > 2 { renderer.buildPage = max(0, renderer.buildPage + (e.scrollingDeltaY < 0 ? 1 : -1)) }
+            return
+        }
+        if renderer.adventureDialog != nil { return }
         renderer.pan -= SIMD2(Float(e.scrollingDeltaX), Float(e.scrollingDeltaY)) / renderer.zoom
     }
     override func magnify(with e: NSEvent) {
@@ -355,14 +395,19 @@ final class MapView: MTKView {
     override func keyDown(with e: NSEvent) {
         let step: Float = 64 / renderer.zoom
         switch e.keyCode {
-        case 123: renderer.pan.x -= step
-        case 124: renderer.pan.x += step
+        case 123, 124:   // arrows pan the map, or page the build list
+            if case .buildList? = renderer.townDialog { renderer.buildPage = max(0, renderer.buildPage + (e.keyCode == 124 ? 1 : -1)) }
+            else { renderer.pan.x += e.keyCode == 124 ? step : -step }
         case 125: renderer.pan.y += step
         case 126: renderer.pan.y -= step
-        case 36, 76: if renderer.townOpen == nil { renderer.game?.endTurn() }   // Return / Enter
-        case 14: if renderer.townOpen == nil { renderer.game?.endTurn() }       // E
+        case 36, 76: if renderer.townOpen == nil, !renderer.inCombat { renderer.game?.endTurn() }   // Return / Enter
+        case 14: if renderer.townOpen == nil, !renderer.inCombat { renderer.game?.endTurn() }       // E
+        case 1: if renderer.inCombat, let b = renderer.combat?.battle, !(renderer.combat?.busy ?? true), b.finished == nil { b.wait(); renderer.combat?.pump() }   // S = wait
+        case 2: if renderer.inCombat, let b = renderer.combat?.battle, !(renderer.combat?.busy ?? true), b.finished == nil { b.defend(); renderer.combat?.pump() } // D = defend
         case 53:   // Escape closes a dialog, then leaves the town
-            if renderer.townDialog != nil { renderer.townDialog = nil } else { renderer.townOpen = nil }
+            if renderer.townDialog != nil { renderer.townDialog = nil }
+            else if renderer.townOpen != nil { renderer.townOpen = nil }
+            else if case .hero? = renderer.adventureDialog { renderer.adventureDialog = nil }
         default: break
         }
     }
@@ -382,6 +427,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         renderer.showBlocked = showBlocked
         renderer.ui = ui
         renderer.town = townScreen
+        renderer.combat = combatScreen
         renderer.onTitle = { [weak self] t in if self?.window.title != t { self?.window.title = t } }
         view.renderer = renderer
         view.cursors = GameCursors(archive: archive)

@@ -173,7 +173,10 @@ public final class Hero {
     public var keyword = ""           // heroes table keyword, also the portrait layer name
     public var alignment = "life"
     /// The army travelling with the hero (the hero is a stack of his own, drawn first).
-    public struct Stack { public var creature: String; public var count: Int }
+    public struct Stack {
+        public var creature: String; public var count: Int
+        public init(creature: String, count: Int) { self.creature = creature; self.count = count }
+    }
     public var army: [Stack] = []
     public static let armySlots = 7   // the hero plus six stacks
     public var experience = 0
@@ -414,6 +417,12 @@ public final class GameState {
         return (tt.name, tt.description.isEmpty ? [] : [tt.description])
     }
 
+    /// A hero's combat numbers as the hero screen shows them (the quick-combat formulas).
+    public func heroStats(_ h: Hero) -> (attack: Int, defense: Int, damage: String, hitPoints: Int, speed: Int, move: Int) {
+        let c = Combatant(hero: h.name, level: h.level)
+        return (c.attack, c.defense, "\(c.damageLow)-\(c.damageHigh)", c.hitPoints, c.speed, Int(h.maxMovement))
+    }
+
     /// What a right click on a hero shows.
     public func describe(hero h: Hero) -> (title: String, body: [String]) {
         var body = ["Level \(h.level) " + (RuleTables.classes[h.alignment]?.might.capitalized ?? "Hero"), "Movement \(Int(h.movement.rounded()))/\(Int(h.maxMovement)), Experience \(h.experience)"]
@@ -466,26 +475,43 @@ public final class GameState {
         return out
     }
 
-    /// Fight a wandering monster stack next to the hero.
+    /// A battle waiting for the combat screen: the hero, the monster and its map object.
+    public var pendingBattle: (hero: Hero, monster: Int, placed: MapScene.Placed)?
+    /// Use the quick-combat rules instead of the combat screen (tests, --walk snapshots).
+    public var quickCombatOnly = false
+
+    /// Fight a wandering monster stack next to the hero: hand it to the combat screen, or
+    /// resolve it at once with the quick-combat rules.
     func fight(hero: Hero, monsterAt i: Int, _ p: MapScene.Placed) {
         guard let t = tables, let c = t.creature(monsters[i].creature) else { return }
+        hero.target = nil
+        if !quickCombatOnly { pendingBattle = (hero, i, p); return }
         let result = QuickCombat.fight(attackers: combatants(of: hero), defenders: [Combatant(creature: c, count: monsters[i].count)],
                                        seed: day * 131 + hero.x * 17 + hero.y)
         if ProcessInfo.processInfo.environment["H4DEBUG"] != nil { for l in result.log.prefix(12) { print("  " + l) } }
-        // survivors back into the army
-        hero.army = result.attackers.dropFirst().filter { $0.alive }.map { s in Hero.Stack(creature: t.creatures.first { $0.name == s.name }?.keyword ?? s.name, count: s.count) }
-        if result.attackerWon {
-            hero.experience += result.experience
+        let survivors = result.attackers.dropFirst().filter { $0.alive }.map { s in Hero.Stack(creature: t.creatures.first { $0.name == s.name }?.keyword ?? s.name, count: s.count) }
+        finishBattle(hero: hero, monsterAt: i, p, won: result.attackerWon, army: survivors, monstersLeft: result.defenders.first?.count ?? 0, experience: result.experience, rounds: result.rounds)
+    }
+
+    /// Apply a battle's outcome to the map: the army's survivors, the monster removed or
+    /// thinned, experience, a beaten hero sent home.
+    public func finishBattle(hero: Hero, monsterAt i: Int, _ p: MapScene.Placed, won: Bool, army: [Hero.Stack], monstersLeft: Int, experience: Int, rounds: Int) {
+        guard let t = tables, i < monsters.count, let c = t.creature(monsters[i].creature) else { return }
+        hero.army = army
+        refreshMovement(hero)
+        if won {
+            hero.experience += experience
             scene.remove(p)
             passability.free(p.cellX, p.cellY)
             monsters.remove(at: i)
-            log.append("Victory over \(monsters.count >= 0 ? c.plural : "") after \(result.rounds) rounds: +\(result.experience) experience (level \(hero.level))")
+            log.append("Victory over \(c.plural) after \(rounds) rounds: +\(experience) experience (level \(hero.level))")
         } else {
-            monsters[i].count = result.defenders.first?.count ?? monsters[i].count
+            monsters[i].count = max(1, monstersLeft)
             hero.x = hero.home.x; hero.y = hero.home.y; hero.movement = 0; hero.path = []; hero.plan = []
-            log.append("Defeated by \(c.plural) after \(result.rounds) rounds; \(hero.name) limps home")
+            log.append("Defeated by \(c.plural) after \(rounds) rounds; \(hero.name) limps home")
         }
         hero.target = nil
+        pendingBattle = nil
     }
 
     /// Give a hero the usual starting army: the two cheapest level-1 creatures of his alignment,
@@ -665,15 +691,29 @@ public final class GameState {
         hero.target = nil
         // what a pile is worth (rough HoMM IV amounts; the real tables come later)
         let kind = p.name.replacingOccurrences(of: "adv_object.Resources.", with: "").replacingOccurrences(of: ".h4d", with: "")
+        func gain(_ r: String, _ n: Int) { resources[r, default: 0] += n; floaters.append(("+\(n) \(r.lowercased())", hero.x, hero.y)) }
         switch kind {
-        case "Gold": resources["Gold", default: 0] += 750
-        case "Wood", "Ore": resources[kind, default: 0] += 8
-        case "Mercury", "Sulfur", "Crystal", "Gems": resources[kind, default: 0] += 4
-        case "Treasure Chest": resources["Gold", default: 0] += 1500
-        case "Campfire": resources["Gold", default: 0] += 500; resources["Wood", default: 0] += 5
+        case "Gold": gain("Gold", 750)
+        case "Wood", "Ore": gain(kind, 8)
+        case "Mercury", "Sulfur", "Crystal", "Gems": gain(kind, 4)
+        case "Treasure Chest":   // the choice comes in a dialog: 1000/1500/2000 gold or 500/1000/1500 experience
+            let tier = (p.cellX * 7 + p.cellY * 3) % 3
+            chestOffer = (hero, 1000 + tier * 500, 500 + tier * 500)
+        case "Campfire": gain("Gold", 500); gain("Wood", 5)
         default: break
         }
         log.append("picked up \(p.name) at (\(p.cellX),\(p.cellY))")
+    }
+
+    /// Short texts floating up over a cell (resources picked up), for the renderer to show.
+    public var floaters: [(text: String, x: Int, y: Int)] = []
+    /// A treasure chest waiting for the gold-or-experience choice (the UI resolves it).
+    public var chestOffer: (hero: Hero, gold: Int, experience: Int)?
+    public func resolveChest(gold: Bool) {
+        guard let c = chestOffer else { return }
+        if gold { resources["Gold", default: 0] += c.gold; floaters.append(("+\(c.gold) gold", c.hero.x, c.hero.y)) }
+        else { c.hero.experience += c.experience; floaters.append(("+\(c.experience) experience", c.hero.x, c.hero.y)) }
+        chestOffer = nil
     }
 
     /// The first free cell at or around (x, y), searching outward.

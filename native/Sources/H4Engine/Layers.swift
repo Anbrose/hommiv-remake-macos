@@ -8,6 +8,9 @@ public struct UILayer {
     public let x: Int, y: Int, width: Int, height: Int
     public let bitmap: Bitmap       // RGBA (index 0 of the palette transparent)
     public var isImage: Bool { kind != 1 }
+    public init(name: String, kind: UInt8, x: Int, y: Int, width: Int, height: Int, bitmap: Bitmap) {
+        self.name = name; self.kind = kind; self.x = x; self.y = y; self.width = width; self.height = height; self.bitmap = bitmap
+    }
 }
 
 /// A layers.*.h4d screen description (format: tools/h4layers.py): `u16 count` then, per layer,

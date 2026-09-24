@@ -39,6 +39,8 @@ public final class MapScene {
     /// Road textures by road type (the strings table names them Road_1 "Road, Stone", Road_2
     /// "Road, Dirt", road_3 "Road, Cobble").
     static let roadFile: [UInt8: String] = [1: "road.gravel", 2: "road.dirt", 3: "road.cobblestone"]
+    /// Debug: swap which soft mask set the shorelines use (H4SHORESWAP=1).
+    static let shoreSwap = ProcessInfo.processInfo.environment["H4SHORESWAP"] != nil
 
     /// The road type on every cell of a level (0 = none). Shoulder pieces carry their type;
     /// body pieces are stored as type 0, so a body cell takes the type its neighbouring
@@ -133,7 +135,15 @@ public final class MapScene {
                     switch item {
                     case .overlay(let ov):
                         guard ov.mask < land.count, let f = MapScene.terrainFile(type: ov.type, variant: ov.variant, x: x, y: y) else { continue }
-                        MapScene.blit(&canvas, try patch(f).tiles[ti], left, top, mask: land[ov.mask])
+                        // land on water / water on land take the soft shoreline sets; the three
+                        // variants of each set alternate by position
+                        let baseWater = cell.type == 0 || cell.type == 9, overWater = ov.type == 0 || ov.type == 9
+                        let variant = MapScene.mod(x * 3 + y * 5, 3) + 1
+                        let setName = baseWater == overWater ? (overWater ? "water \(min(variant, 2))" : "land \(variant)")
+                            : (overWater ? (MapScene.shoreSwap ? "land_to_water \(variant)" : "water_to_land \(variant)")
+                                         : (MapScene.shoreSwap ? "water_to_land \(variant)" : "land_to_water \(variant)"))
+                        let set = masks.sets[setName] ?? land
+                        MapScene.blit(&canvas, try patch(f).tiles[ti], left, top, mask: set[min(ov.mask, set.count - 1)])
                     case .road(let rd):
                         guard rd.mask < road.count else { continue }
                         let type = rd.kind == 0 ? roadTypes[x * n + y] : rd.kind
@@ -230,10 +240,16 @@ public final class MapScene {
                 guard xx >= 0, xx < canvas.width else { continue }
                 let s = (y * 64 + x) * 4
                 guard tile.pixels[s + 3] != 0 else { continue }
-                if let m = mask, (m[y * 64 + x] == 0) != invert { continue }
+                var a = 15
+                if let m = mask { a = Int(m[y * 64 + x]); if invert { a = 15 - a } }
+                if a == 0 { continue }
                 let d = (yy * canvas.width + xx) * 4
-                canvas.pixels[d] = tile.pixels[s]; canvas.pixels[d + 1] = tile.pixels[s + 1]
-                canvas.pixels[d + 2] = tile.pixels[s + 2]; canvas.pixels[d + 3] = 255
+                if a >= 15 {
+                    canvas.pixels[d] = tile.pixels[s]; canvas.pixels[d + 1] = tile.pixels[s + 1]; canvas.pixels[d + 2] = tile.pixels[s + 2]
+                } else {   // the soft shoreline masks: blend by the 4-bit coverage
+                    for k in 0..<3 { canvas.pixels[d + k] = UInt8((Int(tile.pixels[s + k]) * a + Int(canvas.pixels[d + k]) * (15 - a)) / 15) }
+                }
+                canvas.pixels[d + 3] = 255
             }
         }
     }

@@ -67,10 +67,19 @@ extension Renderer {
             let ox = (AdventureUI.width - 800) / 2, oy = (AdventureUI.height - 600) / 2
             out += dialogImages(d, key: "buy", at: ox, oy, skip: ["Gold Bar", "Gray Bar", "Green Bar", "Red Bar", "Cannot Build"])
             out += centred("Build in \(town.name)", in: d["Title"], at: ox, oy, font: ui.dateFont)
-            let list = t.buildings(for: town.alignment).filter { !$0.cost.isEmpty || $0.keyword == "prison" }
+            let all = t.buildings(for: town.alignment).filter { !$0.cost.isEmpty || $0.keyword == "prison" }
+            let perPage = Renderer.buildCell.cols * Renderer.buildCell.rows
+            let pages = max(1, (all.count + perPage - 1) / perPage)
+            buildPage = min(buildPage, pages - 1)
+            let list = Array(all.dropFirst(buildPage * perPage).prefix(perPage))
+            if pages > 1 {   // page number under the title; the wheel or the arrow keys turn pages
+                let s = "Page \(buildPage + 1) of \(pages)"
+                let w = ui.numberFont.measure(s)
+                out.append(Quad(texture: uiTexture("num|\(s)", { ui.numberFont.render(s, colour: (40, 24, 8)) }), x: ox + 400 - w / 2, y: oy + 578, w: w, h: ui.numberFont.size))
+            }
             let thumbs = ui.thumbnails(town.alignment)
             buildCells = []
-            for (k, b) in list.prefix(Renderer.buildCell.cols * Renderer.buildCell.rows).enumerated() {
+            for (k, b) in list.enumerated() {
                 let cx = ox + 33 + (k % Renderer.buildCell.cols) * Renderer.buildCell.w, cy = oy + 31 + (k / Renderer.buildCell.cols) * Renderer.buildCell.h
                 let built = town.buildings.contains(b.keyword)
                 let can = g.canBuild(b, in: town)

@@ -146,7 +146,29 @@ final class MapView: MTKView {
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
         let m = renderer.pan + mouse / renderer.zoom
         let u = (m.x - Float(g.map.size * 32 + 32)) / 32, v = (m.y - 32) / 16   // u = y - x, v = x + y
-        let x = Int(((v - u) / 2).rounded()), y = Int(((v + u) / 2).rounded())
+        var x = Int(((v - u) / 2).rounded()), y = Int(((v + u) / 2).rounded())
+        if !g.passability.isFree(x, y) {
+            // Clicked on something you cannot stand on. If an object's picture is under the cursor
+            // (a bridge deck is drawn well above its cells), go to the nearest free cell of its
+            // footprint; otherwise to the nearest free cell around the click.
+            var best: (Int, Int)?
+            var bestD = Float.infinity
+            for p in renderer.scene.placed where Float(p.x) <= m.x && m.x < Float(p.x + p.image.bitmap.width) && Float(p.y) <= m.y && m.y < Float(p.y + p.image.bitmap.height) {
+                let bm = p.image.bitmap
+                let px = Int(m.x) - p.x, py = Int(m.y) - p.y
+                guard bm.pixels[(py * bm.width + px) * 4 + 3] > 0 else { continue }
+                for i in 0..<p.sprite.footprint.w {
+                    for j in 0..<p.sprite.footprint.h where g.passability.isFree(p.cellX + i, p.cellY + j) {
+                        let (cx, cy) = renderer.screen(Float(p.cellX + i), Float(p.cellY + j))
+                        let d = (cx - m.x) * (cx - m.x) + (cy - m.y) * (cy - m.y)
+                        if d < bestD { bestD = d; best = (p.cellX + i, p.cellY + j) }
+                    }
+                }
+            }
+            if best == nil, let c = g.freeCell(near: x, y), max(abs(c.0 - x), abs(c.1 - y)) <= 2 { best = c }
+            guard let b = best else { return }
+            (x, y) = b
+        }
         g.click(hero: hero, x: x, y: y)
     }
     override func scrollWheel(with e: NSEvent) {

@@ -27,8 +27,8 @@ public struct Sprite {
     public let origin: (x: Int32, y: Int32)   // from the trailer, if present
     /// Footprint in map cells (adv_object headers: u16 w, u16 h at offset 5); (1, 1) when unknown.
     public let footprint: (w: Int, h: Int)
-    /// Cells of the footprint the object occupies (first of the three bit masks after the
-    /// footprint size, bit i = cell (i / h, i % h) relative to the anchor); empty when unknown.
+    /// Cells of the footprint the object occupies (first of the bit masks after the
+    /// footprint size, bit i = cell (i % w, i / w) relative to the anchor); empty when unknown.
     public let blocked: [(x: Int, y: Int)]
     /// Cells a hero may step onto to use the object (second mask; set for pickups such as
     /// resource piles and chests, empty for trees, mines and towns).
@@ -94,9 +94,11 @@ public struct Sprite {
                 fp = (w, h)
                 let nb = (w * h + 7) / 8
                 if 9 + 2 * nb <= start {
+                    // bit i is cell (i % w, i / w): the windmill's two cells run down-right from
+                    // its anchor, a right-facing town's gate cells sit on its lower-right wall
                     for i in 0..<(w * h) {
-                        if (r.byte(at: 9 + i / 8) >> UInt8(i % 8)) & 1 == 1 { occupied.append((i / h, i % h)) }
-                        if (r.byte(at: 9 + nb + i / 8) >> UInt8(i % 8)) & 1 == 1 { visit.append((i / h, i % h)) }
+                        if (r.byte(at: 9 + i / 8) >> UInt8(i % 8)) & 1 == 1 { occupied.append((i % w, i / w)) }
+                        if (r.byte(at: 9 + nb + i / 8) >> UInt8(i % 8)) & 1 == 1 { visit.append((i % w, i / w)) }
                     }
                 }
             }

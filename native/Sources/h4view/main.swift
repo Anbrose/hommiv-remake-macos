@@ -14,10 +14,12 @@ var snapshot: String?
 var center: (Int, Int)?   // --center x,y: map cell to put in the middle of the view
 var zoom: Float = 1       // --zoom z: initial scale
 var walk: (Int, Int)?     // --walk x,y (with --snapshot): send the hero there and render 1.5 s later
+var showBlocked = false   // --blocked: mark impassable cells (debug)
 var i = 3
 while i < args.count {
     if args[i] == "--level", i + 1 < args.count { level = Int(args[i + 1]) ?? 0; i += 2 }
     else if args[i] == "--zoom", i + 1 < args.count { zoom = Float(args[i + 1]) ?? 1; i += 2 }
+    else if args[i] == "--blocked" { showBlocked = true; i += 1 }
     else if args[i] == "--walk", i + 1 < args.count {
         let p = args[i + 1].split(separator: ",").compactMap { Int($0) }
         if p.count == 2 { walk = (p[0], p[1]) }
@@ -87,6 +89,7 @@ if let out = snapshot {
     let renderer = try Renderer(device: device, scene: scene, pixelFormat: .rgba8Unorm)
     renderer.game = game
     renderer.resolver = resolver
+    renderer.showBlocked = showBlocked
     lap("textures uploaded")
     var snapTime = 0.0
     if let target = walk, let hero = game.heroes.first {
@@ -181,6 +184,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let renderer = try! Renderer(device: device, scene: scene, pixelFormat: .bgra8Unorm)
         renderer.game = game
         renderer.resolver = resolver
+        renderer.showBlocked = showBlocked
         renderer.onTitle = { [weak self] t in if self?.window.title != t { self?.window.title = t } }
         view.renderer = renderer
         view.delegate = renderer

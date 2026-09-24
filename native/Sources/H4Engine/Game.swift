@@ -19,19 +19,35 @@ public struct Passability {
                 guard let c = cells[x * size + y] else { continue }
                 let i = x * size + y
                 switch c.type {
-                case 0: blocked[i] = true; continue          // water: no boats yet
+                case 0, 9, 10, 11: blocked[i] = true; continue   // water (no boats yet) and rivers (need a bridge)
                 case 2, 6: cost[i] = 1.25                     // rough, sand
-                case 3, 5, 9, 10, 11: cost[i] = 1.5           // swamp, snow, rivers
+                case 3, 5: cost[i] = 1.5                      // swamp, snow
                 default: cost[i] = 1
                 }
                 if !c.roads.isEmpty { cost[i] = 0.67 }
                 blocked[i] = false
             }
         }
+        let debug = ProcessInfo.processInfo.environment["H4DEBUG"] != nil
         for p in objects where !Passability.walkable.contains(p.category) {
-            for b in p.sprite.blocked where !p.sprite.visitable.contains(where: { $0.x == b.x && $0.y == b.y }) {
+            if debug, p.sprite.footprint.w * p.sprite.footprint.h > 1 || p.category == "mine" {
+                print("footprint \(p.name) @(\(p.cellX),\(p.cellY)) \(p.sprite.footprint) blocked \(p.sprite.blocked) visitable \(p.sprite.visitable)")
+            }
+            // the second mask marks the cell a pickup lets you step on; for bigger objects its bits
+            // do not line up with the footprint yet (layout still unknown), so only 1x1 objects use it
+            let pickup = p.sprite.footprint.w * p.sprite.footprint.h == 1 && !p.sprite.visitable.isEmpty
+            for b in p.sprite.blocked where !pickup {
                 let x = p.cellX + b.x, y = p.cellY + b.y
                 if x >= 0, x < size, y >= 0, y < size { blocked[x * size + y] = true }
+            }
+        }
+        // bridges (and their ramps) are walkable over the river they span: their whole footprint is a deck
+        for p in objects where p.category == "movement modifiers" && p.name.lowercased().contains("bridge") {
+            for i in 0..<p.sprite.footprint.w {
+                for j in 0..<p.sprite.footprint.h {
+                    let x = p.cellX + i, y = p.cellY + j
+                    if x >= 0, x < size, y >= 0, y < size { blocked[x * size + y] = false; cost[x * size + y] = 1 }
+                }
             }
         }
     }
@@ -101,6 +117,8 @@ public final class Hero {
     /// Remaining path (next cell first) while walking, and progress 0..1 to its first cell.
     public var path: [(x: Int, y: Int)] = []
     public var progress: Float = 0
+    /// Cells walked so far (fractional); drives the walk animation so the legs match the ground.
+    public var distance: Float = 0
     /// A path shown but not yet confirmed (HoMM style: click once to see, again to go).
     public var plan: [(x: Int, y: Int)] = []
 
@@ -181,6 +199,7 @@ public final class GameState {
             if h.movement + 0.001 < stepCost { h.path = []; continue }   // out of movement: stop here
             h.facing = Hero.facing(dx: next.x - h.x, dy: next.y - h.y)
             h.progress += dt * GameState.cellsPerSecond
+            h.distance += dt * GameState.cellsPerSecond
             if h.progress >= 1 {
                 h.x = next.x; h.y = next.y
                 h.movement -= stepCost

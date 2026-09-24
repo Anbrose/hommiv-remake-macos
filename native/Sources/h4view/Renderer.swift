@@ -56,6 +56,12 @@ final class Renderer: NSObject, MTKViewDelegate {
         return makeTexture(bm)
     }()
     var onTitle: ((String) -> Void)?
+    var showBlocked = false   // debug: mark every cell a hero cannot enter
+    lazy var redDot: MTLTexture = {
+        var bm = Bitmap(width: 6, height: 6)
+        for i in 0..<36 { bm.pixels[i * 4] = 255; bm.pixels[i * 4 + 3] = 200 }
+        return makeTexture(bm)
+    }()
 
     init(device: MTLDevice, scene: MapScene, pixelFormat: MTLPixelFormat) throws {
         self.device = device
@@ -129,13 +135,16 @@ final class Renderer: NSObject, MTKViewDelegate {
         let tl = s.timeline
         var frame = s.frames.first, shadow = frame.flatMap { s.shadow(for: $0) }
         if !tl.isEmpty {
-            let period = tl[0].frame.speed > 0 ? Double(tl[0].frame.speed) / 60.0 : 0.125
-            let e = tl[Int(t / period) % tl.count]
+            // walking: one full cycle per cell so the gait matches the ground; otherwise by the file's speed
+            let index: Int
+            if h.isWalking { index = Int(h.distance * Float(tl.count)) % tl.count }
+            else { index = Int(t / (tl[0].frame.speed > 0 ? Double(tl[0].frame.speed) / 60.0 : 0.125)) % tl.count }
+            let e = tl[index]
             frame = e.frame; shadow = e.shadow
         }
         let (px, py) = h.position
         let (sx, sy) = screen(px, py)
-        let ox = Int(sx) + Int(s.origin.x), oy = Int(sy) + Int(s.origin.y)
+        let ox = Int(sx) + Int(s.origin.x), oy = Int(sy) - 16 + Int(s.origin.y)   // origin is from the cell's top vertex
         var out: [Quad] = []
         if let sh = shadow { out.append(Quad(texture: texture(for: sh, of: entry), x: ox + sh.box.left, y: oy + sh.box.top, w: sh.bitmap.width, h: sh.bitmap.height)) }
         if let f = frame { out.append(Quad(texture: texture(for: f, of: entry), x: ox + f.box.left, y: oy + f.box.top, w: f.bitmap.width, h: f.bitmap.height)) }
@@ -176,6 +185,13 @@ final class Renderer: NSObject, MTKViewDelegate {
             }
         }
         for p in pending { out += p.quads }
+        if let g = game, showBlocked {   // on top of everything so buildings do not hide their own cells
+            let n = g.map.size
+            for x in 0..<n { for y in 0..<n where g.map.cells[g.level][x * n + y] != nil && !g.passability.isFree(x, y) {
+                let (sx, sy) = screen(Float(x), Float(y))
+                if sx >= minX, sx <= maxX, sy >= minY, sy <= maxY { out.append(Quad(texture: redDot, x: Int(sx) - 3, y: Int(sy) - 3, w: 6, h: 6)) }
+            } }
+        }
         return out
     }
 

@@ -135,13 +135,18 @@ public final class MapScene {
                 spriteCache[key] = s
             }
             guard let s = spriteCache[key], !s.isPlaceholder, let img = s.baseFrame ?? s.frames.first else { continue }
-            let (sx, sy) = screen(x: o.x, y: o.y)
+            // The sprite origin is measured from the TOP VERTEX of the anchor cell (16 px above its
+            // centre): a 6x6 town's base then lands on the footprint's bottom vertex, a creature's
+            // feet on its cell's bottom vertex.
+            let (sx, sy0) = screen(x: o.x, y: o.y)
+            let sy = sy0 - 16
             // (x, y) is the top corner of the footprint; paint order follows the bottom corner
             let depth = (o.x + o.y + s.footprint.w + s.footprint.h - 2) * 1000 + (o.y - o.x) + 500
             if let pick = ProcessInfo.processInfo.environment["H4PICK"] {   // H4PICK=x,y (map cell): list sprites covering that cell's centre
                 let c = pick.split(separator: ",").compactMap { Int($0) }
                 if c.count == 2 {
-                    let (px, py) = screen(x: c[0], y: c[1])
+                    let (px, py0) = screen(x: c[0], y: c[1])
+                    let py = py0 - 16
                     let ix = sx + Int(s.origin.x) + img.box.left, iy = sy + Int(s.origin.y) + img.box.top
                     if px >= ix, px < ix + img.bitmap.width, py >= iy, py < iy + img.bitmap.height {
                         print("pick: \(o.name) at (\(o.x),\(o.y)) -> \(key) image \(img.name) \(img.bitmap.width)x\(img.bitmap.height) origin \(s.origin)")

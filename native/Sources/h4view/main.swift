@@ -17,6 +17,7 @@ var walk: (Int, Int)?     // --walk x,y (with --snapshot): send the hero there a
 var showBlocked = false   // --blocked: mark impassable cells (debug)
 var openTown = false      // --town (with --snapshot): render the town screen
 var openBuildList = false // --build: the town screen with its build list open
+var openRecruit = false   // --recruit: the town screen with the first dwelling's recruit dialog open
 var heroAt: (Int, Int)?   // --hero x,y: put the hero there instead of at the town gate (debug)
 var plan: (Int, Int)?     // --plan x,y (with --snapshot): show the route there without walking
 var inspectAt: (Int, Int)? // --inspect x,y (with --snapshot): the right-click box for that cell
@@ -29,6 +30,7 @@ while i < args.count {
     else if args[i] == "--movement", i + 1 < args.count { movementLeft = Float(args[i + 1]); i += 2 }
     else if args[i] == "--town" { openTown = true; i += 1 }
     else if args[i] == "--build" { openTown = true; openBuildList = true; i += 1 }
+    else if args[i] == "--recruit" { openTown = true; openRecruit = true; i += 1 }
     else if (args[i] == "--hero" || args[i] == "--plan" || args[i] == "--inspect"), i + 1 < args.count {
         let p = args[i + 1].split(separator: ",").compactMap { Int($0) }
         if p.count == 2 { if args[i] == "--hero" { heroAt = (p[0], p[1]) } else if args[i] == "--plan" { plan = (p[0], p[1]) } else { inspectAt = (p[0], p[1]) } }
@@ -143,7 +145,11 @@ if let out = snapshot {
     renderer.showBlocked = showBlocked
     renderer.ui = ui
     renderer.town = townScreen
-    if openTown { renderer.townOpen = game.towns.firstIndex { $0.owned }; townScreen?.showBuildList = openBuildList }
+    if openTown {
+        renderer.townOpen = game.towns.firstIndex { $0.owned }
+        if openBuildList { renderer.townDialog = .buildList }
+        if openRecruit, let i = renderer.townOpen, let slot = townScreen?.hotspot("dwelling_1") { _ = i; renderer.townClick(x: Float(slot.x + 5), y: Float(slot.y + 5)) }
+    }
     lap("textures uploaded")
     var snapTime = 0.0
     if let target = walk, let hero = game.heroes.first {
@@ -355,7 +361,8 @@ final class MapView: MTKView {
         case 126: renderer.pan.y -= step
         case 36, 76: if renderer.townOpen == nil { renderer.game?.endTurn() }   // Return / Enter
         case 14: if renderer.townOpen == nil { renderer.game?.endTurn() }       // E
-        case 53: renderer.townOpen = nil; renderer.town?.showBuildList = false   // Escape leaves the town
+        case 53:   // Escape closes a dialog, then leaves the town
+            if renderer.townDialog != nil { renderer.townDialog = nil } else { renderer.townOpen = nil }
         default: break
         }
     }

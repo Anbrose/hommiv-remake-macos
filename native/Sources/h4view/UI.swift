@@ -33,11 +33,31 @@ final class AdventureUI {
     /// The seven rings of the army panel (the "IGNORE" image at 737,575), centres on the canvas.
     static let armySlots = [(769, 611), (833, 611), (897, 611), (961, 611), (801, 679), (865, 679), (929, 679)]
 
-    var creatureIcons: LayerFile?
-    /// A creature's 52x52 icon from layers.icons.creatures.52 (keyed by creature name, any case).
-    func creatureIcon(_ keyword: String) -> UILayer? {
-        if creatureIcons == nil, let d = try? archive.payload("layers.icons.creatures.52.h4d") { creatureIcons = try? LayerFile(data: d) }
-        return creatureIcons?.layers.first { $0.name.lowercased() == keyword.lowercased() }
+    var creatureIcons: [Int: LayerFile] = [:]
+    /// A creature's icon from layers.icons.creatures.<size> (52 or 82; keyed by creature name, any case).
+    func creatureIcon(_ keyword: String, size: Int = 52) -> UILayer? {
+        if creatureIcons[size] == nil, let d = try? archive.payload("layers.icons.creatures.\(size).h4d") { creatureIcons[size] = try? LayerFile(data: d) }
+        return creatureIcons[size]?.layers.first { $0.name.lowercased() == keyword.lowercased() }
+    }
+    /// Resource icons (layers.icons.materials.<size>), by size.
+    var materials: [Int: LayerFile] = [:]
+    /// Building thumbnails of a town alignment (layers.town.<alignment>.thumbnails, 173x63 each).
+    var thumbnailSheets: [String: LayerFile] = [:]
+    func thumbnails(_ alignment: String) -> LayerFile? {
+        if thumbnailSheets[alignment] == nil, let d = try? archive.payload("layers.town.\(alignment).thumbnails.h4d") { thumbnailSheets[alignment] = try? LayerFile(data: d) }
+        return thumbnailSheets[alignment]
+    }
+    var scrollFile: LayerFile?
+    /// The horizontal slider control (layers.control.horizontal_scroll: Up/Down arrows, Thumb).
+    func scrollControl() -> LayerFile? {
+        if scrollFile == nil, let d = try? archive.payload("layers.control.horizontal_scroll.h4d") { scrollFile = try? LayerFile(data: d) }
+        return scrollFile
+    }
+    var creatureRingFile: LayerFile?
+    /// The ring pieces of the army display (layers.icons.creature_rings: Top_Left, Top, ..., Bottom_Right).
+    func creatureRing(_ piece: String) -> UILayer? {
+        if creatureRingFile == nil, let d = try? archive.payload("layers.icons.creature_rings.h4d") { creatureRingFile = try? LayerFile(data: d) }
+        return creatureRingFile?[piece]
     }
     var armyRings: LayerFile?
     /// The ring drawn around a hero's portrait in the hero list (layers.control.army_rings).

@@ -518,13 +518,19 @@ public final class GameState {
                 var town = Town(x: p.cellX, y: p.cellY, name: name, alignment: faction, owned: false)
                 // a new town: village hall, walls matching the sprite, and the first dwelling
                 town.buildings = ["village hall"]
-                let lower = p.name.lowercased()
-                for wall in ["fort", "citadel", "castle"] where lower.contains(".\(wall)") { town.buildings.insert(wall) }
+                // the walls from the sprite's last name component ("castle.Haven.Citadel R" -> citadel)
+                let last = GameState.shortName(p.name).lowercased()
+                for wall in ["fort", "citadel", "castle"] where last == wall { town.buildings.insert(wall) }
                 if let t = tables, let first = t.buildings(for: faction).first(where: { $0.creature != nil }) {
                     town.buildings.insert(first.keyword)
                     if let c = first.creature, let def = t.creature(c) { town.available[c] = def.growth }
                 }
-                town.terrain = map.cells[level][p.cellX * map.size + p.cellY]?.type ?? 1
+                // the town screen's landscape follows the terrain most of the footprint stands on
+                var counts: [UInt8: Int] = [:]
+                for i in 0..<p.sprite.footprint.w { for j in 0..<p.sprite.footprint.h {
+                    if let c = map.cells[level][(p.cellX + i) * map.size + p.cellY + j] { counts[c.type, default: 0] += 1 }
+                } }
+                town.terrain = counts.max { $0.value < $1.value }?.key ?? 1
                 towns.append(town)
                 townIndex += 1
             } else if p.category == "mine" {

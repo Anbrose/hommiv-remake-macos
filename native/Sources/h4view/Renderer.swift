@@ -59,6 +59,11 @@ final class Renderer: NSObject, MTKViewDelegate {
     var ui: AdventureUI?
     var town: TownScreen?
     var townOpen: Int? = nil      // index into game.towns while the town screen is up
+    var townDialog: TownDialog? = nil
+    var buildCells: [(rect: (Int, Int, Int, Int), building: RuleTables.BuildingDef)] = []
+    /// The army display of the town bar: 7 ring centres per row (garrison above, visiting army below).
+    static let armyRingCentres: [(Int, Int)] = (0..<7).map { (532 + $0 * 66, 613) }
+    static let visitingRingCentres: [(Int, Int)] = (0..<7).map { (532 + $0 * 66, 683) }
     var uiTextures: [String: MTLTexture] = [:]
 
     /// Quads of the town screen (replaces the map and the adventure chrome).
@@ -102,58 +107,101 @@ final class Renderer: NSObject, MTKViewDelegate {
             let w = ui.numberFont.measure(text)
             out.append(Quad(texture: uiTexture("num|\(text)", { ui.numberFont.render(text, colour: (40, 24, 8)) }), x: f.x + (f.width - w) / 2, y: f.y, w: w, h: ui.numberFont.size))
         }
+        // a count in a small dark box, centred at (cx, cy)
+        func countBox(_ count: String, _ cx: Int, _ cy: Int) {
+            let w = ui.numberFont.measure(count)
+            out.append(Quad(texture: shade, x: cx - w / 2 - 4, y: cy - 1, w: w + 8, h: ui.numberFont.size + 2))
+            out.append(Quad(texture: uiTexture("count|\(count)", { ui.numberFont.render(count, colour: (255, 236, 200)) }), x: cx - w / 2, y: cy, w: w, h: ui.numberFont.size))
+        }
         // the dwellings: one slot per built dwelling, creature icon and how many wait
         if let tables = g.tables {
             let dwellings = tables.buildings(for: t.alignment).filter { $0.creature != nil && t.buildings.contains($0.keyword) }
             for (k, b) in dwellings.prefix(6).enumerated() {
                 guard let slot = ts.hotspot("dwelling_\(k + 1)"), let c = b.creature, let icon = ui.creatureIcon(c) else { continue }
                 out.append(Quad(texture: uiTexture("icon|\(icon.name)", { icon.bitmap }), x: slot.x, y: slot.y, w: slot.width, h: slot.height))
-                let count = String(t.available[c] ?? 0)
-                let w = ui.numberFont.measure(count)
-                out.append(Quad(texture: shade, x: slot.x + slot.width - w - 6, y: slot.y + slot.height - ui.numberFont.size - 2, w: w + 6, h: ui.numberFont.size + 2))
-                out.append(Quad(texture: uiTexture("count|\(count)", { ui.numberFont.render(count, colour: (255, 236, 200)) }), x: slot.x + slot.width - w - 3, y: slot.y + slot.height - ui.numberFont.size - 1, w: w, h: ui.numberFont.size))
-            }
-            // the build list over the view
-            ts.buildRows = []
-            if ts.showBuildList {
-                let rows = tables.buildings(for: t.alignment).filter { !t.buildings.contains($0.keyword) && !$0.cost.isEmpty }
-                let x0 = 40, y0 = 30, rowH = ui.numberFont.lineHeight + 6
-                out.append(Quad(texture: shade, x: x0 - 10, y: y0 - 10, w: 520, h: rows.count * rowH + 40))
-                let title = "Build in \(t.name) (click a building; one per day)"
-                out.append(Quad(texture: uiTexture("date|\(title)", { ui.dateFont.render(title, colour: (255, 236, 200)) }), x: x0, y: y0, w: ui.dateFont.measure(title), h: ui.dateFont.size))
-                for (k, b) in rows.enumerated() {
-                    let y = y0 + 24 + k * rowH
-                    let cost = b.cost.sorted { $0.key < $1.key }.map { "\($0.value) \($0.key)" }.joined(separator: ", ")
-                    let line = "\(b.name)  -  \(cost)"
-                    let colour: (UInt8, UInt8, UInt8) = g.canBuild(b, in: t) ? (255, 236, 200) : (150, 130, 110)
-                    out.append(Quad(texture: uiTexture("bl|\(line)|\(colour.0)", { ui.numberFont.render(line, colour: colour) }), x: x0, y: y, w: ui.numberFont.measure(line), h: ui.numberFont.size))
-                    ts.buildRows.append(((x0, y, 500, rowH), b))
-                }
+                countBox(String(t.available[c] ?? 0), slot.x + slot.width / 2, slot.y + slot.height - ui.numberFont.size - 2)
             }
         }
+        // the town list: this town's card and a piece of the minimap
+        if let list = ts.hotspot("Town_list") {
+            let cx = list.x + 6, cy = list.y + 4
+            if let card = ui.tinyCard(t.alignment) {
+                let terrain = TownScreen.terrainNames[t.terrain] ?? "grass"
+                if let bg = card.layers.first(where: { $0.name.lowercased() == terrain }) ?? card["grass"] {
+                    out.append(Quad(texture: uiTexture("tiny|\(t.alignment)|\(bg.name)", { bg.bitmap }), x: cx + bg.x, y: cy + bg.y, w: bg.width, h: bg.height))
+                }
+                let walls = t.buildings.contains("castle") ? "Castle" : t.buildings.contains("citadel") ? "Citadel" : t.buildings.contains("fort") ? "Fort" : "Village"
+                if let w = card[walls] { out.append(Quad(texture: uiTexture("tiny|\(t.alignment)|\(walls)", { w.bitmap }), x: cx + w.x, y: cy + w.y, w: w.width, h: w.height)) }
+            }
+            if let hs = ui.hotspot("mini_map") {
+                let tex = uiTexture("townmap|\(t.x),\(t.y)|\(minimapStamp)", {
+                    let full = AdventureUI.minimap(game: g, size: hs.width)
+                    let n = Float(g.map.size)
+                    let px = Int((Float(t.y - t.x) + n / 2) / n * Float(hs.width)), py = Int((Float(t.x + t.y + 6) - n / 2) / n * Float(hs.width))
+                    var b = Bitmap(width: 48, height: 48)
+                    for y in 0..<48 { for x in 0..<48 {
+                        let sx = px - 24 + x, sy = py - 24 + y
+                        guard sx >= 0, sx < full.width, sy >= 0, sy < full.height else { continue }
+                        for k in 0..<4 { b.pixels[(y * 48 + x) * 4 + k] = full.pixels[(sy * full.width + sx) * 4 + k] }
+                    } }
+                    return b
+                })
+                out.append(Quad(texture: black, x: cx + 94, y: cy, w: 50, h: 50))
+                out.append(Quad(texture: tex, x: cx + 95, y: cy + 1, w: 48, h: 48))
+            }
+        }
+        // the army display: two rows of seven rings (garrison above, the visiting army below)
+        for (row, centres) in [("Top", Renderer.armyRingCentres), ("Bottom", Renderer.visitingRingCentres)] {
+            for (k, (cx, cy)) in centres.enumerated() {
+                let piece = k == 0 ? "\(row)_Left" : k == 6 ? "\(row)_Right" : row
+                guard let ring = ui.creatureRing(piece), let portrait = ui.creatureRing("portrait") else { continue }
+                // the ring frame is laid out around the portrait hotspot's centre (41, 41)
+                let ox = cx - (portrait.x + portrait.width / 2), oy = cy - (portrait.y + portrait.height / 2)
+                out.append(Quad(texture: uiTexture("cring|\(piece)", { ring.bitmap }), x: ox + ring.x, y: oy + ring.y, w: ring.width, h: ring.height))
+            }
+        }
+        if let h = g.heroes.first {
+            var slots: [(UILayer?, String)] = [(ui.portrait(keyword: h.keyword, alignment: h.alignment), "")]
+            slots += h.army.map { (ui.creatureIcon($0.creature), String($0.count)) }
+            for (k, (icon, count)) in slots.prefix(7).enumerated() {
+                let (cx, cy) = Renderer.visitingRingCentres[k]
+                if let icon = icon { out.append(Quad(texture: uiTexture("icon|\(icon.name)", { icon.bitmap }), x: cx - icon.width / 2, y: cy - icon.height / 2, w: icon.width, h: icon.height)) }
+                if !count.isEmpty { countBox(count, cx, cy + 24) }
+            }
+        }
+        out += townDialogQuads()
         return out
     }
 
     /// A click on the town screen (canvas coordinates).
     func townClick(x: Float, y: Float) {
-        guard let ts = town, let g = game, let i = townOpen, let hero = g.heroes.first else { return }
-        if ts.showBuildList {
-            for row in ts.buildRows where x >= Float(row.rect.0) && x < Float(row.rect.0 + row.rect.2) && y >= Float(row.rect.1) && y < Float(row.rect.1 + row.rect.3) {
-                g.build(row.building, in: i)
-            }
-            ts.showBuildList = false
-            return
-        }
+        guard let ts = town, let g = game, let i = townOpen else { return }
+        if townDialog != nil { _ = townDialogClick(x: x, y: y); return }
         if ts.hit(ts.hotspot("OK_Button"), x, y) { townOpen = nil; return }
+        let t = g.towns[i]
         if let tables = g.tables {
-            let dwellings = tables.buildings(for: g.towns[i].alignment).filter { $0.creature != nil && g.towns[i].buildings.contains($0.keyword) }
+            let dwellings = tables.buildings(for: t.alignment).filter { $0.creature != nil && t.buildings.contains($0.keyword) }
             for (k, b) in dwellings.prefix(6).enumerated() where ts.hit(ts.hotspot("dwelling_\(k + 1)"), x, y) {
-                if let c = b.creature { g.recruit(c, in: i, to: hero) }
+                if let c = b.creature, let def = tables.creature(c) {
+                    let most = min(t.available[c] ?? 0, def.gold > 0 ? g.resources["Gold", default: 0] / def.gold : 99)
+                    townDialog = .recruit(creature: c, count: most)
+                }
                 return
             }
+            // a built building in the view: a dwelling recruits, the hall (or anything else) builds
+            if y < 546, let lay = ts.layout(t.alignment) {
+                let hits = lay.layers.filter { l in t.buildings.contains(l.name.lowercased()) && l.width > 0 && {
+                    let r = TownScreen.place(l); return x >= Float(r.x) && x < Float(r.x + r.w) && y >= Float(r.y) && y < Float(r.y + r.h) }() }
+                if let top = hits.max(by: { $0.y + $0.height < $1.y + $1.height }) {
+                    if let b = tables.buildings(for: t.alignment).first(where: { $0.keyword == top.name.lowercased() }), let c = b.creature, let def = tables.creature(c) {
+                        let most = min(t.available[c] ?? 0, def.gold > 0 ? g.resources["Gold", default: 0] / def.gold : 99)
+                        townDialog = .recruit(creature: c, count: most)
+                    } else { townDialog = .buildList }
+                    return
+                }
+                townDialog = .buildList
+            }
         }
-        // anywhere in the town view: the build list
-        if y < 568 { ts.showBuildList = true }
     }
     /// Messages shown over the map for a few seconds.
     var toasts: [(text: String, until: Date)] = []

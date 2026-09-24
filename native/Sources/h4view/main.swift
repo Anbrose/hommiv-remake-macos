@@ -20,11 +20,13 @@ var openBuildList = false // --build: the town screen with its build list open
 var heroAt: (Int, Int)?   // --hero x,y: put the hero there instead of at the town gate (debug)
 var plan: (Int, Int)?     // --plan x,y (with --snapshot): show the route there without walking
 var inspectAt: (Int, Int)? // --inspect x,y (with --snapshot): the right-click box for that cell
+var movementLeft: Float?  // --movement n: the hero starts with n points left (debug)
 var i = 3
 while i < args.count {
     if args[i] == "--level", i + 1 < args.count { level = Int(args[i + 1]) ?? 0; i += 2 }
     else if args[i] == "--zoom", i + 1 < args.count { zoom = Float(args[i + 1]) ?? 1; i += 2 }
     else if args[i] == "--blocked" { showBlocked = true; i += 1 }
+    else if args[i] == "--movement", i + 1 < args.count { movementLeft = Float(args[i + 1]); i += 2 }
     else if args[i] == "--town" { openTown = true; i += 1 }
     else if args[i] == "--build" { openTown = true; openBuildList = true; i += 1 }
     else if (args[i] == "--hero" || args[i] == "--plan" || args[i] == "--inspect"), i + 1 < args.count {
@@ -106,10 +108,11 @@ if let town = scene.placed.filter({ $0.category == "castle" }).min(by: { ($0.cel
         let cls = RuleTables.classes[align]?.might ?? "knight"
         let candidates = game.tables?.heroes(ofClass: cls).filter { $0.sex == "male" } ?? []
         let def = candidates.isEmpty ? nil : candidates[(town.cellX + town.cellY) % candidates.count]
-        let hero = Hero(actor: "hero.\(align)_might_male", x: cell.0, y: cell.1, movement: 25)
+        let hero = Hero(actor: "hero.\(align)_might_male", x: cell.0, y: cell.1, movement: Hero.baseMovement)
         hero.name = def?.name ?? "Hero"; hero.keyword = def?.keyword ?? ""; hero.alignment = align
         hero.home = (cell.0, cell.1)
         game.giveStartingArmy(hero)
+        if let m = movementLeft { hero.movement = m }
         game.heroes.append(hero)
         lap("\(hero.name) the \(cls) at \(cell) by \(game.towns.first { $0.owned }?.name ?? town.name)")
     }

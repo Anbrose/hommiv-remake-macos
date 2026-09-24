@@ -182,7 +182,10 @@ public final class Hero {
     public var x: Int, y: Int         // current cell
     public var facing = "s"
     public var movement: Float
-    public let maxMovement: Float
+    /// Movement per day: the slowest of the hero and the creatures travelling with it.
+    public var maxMovement: Float
+    /// A hero's own movement (the recording: a level 15 hero shows 22, a low one 20).
+    public static let baseMovement: Float = 20
     /// Remaining path (next cell first) while walking, and progress 0..1 to its first cell.
     public var path: [(x: Int, y: Int)] = []
     public var progress: Float = 0
@@ -255,7 +258,43 @@ public final class GameState {
     public var towns: [Town] = []
     public var mines: [Mine] = []
     public var dwellings: [Dwelling] = []
-    public var monsters: [Monster] = []
+    public var monsters: [Monster] = [] { didSet { dangerCache = nil } }
+
+    /// How far a wandering stack guards: cells within this straight-line distance (in cells)
+    /// of the stack. Measured on the original ("the path turns yellow [when] the route passes
+    /// within the guard radius of an enemy army", manual): cells at distance 5.0 were yellow,
+    /// at 5.1 green, whatever the terrain in between.
+    public static let guardRadius: Float = 5
+    var dangerCache: Set<Int>?
+    /// Cells inside some wandering stack's guard radius.
+    public var dangerCells: Set<Int> {
+        if let d = dangerCache { return d }
+        var out = Set<Int>()
+        let n = map.size
+        let r = Int(GameState.guardRadius)
+        for m in monsters {
+            for dx in -r...r { for dy in -r...r where Float(dx * dx + dy * dy).squareRoot() <= GameState.guardRadius + 0.001 {
+                let x = m.x + dx, y = m.y + dy
+                if x >= 0, x < n, y >= 0, y < n { out.insert(x * n + y) }
+            } }
+        }
+        dangerCache = out
+        return out
+    }
+    public func isDangerous(_ x: Int, _ y: Int) -> Bool { dangerCells.contains(x * map.size + y) }
+
+    /// The movement an army gets per day: the slowest of the hero and its creatures.
+    public func armyMovement(_ h: Hero) -> Float {
+        var m = Hero.baseMovement
+        for s in h.army { if let c = tables?.creature(s.creature), c.move > 0 { m = min(m, Float(c.move)) } }
+        return m
+    }
+    /// Recompute a hero's daily movement after its army changed (spent points stay spent).
+    public func refreshMovement(_ h: Hero) {
+        let spent = h.maxMovement - h.movement
+        h.maxMovement = armyMovement(h)
+        h.movement = max(0, h.maxMovement - spent)
+    }
     /// Income per day from everything the player owns.
     public var income: [String: Int] {
         var out: [String: Int] = [:]
@@ -455,6 +494,7 @@ public final class GameState {
         guard let t = tables else { return }
         let l1 = t.creatures.filter { $0.level == 1 && $0.alignment == hero.alignment }.sorted { $0.gold < $1.gold }
         hero.army = l1.prefix(2).map { Hero.Stack(creature: $0.keyword, count: max(1, $0.growth / 2)) }
+        hero.maxMovement = armyMovement(hero); hero.movement = hero.maxMovement
     }
 
     /// Add creatures to a hero's army, merging with a stack of the same kind.
@@ -462,6 +502,7 @@ public final class GameState {
         if let i = hero.army.firstIndex(where: { $0.creature == creature }) { hero.army[i].count += count; return true }
         guard hero.army.count < Hero.armySlots - 1 else { return false }
         hero.army.append(Hero.Stack(creature: creature, count: count))
+        refreshMovement(hero)
         return true
     }
 
@@ -691,7 +732,7 @@ public final class GameState {
 
     public func endTurn() {
         day += 1
-        for h in heroes { h.movement = h.maxMovement; h.path = []; h.plan = [] }
+        for h in heroes { h.maxMovement = armyMovement(h); h.movement = h.maxMovement; h.path = []; h.plan = [] }
         for (res, amount) in income { resources[res, default: 0] += amount }
         for i in towns.indices { towns[i].builtToday = false }
         if dayOfWeek == 1, let t = tables {   // a new week: dwellings restock, in towns too
@@ -732,7 +773,8 @@ public final class GameState {
         var px = h.x, py = h.y
         for (k, c) in plan.enumerated() {
             let stepCost = visiting && k == plan.count - 1 ? 0 : passability.stepCost(from: px, py, to: c.x, c.y)
-            let colour = left + 0.001 >= stepCost ? "green_arrow" : "red_arrow"
+            // green while affordable, yellow inside a wandering stack's guard radius, red beyond this turn
+            let colour = left + 0.001 < stepCost ? "red_arrow" : isDangerous(c.x, c.y) ? "yellow_arrow" : "green_arrow"
             left -= stepCost
             if k == plan.count - 1 { out.append((c.x, c.y, "\(colour).dest")); break }
             let n = plan[k + 1]

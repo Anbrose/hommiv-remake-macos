@@ -13,10 +13,12 @@ Format, worked out from the GOG build (little-endian; incomplete):
               u16 size (76, 152, 228, 304)   u8 levels (1 or 2)   u32 x
               u8 nplayers, nplayers x 5 bytes (byte 0 = colour)
               u16 len + name,  u8 (0..2, difficulty?),  u16 len + description
-    objects   in file order, each starting  u16 len + adv_object name, u16 0,
-              3 x (u16 id, u16 len + string)  -- type / subtype / terrain, as in the
-              adv_object header --  u16 0, i32 x, i32 y, u8 level, then type-specific
-              data (4 bytes for decorative objects, a lot more for towns, mines, heroes)
+    objects   in file order, each:  u16 len + adv_object name, u16 0,
+              3 x (u16 id, u16 len + string)  -- type / subtype / terrain (or facing),
+              as in the adv_object header --  then type-specific data (nothing for
+              decorative objects; garrison "seq" slots etc. for mines and towns) and
+              finally  u16 0, i32 x, i32 y, u8 level, u32 0.  The position is read
+              from the end of the record, i.e. from just before the next object.
     terrain   after the objects (and, in some maps, player data): one record per
               playable cell, `levels` times.  The playable area is the diamond
               |r-(size-1)/2| + |c-(size-1)/2| <= size/2 inside the size x size grid,
@@ -92,23 +94,30 @@ def find_terrain(d, start, count):
 
 
 def parse_objects(d, names, end):
-    objs = []
+    starts = []
     p = 0
     while p < end - 2:
         ln = struct.unpack_from('<H', d, p)[0]
         if 4 <= ln <= 60 and d[p + 2:p + 2 + ln] in names:
-            name = d[p + 2:p + 2 + ln].decode('latin1')
-            q = p + 2 + ln + 2
-            cats = []
-            for _ in range(3):
-                cid, sl = struct.unpack_from('<HH', d, q)
-                cats.append(d[q + 4:q + 4 + sl].decode('latin1'))
-                q += 4 + sl
-            x, y = struct.unpack_from('<ii', d, q + 2)
-            objs.append(dict(name=name, type=cats[0], subtype=cats[1], terrain=cats[2], x=x, y=y, level=d[q + 10], offset=p))
-            p = q + 11
+            starts.append(p)
+            p += 2 + ln
         else:
             p += 1
+    objs = []
+    for i, p in enumerate(starts):
+        name, q = read_str(d, p)
+        q += 2
+        cats = []
+        for _ in range(3):
+            cid, sl = struct.unpack_from('<HH', d, q)
+            cats.append(d[q + 4:q + 4 + sl].decode('latin1'))
+            q += 4 + sl
+        rec_end = starts[i + 1] if i + 1 < len(starts) else (q + 15 if cats[0] == 'decorative' else None)
+        o = dict(name=name, type=cats[0], subtype=cats[1], terrain=cats[2], offset=p, x=None, y=None, level=None)
+        if rec_end is not None and rec_end - 13 >= q:
+            o['x'], o['y'] = struct.unpack_from('<ii', d, rec_end - 13)
+            o['level'] = d[rec_end - 5]
+        objs.append(o)
     return objs
 
 

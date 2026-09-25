@@ -239,6 +239,42 @@ public final class RuleTables {
         "water elemental", "white tiger", "wolf", "zombie", "waspwort", "goblin knight", "evil sorceress", "gargantuan",
         "dark champion", "catapult", "frenzied gnasher", "mega dragon"]
 
+    /// Each creature's abilities as heroes4.exe sets them (the static initialiser at 0x654820:
+    /// one call per creature id with its ability ids, OR-ed into the record's bit set at +0xcc by
+    /// 0x655f90); the names are the ability keywords of the id table at 0xa63c80. Strength,
+    /// Toughness and Stone Skin are never tested: the table's stats already include them.
+    public static let creatureAbilities: [String: [String]] = [
+        "air elemental": ["flying", "elemental", "insubstantial"], "archangel": ["flying", "resurrection"],
+        "ballista": ["ranged", "mechanical", "long_range", "siege_machine"], "bandit": ["stealth"], "beholder": ["ranged", "flying", "random_curse"],
+        "behemoth": ["strength"], "black dragon": ["flying", "magic_immunity", "breath_attack"],
+        "bone dragon": ["flying", "undead", "skeletal", "panic"], "centaur": ["ranged", "normal_melee", "short_range"],
+        "cerberus": ["no_retaliation", "3_headed_attack"], "champion": ["first_strike", "charging"], "crossbowman": ["ranged", "long_range"],
+        "crusader": ["strikes_twice", "death_protection"], "cyclops": ["ranged", "area_effect"], "venom spawn": ["ranged", "poison"],
+        "archdevil": ["teleport", "summons_demons", "life_protection"], "dragon golem": ["first_strike", "first_strike_immunity", "mechanical"],
+        "dwarf": ["magic_resistance"], "earth elemental": ["elemental", "magic_resistance"],
+        "efreet": ["flying", "fire_shield", "fire_attack", "fire_resistance"], "elf": ["ranged", "shoots_twice", "ranged_first_strike"],
+        "faerie dragon": ["flying", "spellcaster", "magic_mirror"], "fire elemental": ["ranged", "elemental", "fire_attack", "fire_resistance"],
+        "gargoyle": ["flying", "elemental", "stone_skin"], "genie": ["flying", "spellcaster"],
+        "ghost": ["flying", "undead", "aging", "insubstantial"], "berserker": ["strikes_twice", "berserk"],
+        "gold golem": ["mechanical", "magic_resistance"], "griffin": ["flying", "unlimited_retaliation"], "halfling": ["ranged", "giantslayer"],
+        "harpy": ["flying", "no_retaliation", "strike_and_return"], "hydra": ["no_retaliation", "hydra_strike"],
+        "ice demon": ["freeze", "cold_attack", "cold_resistance"], "imp": ["flying", "mana_leech"], "leprechaun": ["fortune"],
+        "mage": ["spellcaster"], "mantis": ["flying", "first_strike", "binding"],
+        "medusa": ["ranged", "normal_melee", "unlimited_shots", "stone_gaze"], "mermaid": ["hypnotize"], "minotaur": ["block"],
+        "monk": ["ranged", "death_protection"], "mummy": ["undead", "curse"], "naga": ["no_retaliation"], "nightmare": ["terror"],
+        "nomad": ["first_strike"], "ogre mage": ["bloodlust"], "orc": ["ranged", "normal_melee", "short_range"], "peasant": ["taxpayer"],
+        "phoenix": ["flying", "rebirth", "breath_attack", "fire_resistance"], "pikeman": ["long_weapon", "first_strike_immunity"],
+        "pirate": ["sea_bonus"], "satyr": ["mirth"], "sea monster": ["devouring"], "skeleton": ["undead", "skeletal"], "squire": ["stunning"],
+        "sprite": ["flying", "no_retaliation"], "thunderbird": ["flying", "lightning"], "titan": ["ranged", "normal_melee", "chaos_protection"],
+        "troglodyte": ["blind"], "troll": ["regeneration"], "unicorn": ["blinding"], "vampire": ["undead", "flying", "no_retaliation", "vampire"],
+        "waspwort": ["ranged", "weakness"], "water elemental": ["elemental", "spellcaster", "cold_resistance", "cold_attack"],
+        "white tiger": ["first_strike"], "wolf": ["strikes_twice"], "zombie": ["undead", "toughness"],
+        "goblin knight": ["magic_resistance", "stone_skin", "first_strike_immunity"], "evil sorceress": ["teleport", "spellcaster", "magic_mirror"],
+        "gargantuan": ["ranged", "shoots_twice", "area_effect", "normal_melee"], "dark champion": ["charging", "undead", "terror", "regeneration"],
+        "catapult": ["ranged", "mechanical", "no_ranged_penalties", "large_area_effect"], "frenzied gnasher": ["magic_immunity", "berserk"],
+        "mega dragon": ["arc_breath_attack", "magic_resistance"]
+    ]
+
     /// Town building ids of map files (0...42) per town alignment, from campaign_editor.exe's
     /// {id, keyword} table at 0x72273c: 0-11 shared, 12-19 the dwellings, 20-24 the mage guilds,
     /// 25-26 the two libraries, the rest the town's own.

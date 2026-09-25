@@ -16,9 +16,17 @@ public struct Combatant {
     public var defending = false        // Defend doubles the defense until the next turn
     /// Morale from the army's sources (heroes4.exe keeps two, +0xae8 and +0xaec on the combat creature).
     public var morale = 0
-    /// Abilities from the creature table's Short Help Text ("First Strike", "No Retaliation", ...), lower-cased.
+    /// The game's ability keywords ("first_strike", "no_retaliation", ...), from heroes4.exe's
+    /// per-creature table (RuleTables.creatureAbilities).
     public var abilities: Set<String> = []
     public func has(_ ability: String) -> Bool { abilities.contains(ability.lowercased()) }
+    public var level = 0
+    public var alignment = ""
+    /// Spell effects the creature abilities put on a stack (they last the battle unless noted).
+    public var cursed = false          // Curse: minimum damage
+    public var weakened = false        // Weakness: 25% less damage
+    public var aged = false            // Aging: 25% less damage, defense -20%, speed and move halved
+    public var bound = false           // Binding: half damage, cannot move
 
     public var alive: Bool { count > 0 }
     public var totalHealth: Int { count * hitPoints - wounds }
@@ -29,12 +37,15 @@ public struct Combatant {
     public init(creature c: CreatureDef, count: Int) {
         name = c.name; self.count = count; hitPoints = c.hitPoints; damageLow = c.damageLow; damageHigh = c.damageHigh
         attack = c.attack; defense = c.defense; speed = c.speed; experience = c.experience
-        shooter = c.shots > 0; noMeleePenalty = c.shortHelp.lowercased().contains("no melee penalty")
-        let names = c.shortHelp.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces).lowercased() }.filter { !$0.isEmpty }
-        // both the display name and the game's keyword, so either can be asked for
-        abilities = Set(names + names.compactMap { Combatant.abilityKeywords[$0]?.lowercased() })
-        // the table's wordings of the game's normal_melee ability
-        if abilities.contains("normal_melee") || abilities.contains("normal melee") { noMeleePenalty = true }
+        level = c.level; alignment = c.alignment
+        if let list = RuleTables.creatureAbilities[c.keyword.lowercased()] {
+            abilities = Set(list)
+        } else {   // not one of the exe's creatures: the table's display names
+            let names = c.shortHelp.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+            abilities = Set(names.compactMap { Combatant.abilityKeywords[$0]?.lowercased() })
+        }
+        shooter = c.shots > 0 || abilities.contains("ranged")
+        noMeleePenalty = abilities.contains("normal_melee")
     }
 
     /// A hero of the given level fights as one strong unit.
@@ -78,32 +89,59 @@ public struct GameRandom {
 public enum QuickCombat {
     /// The rolled base damage of a stack (before attack/defense).
     public static func rollBase(_ a: Combatant, rng: inout GameRandom) -> Int {
+        let high = a.cursed ? a.damageLow : a.damageHigh   // Curse: minimum damage
         if a.count >= 10 {
             var sum = 0
-            for _ in 0..<10 { sum += rng.roll(a.damageLow, a.damageHigh) }
+            for _ in 0..<10 { sum += rng.roll(a.damageLow, high) }
             return sum * a.count / 10
         }
         var sum = 0
-        for _ in 0..<max(0, a.count) { sum += rng.roll(a.damageLow, a.damageHigh) }
+        for _ in 0..<max(0, a.count) { sum += rng.roll(a.damageLow, high) }
         return sum
     }
 
-    /// Damage of `a` hitting `b` with an already rolled base.
-    public static func damage(_ a: Combatant, _ b: Combatant, base: Int, ranged: Bool) -> Int {
+    /// Damage of `a` hitting `b` with an already rolled base (heroes4.exe 0x5ee380):
+    /// - Charge: a melee blow after moving more than 5 cells (500 move points, a cell being 100)
+    ///   does (85 + points / 35)% of the base
+    /// - Giantslayer (melee or ranged kind) doubles the base against 4th level creatures
+    /// - the attack / defense ratio (floor 0.05): a shooter's melee attack is halved without
+    ///   Normal Melee, Weakness and Aging take 25% off, Binding half; defense doubles when
+    ///   defending, for Insubstantial, and against shots for Skeletal, Aging takes 20% off
+    /// - a Ward against the attacker's alignment leaves 2/3; Fire (fire, breath attacks, Greek
+    ///   fire) against Fire Resistance and Cold against Cold Resistance halve
+    /// - Block takes 30% off what lands (0x5ee990: x 7 / 10, rounded), at least 1
+    public static func damage(_ a: Combatant, _ b: Combatant, base: Int, ranged: Bool, moved: Int = 0) -> Int {
+        var base = base
+        let points = moved * 100
+        if !ranged, a.has("charging"), points > 500 { base = base * (points * 10 / 350 + 85) / 100 }
+        if b.level == 4, a.has("giantslayer") || a.has(ranged ? "ranged_giantslayer" : "melee_giantslayer") { base *= 2 }
         var attack = Float(a.attack)
         if !ranged, a.shooter, !a.noMeleePenalty { attack *= 0.5 }
-        let defense = Float(max(1, b.defense)) * (b.defending ? 2 : 1)
+        if a.weakened { attack *= 0.75 }
+        if a.aged { attack *= 0.75 }
+        if a.bound { attack *= 0.5 }
+        var defense = Float(max(1, b.defense)) * (b.defending ? 2 : 1)
+        if b.has("insubstantial") { defense *= 2 }
+        if ranged, b.has("skeletal") { defense *= 2 }
+        if b.aged { defense *= 0.8 }
         let ratio = max(0.05, attack / defense)
-        return max(1, Int((Float(base) * ratio).rounded()))
+        var d = Int((Float(base) * ratio).rounded())
+        let ward = ["life": "life_protection", "death": "death_protection", "chaos": "chaos_protection"][a.alignment]
+        if let w = ward, b.has(w) { d = d * 100 / 150 }
+        if a.has("fire_attack") || a.has("breath_attack") || a.has("arc_breath_attack") || (ranged && a.has("large_area_effect")), b.has("fire_resistance") { d >>= 1 }
+        if a.has("cold_attack"), b.has("cold_resistance") { d >>= 1 }
+        d = max(1, d)
+        if b.has("block") { d = (d * 7 + 5) / 10 }
+        return max(1, d)
     }
 
-    public static func damage(_ a: Combatant, _ b: Combatant, rng: inout GameRandom, ranged: Bool = false) -> Int {
-        damage(a, b, base: rollBase(a, rng: &rng), ranged: ranged)
+    public static func damage(_ a: Combatant, _ b: Combatant, rng: inout GameRandom, ranged: Bool = false, moved: Int = 0) -> Int {
+        damage(a, b, base: rollBase(a, rng: &rng), ranged: ranged, moved: moved)
     }
 
     /// The damage range shown before an attack ("Attack X for N-M damage").
     public static func damageRange(_ a: Combatant, _ b: Combatant, ranged: Bool) -> (Int, Int) {
-        (damage(a, b, base: a.damageLow * a.count, ranged: ranged), damage(a, b, base: a.damageHigh * a.count, ranged: ranged))
+        (damage(a, b, base: a.damageLow * a.count, ranged: ranged), damage(a, b, base: (a.cursed ? a.damageLow : a.damageHigh) * a.count, ranged: ranged))
     }
     public struct Result {
         public let attackerWon: Bool

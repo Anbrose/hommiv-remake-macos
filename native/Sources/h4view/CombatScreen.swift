@@ -31,6 +31,14 @@ final class CombatScreen {
     var floaters: [(text: String, x: Float, y: Float, since: Date)] = []
     /// Spell-style effects playing over a unit (morale shows "sorrow" / "spiritual fervor").
     var effects: [(name: String, unit: Int, since: Date)] = []
+    /// Idle creatures stand in their "wait" loop; the battle's idle timer (heroes4.exe 0x563870)
+    /// makes one waiting creature at random play "fidget", then waits the fidget's length plus
+    /// 1000 + rand % 2001 ms (500 ms when no creature is waiting). Moving the pointer onto a
+    /// waiting creature also makes it fidget (0x571b1b).
+    var nextFidget = Date()
+    var fidgeting: Int?
+    var hovered: Int?
+    var idleRandom = GameRandom(seed: 0x563870)
     var strings: [String: String] = [:]
     var effectSprites: [String: Sprite] = [:]
     func effectSprite(_ name: String) -> Sprite? {
@@ -153,7 +161,7 @@ final class CombatScreen {
     func pump() {
         guard let b = battle else { return }
         queue += b.takeEvents()
-        if playing == nil, queue.isEmpty, b.finished == nil, let u = b.current, u.side == 1 { b.autoAct(); queue += b.takeEvents() }
+        if playing == nil, queue.isEmpty, b.finished == nil, let u = b.current, u.side == 1 || u.hypnotized { b.autoAct(); queue += b.takeEvents() }
     }
 
     /// Advance the animation queue.
@@ -179,6 +187,11 @@ final class CombatScreen {
             begin(e, now: now)
         }
         if playing == nil { pump() }
+        if fidgeting == nil, now >= nextFidget {
+            let waiting = b.units.filter { $0.alive && unitState[$0.id] == nil && unitPos[$0.id] == nil && !$0.disabled }
+            if waiting.isEmpty { nextFidget = now.addingTimeInterval(0.5) }
+            else { fidget(waiting[idleRandom.next() % waiting.count].id, now: now); fidgeting = unitState.first { $0.value.state == "fidget" }?.key }
+        }
         floaters.removeAll { now.timeIntervalSince($0.since) > 1.5 }
         effects.removeAll { now.timeIntervalSince($0.since) > effectDuration($0.name) }
     }
@@ -215,6 +228,11 @@ final class CombatScreen {
             let u = b.unit(id)
             floaters.append((strings[good ? "combat_action.good_morale" : "combat_action.bad_morale"] ?? (good ? "Good Morale" : "Bad Morale"), u.centre.0, u.centre.1, now))
             playing = Anim(event: e, started: now, duration: effectDuration(name))
+        case .effect(let id, let name, let dmg, let killed):
+            if effectSprite(name) != nil { effects.append((name, id, now)) }
+            let u = b.unit(id)
+            if dmg > 0 { floaters.append(("-\(dmg)" + (killed > 0 ? " (\(killed) killed)" : ""), u.centre.0, u.centre.1, now)) }
+            playing = Anim(event: e, started: now, duration: min(1.2, effectSprite(name) != nil ? effectDuration(name) : 0.4))
         case .wait, .newRound:
             break
         case .finished(let won):
@@ -241,6 +259,20 @@ final class CombatScreen {
     }
 
     var busy: Bool { playing != nil || !queue.isEmpty }
+
+    /// Play a unit's fidget once (it returns to "wait" when done).
+    func fidget(_ id: Int, now: Date) { unitState[id] = ("fidget", now, true) }
+    /// The renderer calls this when a one-off idle animation has played out.
+    func idleDone(_ id: Int, now: Date) {
+        unitState[id] = nil
+        if fidgeting == id { fidgeting = nil; nextFidget = now.addingTimeInterval(1 + Double(idleRandom.next() % 2001) / 1000) }
+    }
+    /// The pointer moved onto a unit (nil: onto none).
+    func hover(_ id: Int?, now: Date) {
+        guard id != hovered else { return }
+        hovered = id
+        if let id = id, let b = battle, b.unit(id).alive, unitState[id] == nil, unitPos[id] == nil, !b.unit(id).disabled { fidget(id, now: now) }
+    }
 
     // MARK: geometry
 

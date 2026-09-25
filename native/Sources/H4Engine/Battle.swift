@@ -19,12 +19,24 @@ public final class Battle {
         public var acted = false, waited = false, defended = false, retaliated = false
         /// Morale this round (0x5f3080 / 0x5f3710): a roll of 0...9; checked once when the unit comes up.
         public var moraleRoll = 0, moraleChecked = false, goodMorale = false, badMorale = false
+        /// Cells walked this turn (Charge counts them), and the creatures at the start (Life Draining restores no more).
+        public var moved: Float = 0
+        public let initialCount: Int
+        /// Turns lost to Stun / Freeze / Blind / Terror (the unit skips its action while any is left).
+        public var stunned = 0, frozen = 0, blind = 0
+        /// Poison damage taken at every new round, and who holds the unit Bound.
+        public var poison = 0
+        public var boundBy: Int? = nil
+        /// Hypnotized: its next action is for the other side.
+        public var hypnotized = false
+        public var disabled: Bool { stunned > 0 || frozen > 0 || blind > 0 }
         public var alive: Bool { stats.alive }
         /// Centre of the footprint in cell units.
         public var centre: (Float, Float) { (Float(x) + Float(size) / 2, Float(y) + Float(size) / 2) }
         init(id: Int, side: Int, stats: Combatant, keyword: String, actor: String, size: Int, move: Int, shots: Int, x: Int, y: Int) {
             self.id = id; self.side = side; self.stats = stats; self.keyword = keyword; self.actor = actor; self.size = size
             self.move = move; self.shots = shots; self.x = x; self.y = y
+            initialCount = stats.count
             facing = side == 0 ? "ne" : "sw"
         }
     }
@@ -45,6 +57,9 @@ public final class Battle {
         case shoot(unit: Int, target: Int, damage: Int, killed: Int)
         case die(unit: Int)
         case morale(unit: Int, good: Bool)
+        /// A creature ability or its spell took hold: `name` is the spell animation
+        /// (animation.spell.<name>), with any damage it did.
+        case effect(unit: Int, name: String, damage: Int, killed: Int)
         case defend(unit: Int)
         case wait(unit: Int)
         case newRound(Int)
@@ -206,9 +221,18 @@ public final class Battle {
         for u in units {
             u.acted = false; u.waited = false; u.defended = false; u.retaliated = false
             u.moraleRoll = rng.next() % 10; u.moraleChecked = false; u.goodMorale = false; u.badMorale = false
+            u.moved = 0
         }
-        order = turnOrder(units.filter { $0.alive })
         events.append(.newRound(round))
+        // Poison hurts at every new round until the battle ends
+        for u in units where u.alive && u.poison > 0 {
+            let killed = u.stats.take(u.poison)
+            events.append(.effect(unit: u.id, name: "Poison", damage: u.poison, killed: killed))
+            if !u.alive { events.append(.die(unit: u.id)) }
+        }
+        checkEnd()
+        guard finished == nil else { return }
+        order = turnOrder(units.filter { $0.alive })
         checkMorale()
     }
 
@@ -255,6 +279,14 @@ public final class Battle {
     /// and it falls behind everyone who kept their +1000; good when roll < morale.
     func checkMorale() {
         updateLossMorale()
+        // a stunned, frozen or blinded unit loses its action
+        while finished == nil, let u = current, u.disabled {
+            if u.stunned > 0 { u.stunned -= 1 } else if u.frozen > 0 { u.frozen -= 1 } else { u.blind -= 1 }
+            u.acted = true
+            order.removeFirst()
+            if u.stats.has("regeneration") { u.stats.wounds = 0 }
+            if order.isEmpty { startRound(); return }
+        }
         while finished == nil, let u = current, !u.moraleChecked {
             u.moraleChecked = true
             let m = morale(u)
@@ -267,6 +299,7 @@ public final class Battle {
                 events.append(.morale(unit: u.id, good: true))
             }
         }
+        if finished == nil, current?.disabled == true { checkMorale(); return }
         // a unit that defended keeps its doubled defence until its own next turn (0x567ef0)
         current?.stats.defending = false
     }
@@ -275,7 +308,7 @@ public final class Battle {
     /// morale (before the check: when the roll is under the morale), and negated for a unit that
     /// waited. The highest key acts next (0x56f3b0), so waiting units come last, slowest first.
     func turnKey(_ u: Unit) -> Int {
-        var k = u.stats.speed + (u.badMorale ? 0 : 1000)
+        var k = u.stats.speed / (u.stats.aged ? 2 : 1) + (u.badMorale ? 0 : 1000)
         if u.moraleChecked ? u.goodMorale : u.moraleRoll < morale(u) { k += 1000 }
         return u.waited ? -k : k
     }
@@ -291,7 +324,34 @@ public final class Battle {
 
     /// Footprint positions the unit can reach, with the cost, within `budget` cells (its Move by default).
     public func reachable(_ u: Unit, budget: Float? = nil) -> [Int: Float] {
-        let limit = budget ?? Float(u.move)
+        if u.stats.has("teleport"), u.boundBy == nil {   // Teleport: any free place on the field
+            var out: [Int: Float] = [:]
+            for x in 0..<Battlefield.size { for y in 0..<Battlefield.size where field.fits(x, y, size: u.size) && !overlaps(x, y, u.size, except: u.id) {
+                let dx = Float(x - u.x), dy = Float(y - u.y)
+                out[Battle.key(x, y)] = (dx * dx + dy * dy).squareRoot()
+            } }
+            return out
+        }
+        let all = explore(u, budget: budget)
+        guard u.stats.has("flying") else { return all }
+        return all.filter { k, _ in
+            let x = k / Battlefield.size, y = k % Battlefield.size
+            return field.fits(x, y, size: u.size) && !overlaps(x, y, u.size, except: u.id)
+        }
+    }
+    /// The unit's Move: halved by Aging; nothing while Bound.
+    func moveBudget(_ u: Unit) -> Float {
+        if u.boundBy != nil { return 0 }
+        return Float(u.move) / (u.stats.aged ? 2 : 1)
+    }
+    /// Path costs; Flying (and Teleport) pass over obstacles and creatures, landing only on free cells.
+    func explore(_ u: Unit, budget: Float? = nil) -> [Int: Float] {
+        let limit = budget ?? moveBudget(u)
+        let flies = u.stats.has("flying")
+        func free(_ x: Int, _ y: Int) -> Bool {
+            flies ? x >= 0 && y >= 0 && x + u.size <= Battlefield.size && y + u.size <= Battlefield.size
+                  : field.fits(x, y, size: u.size) && !overlaps(x, y, u.size, except: u.id)
+        }
         var dist: [Int: Float] = [Battle.key(u.x, u.y): 0]
         var open: [(Float, Int, Int)] = [(0, u.x, u.y)]
         while !open.isEmpty {
@@ -302,8 +362,8 @@ public final class Battle {
             for s in Battle.steps {
                 let nx = x + s.dx, ny = y + s.dy
                 let nc = c + s.cost
-                guard nc <= limit + 0.001, field.fits(nx, ny, size: u.size), !overlaps(nx, ny, u.size, except: u.id) else { continue }
-                if s.cost > 1, !(field.fits(x + s.dx, y, size: u.size) || field.fits(x, y + s.dy, size: u.size)) { continue }
+                guard nc <= limit + 0.001, free(nx, ny) else { continue }
+                if s.cost > 1, !flies, !(field.fits(x + s.dx, y, size: u.size) || field.fits(x, y + s.dy, size: u.size)) { continue }
                 let k = Battle.key(nx, ny)
                 if nc < dist[k, default: .infinity] { dist[k] = nc; open.append((nc, nx, ny)) }
             }
@@ -313,12 +373,15 @@ public final class Battle {
 
     /// Cells of movement needed to reach a position ignoring this turn's limit (for the turns shown by the walk cursor).
     public func cost(_ u: Unit, to x: Int, _ y: Int) -> Float? {
-        reachable(u, budget: Float(u.move) * 12)[Battle.key(x, y)]
+        reachable(u, budget: moveBudget(u) * 12)[Battle.key(x, y)]
     }
 
     public func path(_ u: Unit, to gx: Int, _ gy: Int) -> [(Int, Int)]? {
-        let reach = reachable(u)
-        guard reach[Battle.key(gx, gy)] != nil else { return nil }
+        if u.stats.has("teleport") {   // Teleport: straight there
+            return reachable(u)[Battle.key(gx, gy)] != nil ? [(gx, gy)] : nil
+        }
+        let reach = explore(u)
+        guard reachable(u)[Battle.key(gx, gy)] != nil else { return nil }
         var out: [(Int, Int)] = []
         var x = gx, y = gy
         while !(x == u.x && y == u.y) {
@@ -378,17 +441,128 @@ public final class Battle {
         return (max(1, lo / div), max(1, hi / div))
     }
 
-    func hit(_ a: Unit, _ b: Unit, ranged: Bool) {
-        var dmg = QuickCombat.damage(a.stats, b.stats, rng: &rng, ranged: ranged)
+    /// Living creatures: what Stun, Weakness, Poison, Aging and the mind spells work on.
+    static func living(_ u: Unit) -> Bool { !u.stats.has("undead") && !u.stats.has("mechanical") && !u.stats.has("elemental") }
+
+    /// One blow of `a` on `b`, then what the attacker's and target's abilities add (heroes4.exe
+    /// 0x553440, the attack's aftermath). `secondary` blows (3-headed, multiple, breath, area)
+    /// only do damage.
+    @discardableResult
+    func hit(_ a: Unit, _ b: Unit, ranged: Bool, secondary: Bool = false) -> Int {
+        let before = b.stats.totalHealth
+        var dmg = QuickCombat.damage(a.stats, b.stats, rng: &rng, ranged: ranged, moved: ranged ? 0 : Int(a.moved))
         if ranged { dmg = max(1, dmg / rangeDivisor(a, b)) }
+        // Stone Gaze (0x5ee990): 250/100/50/20 thousandths of a target of level 1/2/3/4 per
+        // attacking creature are turned to stone, once that makes half a creature
+        if !secondary, a.stats.has("stone_gaze"), Battle.living(b), !b.stats.has("blind"), !b.stats.has("magic_immunity") {
+            let per = [250, 100, 50, 20][min(3, max(0, b.stats.level - 1))]
+            if per * a.stats.count >= 500 { dmg += Int((Double(b.stats.hitPoints) * Double(per * a.stats.count) * 0.001).rounded()) }
+        }
+        dmg = min(dmg, before)
         let killed = b.stats.take(dmg)
         if a.side == 0 { experience += killed * b.stats.experience }
         events.append(ranged ? .shoot(unit: a.id, target: b.id, damage: dmg, killed: killed) : .melee(unit: a.id, target: b.id, damage: dmg, killed: killed))
-        if !b.alive { events.append(.die(unit: b.id)) }
+        if b.blind > 0 { b.blind = 0 }   // Blind breaks when the target is hurt
+        if !b.alive { events.append(.die(unit: b.id)); b.boundBy = nil }
+        if !secondary { aftermath(a, b, ranged: ranged, damage: dmg, healthBefore: before) }
+        return dmg
     }
+
+    func effect(_ u: Unit, _ name: String, damage: Int = 0) {
+        var killed = 0
+        if damage > 0 { killed = u.stats.take(damage) }
+        events.append(.effect(unit: u.id, name: name, damage: damage, killed: killed))
+        if damage > 0, !u.alive { events.append(.die(unit: u.id)) }
+    }
+
+    /// The abilities that act after a blow lands (0x553440), in the exe's order.
+    func aftermath(_ a: Unit, _ b: Unit, ranged: Bool, damage: Int, healthBefore: Int) {
+        let magic = !b.stats.has("magic_immunity")
+        // Fire Shield: a quarter of a melee blow burns the attacker, half again with Fire Resistance
+        if !ranged, b.stats.has("fire_shield"), a.alive {
+            var burn = (damage + 3) >> 2
+            if a.stats.has("fire_resistance") { burn = (burn + 1) >> 1 }
+            if burn > 0 { effect(a, "fire shield", damage: burn) }
+        }
+        // Life Draining heals the attacker and brings back its dead
+        if a.stats.has("vampire"), Battle.living(b), a.alive {
+            let cap = a.initialCount * a.stats.hitPoints
+            let now = a.stats.totalHealth, gain = min(damage, cap - now)
+            if gain > 0 {
+                let total = now + gain
+                a.stats.count = (total + a.stats.hitPoints - 1) / a.stats.hitPoints
+                a.stats.wounds = a.stats.count * a.stats.hitPoints - total
+                events.append(.effect(unit: a.id, name: "Vampiric Touch", damage: 0, killed: 0))
+            }
+        }
+        guard b.alive else { return }
+        // Weakness: the Weakness spell with every attack
+        if a.stats.has("weakness"), Battle.living(b), magic, !b.stats.weakened { b.stats.weakened = true; effect(b, "Weakness") }
+        // Poison: from now on the target takes the poisoner's damage every round
+        if a.stats.has("poison"), Battle.living(b), b.poison == 0 {
+            b.poison = max(1, QuickCombat.rollBase(a.stats, rng: &rng))   // a fresh roll of its base damage (0x575fe0 -> 0x5ee690)
+            effect(b, "poison attack")
+        }
+        // Stun (melee) / ranged stun: chance = damage as a percentage of the target's health, less 5
+        if a.stats.has(ranged ? "ranged_stun" : "stunning"), Battle.living(b) {
+            let chance = damage * 100 / max(1, healthBefore) - 5
+            if rng.next() % 100 < chance { b.stunned = max(b.stunned, 1); effect(b, "stun") }
+        }
+        guard !ranged else { return }
+        // the rest works in melee only
+        if a.stats.has("aging"), Battle.living(b), magic, !b.stats.aged { b.stats.aged = true; effect(b, "aging") }
+        if a.stats.has("blinding"), !b.stats.has("blind"), Battle.living(b), magic, rng.next() % 100 < 30 { b.blind = 3; effect(b, "blind") }
+        if a.stats.has("curse"), magic, !b.stats.cursed { b.stats.cursed = true; effect(b, "Curse") }
+        if a.stats.has("freeze"), !b.stats.has("cold_resistance"), magic, rng.next() % 100 < 30 { b.frozen = 2; effect(b, "cold_potion") }
+        // Devouring: each attacker has a 1 in 10 chance to swallow a creature, at most a tenth of the attackers
+        if a.stats.has("devouring") {
+            var eaten = 0
+            for _ in 0..<min(a.stats.count, 100) where rng.next() % 10 == 0 { eaten += 1 }
+            if a.stats.count > 100 { eaten = eaten * a.stats.count / 100 }
+            eaten = min(eaten, (a.stats.count + 9) / 10, b.stats.count)
+            if eaten > 0 { effect(b, "acid", damage: eaten * b.stats.hitPoints - (b.stats.count == eaten ? b.stats.wounds : 0)) }
+        }
+        guard b.alive else { return }
+        if a.stats.has("hypnotize"), Battle.living(b), magic, rng.next() % 10 < 3 { b.hypnotized = true; effect(b, "hypnotize_effect") }
+        if a.stats.has("binding"), !b.stats.has("insubstantial"), b.boundBy == nil { b.boundBy = a.id; b.stats.bound = true; effect(b, "binding_potion") }
+        // Lightning: 30 damage per attacking creature right after the blow
+        if a.stats.has("lightning"), magic { effect(b, "Lightning", damage: 30 * a.stats.count) }
+    }
+
+    /// The other creatures a blow also strikes: Multiple Attack every adjacent enemy, 3-Headed
+    /// the enemies beside the target, Breath the creature right behind it (friend or foe), an
+    /// Area Attack everything around the target.
+    func extraTargets(_ a: Unit, _ t: Unit, ranged: Bool) -> [Unit] {
+        let others = units.filter { $0.alive && $0.id != a.id && $0.id != t.id }
+        if ranged {
+            guard a.stats.has("area_effect") || a.stats.has("large_area_effect") else { return [] }
+            return others.filter { Battle.adjacent($0, t) }
+        }
+        if a.stats.has("hydra_strike") { return others.filter { side(of: $0) != side(of: a) && Battle.adjacent(a, $0) } }
+        if a.stats.has("3_headed_attack") {
+            return Array(others.filter { side(of: $0) != side(of: a) && Battle.adjacent(a, $0) && Battle.adjacent(t, $0) }
+                .sorted { Battle.distance($0, t) < Battle.distance($1, t) }.prefix(2))
+        }
+        if a.stats.has("breath_attack") || a.stats.has("arc_breath_attack") {
+            let dx = t.centre.0 - a.centre.0, dy = t.centre.1 - a.centre.1
+            let len = max(0.001, (dx * dx + dy * dy).squareRoot())
+            let reach = Float(t.size) / 2 + 1.5
+            let px = t.centre.0 + dx / len * reach, py = t.centre.1 + dy / len * reach
+            return others.filter { u in
+                !u.stats.has("fire_resistance") &&
+                px >= Float(u.x) - 0.5 && px <= Float(u.x + u.size) + 0.5 && py >= Float(u.y) - 0.5 && py <= Float(u.y + u.size) + 0.5
+            }
+        }
+        return []
+    }
+
+    /// The side a unit fights for now (a hypnotized one fights for the other).
+    public func side(of u: Unit) -> Int { u.hypnotized ? 1 - u.side : u.side }
 
     func endAction(_ u: Unit) {
         u.acted = true
+        u.hypnotized = false
+        if u.stats.has("regeneration"), u.alive { u.stats.wounds = 0 }   // heals all its wounds at the end of its turn
         order.removeAll { $0 == u.id }
         checkEnd()
         if finished == nil, order.isEmpty { startRound() } else { checkMorale() }
@@ -399,78 +573,121 @@ public final class Battle {
         if !(a && d) || round > 60 { finished = a; events.append(.finished(attackerWon: a)) }
     }
 
+    /// Moving frees what the unit held Bound.
+    func release(by u: Unit) {
+        for v in units where v.boundBy == u.id { v.boundBy = nil; v.stats.bound = false }
+    }
+
     // MARK: actions of the current unit
 
     public func move(to x: Int, _ y: Int) -> Bool {
         guard finished == nil, let u = current, let p = path(u, to: x, y), !p.isEmpty else { return false }
+        u.moved += reachable(u)[Battle.key(x, y)] ?? 0
         events.append(.move(unit: u.id, path: p))
         let prev = p.count > 1 ? p[p.count - 2] : (u.x, u.y)
         u.facing = Battle.facing(dx: Float(x - prev.0), dy: Float(y - prev.1))
         u.x = x; u.y = y
+        release(by: u)
         endAction(u)
         return true
     }
 
-    /// The reachable footprint position next to the target that costs least, or nil.
+    /// How far a unit strikes in melee: Long Weapon reaches one cell further.
+    static func reach(_ u: Unit) -> Int { u.stats.has("long_weapon") ? 1 : 0 }
+    static func inReach(_ x: Int, _ y: Int, _ s: Int, _ b: Unit, reach: Int) -> Bool {
+        x <= b.x + b.size + reach && b.x <= x + s + reach && y <= b.y + b.size + reach && b.y <= y + s + reach
+    }
+
+    /// The reachable footprint position from which the unit can strike the target that costs least, or nil.
     public func attackPosition(_ u: Unit, _ t: Unit) -> (Int, Int)? {
-        if Battle.adjacent(u, t) { return (u.x, u.y) }
+        let r = Battle.reach(u)
+        if Battle.inReach(u.x, u.y, u.size, t, reach: r) { return (u.x, u.y) }
         var best: (Int, Int)? = nil, bestCost = Float.infinity
         for (k, c) in reachable(u) where c < bestCost {
             let x = k / Battlefield.size, y = k % Battlefield.size
-            if Battle.touches(x, y, u.size, t) { bestCost = c; best = (x, y) }
+            if Battle.inReach(x, y, u.size, t, reach: r) { bestCost = c; best = (x, y) }
         }
         return best
     }
 
     public func attack(_ targetId: Int) -> Bool {
-        guard finished == nil, let u = current, let t = units.first(where: { $0.id == targetId }), t.alive, t.side != u.side,
+        guard finished == nil, let u = current, let t = units.first(where: { $0.id == targetId }), t.alive, side(of: t) != side(of: u),
               let pos = attackPosition(u, t) else { return false }
-        if pos != (u.x, u.y), let p = path(u, to: pos.0, pos.1) { events.append(.move(unit: u.id, path: p)); u.x = pos.0; u.y = pos.1 }
+        let start = (u.x, u.y)
+        if pos != (u.x, u.y), let p = path(u, to: pos.0, pos.1) {
+            u.moved += reachable(u)[Battle.key(pos.0, pos.1)] ?? 0
+            events.append(.move(unit: u.id, path: p)); u.x = pos.0; u.y = pos.1
+            release(by: u)
+        }
         Battle.face(u, towards: t); Battle.face(t, towards: u)
         meleeExchange(u, t)
+        // Strike and Return: back to where it started
+        if u.alive, u.stats.has("strike_and_return"), (u.x, u.y) != start, !overlaps(start.0, start.1, u.size, except: u.id) {
+            events.append(.move(unit: u.id, path: [start])); u.x = start.0; u.y = start.1
+        }
         endAction(u)
         return true
     }
 
+    /// Does the target strike back? Not against No Retaliation or Fear, not when stunned, frozen
+    /// or blind, once a round unless Unlimited Retaliation, and only if the attacker is within its reach.
     func canRetaliate(_ t: Unit, against a: Unit) -> Bool {
-        t.alive && !a.stats.has("no_retaliation") && (!t.retaliated || t.stats.has("unlimited_retaliation"))
+        t.alive && !t.disabled && !a.stats.has("no_retaliation") && !a.stats.has("panic")
+            && (!t.retaliated || t.stats.has("unlimited_retaliation"))
+            && Battle.inReach(t.x, t.y, t.size, a, reach: Battle.reach(t))
     }
     func strikesFirst(_ x: Unit, over y: Unit) -> Bool {
         x.stats.has("first_strike") && !y.stats.has("first_strike_immunity") && !y.stats.has("first_strike")
     }
-    /// The attacker strikes, then the target strikes back; a target with First Strike strikes
-    /// back before the blow; Two Attacks strike again after the retaliation.
+    /// The attacker's blow (and what it also strikes), the target's strike back, and Two
+    /// Attacks' second blow after it; First Strike turns the first two around.
+    func blow(_ u: Unit, _ t: Unit) {
+        let extra = extraTargets(u, t, ranged: false)
+        hit(u, t, ranged: false)
+        for e in extra where e.alive { hit(u, e, ranged: false, secondary: true) }
+    }
     func meleeExchange(_ u: Unit, _ t: Unit) {
         let retaliates = canRetaliate(t, against: u)
         if retaliates, strikesFirst(t, over: u) {
             t.retaliated = true
-            hit(t, u, ranged: false)
-            if u.alive { hit(u, t, ranged: false) }
+            blow(t, u)
+            if u.alive { blow(u, t) }
         } else {
-            hit(u, t, ranged: false)
-            if retaliates, t.alive { t.retaliated = true; hit(t, u, ranged: false) }
+            blow(u, t)
+            if retaliates, canRetaliate(t, against: u) { t.retaliated = true; blow(t, u) }
         }
-        if u.alive, t.alive, u.stats.has("strikes_twice") || u.stats.has("two attacks") { hit(u, t, ranged: false) }
+        if u.alive, t.alive, u.stats.has("strikes_twice") { blow(u, t) }
+        checkEnd()
     }
 
     /// Can the unit shoot now (it has shots and no enemy touches it)?
-    public func canShoot(_ u: Unit) -> Bool { u.shots > 0 && !units.contains { $0.alive && $0.side != u.side && Battle.adjacent(u, $0) } }
+    public func canShoot(_ u: Unit) -> Bool {
+        (u.shots > 0 || u.stats.has("unlimited_shots")) && u.stats.shooter && !units.contains { $0.alive && side(of: $0) != side(of: u) && Battle.adjacent(u, $0) }
+    }
+    func spendShot(_ u: Unit) { if !u.stats.has("unlimited_shots") { u.shots -= 1 } }
+    func volley(_ u: Unit, _ t: Unit) {
+        let extra = extraTargets(u, t, ranged: true)
+        spendShot(u); hit(u, t, ranged: true)
+        for e in extra where e.alive { hit(u, e, ranged: true, secondary: true) }
+    }
 
     public func shoot(_ targetId: Int) -> Bool {
-        guard finished == nil, let u = current, let t = units.first(where: { $0.id == targetId }), t.alive, t.side != u.side else { return false }
+        guard finished == nil, let u = current, let t = units.first(where: { $0.id == targetId }), t.alive, side(of: t) != side(of: u) else { return false }
         guard canShoot(u) else { return attack(targetId) }
         Battle.face(u, towards: t)
         // a shooter that is shot at shoots back (once per round, like melee retaliation);
         // Ranged First Strike shoots first; Shoots Twice fires again after the retaliation
-        let shootsBack = canRetaliate(t, against: u) && canShoot(t)
-        if shootsBack, t.stats.has("ranged_first_strike"), !u.stats.has("ranged_first_strike") {
-            t.retaliated = true; t.shots -= 1; Battle.face(t, towards: u); hit(t, u, ranged: true)
-            if u.alive { u.shots -= 1; hit(u, t, ranged: true) }
+        let shootsBack = canRetaliate(t, against: u) || (t.alive && !t.disabled && !u.stats.has("no_retaliation") && (!t.retaliated || t.stats.has("unlimited_retaliation")))
+        let back = shootsBack && canShoot(t)
+        if back, t.stats.has("ranged_first_strike"), !u.stats.has("ranged_first_strike") {
+            t.retaliated = true; Battle.face(t, towards: u); volley(t, u)
+            if u.alive { volley(u, t) }
         } else {
-            u.shots -= 1; hit(u, t, ranged: true)
-            if shootsBack, t.alive { t.retaliated = true; t.shots -= 1; Battle.face(t, towards: u); hit(t, u, ranged: true) }
+            volley(u, t)
+            if back, t.alive, !t.disabled { t.retaliated = true; Battle.face(t, towards: u); volley(t, u) }
         }
-        if u.alive, t.alive, u.stats.has("shoots_twice"), u.shots > 0 { u.shots -= 1; hit(u, t, ranged: true) }
+        if u.alive, t.alive, u.stats.has("shoots_twice"), canShoot(u) { volley(u, t) }
+        checkEnd()
         endAction(u)
         return true
     }
@@ -483,8 +700,10 @@ public final class Battle {
         endAction(u)
     }
 
+    /// Berserk creatures cannot wait.
+    public func canWait(_ u: Unit) -> Bool { !u.waited && !u.stats.has("berserk") }
     public func wait() {
-        guard finished == nil, let u = current, !u.waited else { return }   // once a round: the flag clears only at the next round (0x5ed400)
+        guard finished == nil, let u = current, canWait(u) else { return }   // once a round: the flag clears only at the next round (0x5ed400)
         u.waited = true
         events.append(.wait(unit: u.id))
         order = turnOrder(order.map { unit($0) })
@@ -492,11 +711,11 @@ public final class Battle {
     }
 
     /// A simple opponent: shooters shoot the most dangerous enemy, others attack what they can
-    /// reach or walk towards the nearest enemy.
+    /// reach or walk towards the nearest enemy (a hypnotized unit turns on its own side).
     public func autoAct() {
         guard finished == nil, let u = current else { return }
-        let enemies = units.filter { $0.alive && $0.side != u.side }
-        guard !enemies.isEmpty else { return }
+        let enemies = units.filter { $0.alive && $0.id != u.id && side(of: $0) != side(of: u) }
+        guard !enemies.isEmpty else { defend(); return }
         if canShoot(u), let t = enemies.max(by: { QuickCombat.threat($0.stats) < QuickCombat.threat($1.stats) }) { _ = shoot(t.id); return }
         if let t = enemies.filter({ attackPosition(u, $0) != nil }).max(by: { QuickCombat.threat($0.stats) < QuickCombat.threat($1.stats) }) { _ = attack(t.id); return }
         let nearest = enemies.min { Battle.distance(u, $0) < Battle.distance(u, $1) }!

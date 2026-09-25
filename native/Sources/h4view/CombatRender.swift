@@ -80,7 +80,7 @@ extension Renderer {
                 q.append(Quad(texture: texture(for: fr, of: "active_shadow"), x: Int(px + Float(ring.origin.x + Int32(fr.box.left)) * sc), y: Int(py + Float(ring.origin.y + Int32(fr.box.top)) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc)))
             }
             let st = cs.unitState[u.id]
-            let state = st?.state ?? (u.alive ? "fidget" : "die")
+            let state = st?.state ?? (u.alive ? "wait" : "die")
             if let (s, entry) = combatSprite(cs, actor: u.actor, state: state, facing: u.facing) {
                 let tl = s.timeline
                 var frame = s.frames.first, shadow = frame.flatMap { s.shadow(for: $0) }
@@ -89,7 +89,7 @@ extension Renderer {
                     var index: Int
                     if let st = st, st.once {
                         index = min(tl.count - 1, Int(now.timeIntervalSince(st.since) / period))
-                        if index == tl.count - 1, state == "flinch" || state == "block" { cs.unitState[u.id] = nil }
+                        if index == tl.count - 1, now.timeIntervalSince(st.since) >= Double(tl.count) * period, state == "flinch" || state == "block" || state == "fidget" { cs.idleDone(u.id, now: now) }
                     } else if state == "walk" {
                         index = Int(now.timeIntervalSince(st?.since ?? now) * 12) % tl.count
                     } else {
@@ -200,10 +200,11 @@ extension Renderer {
     }
 
     /// The enemy unit under a canvas point: its footprint, or its picture's upper body.
-    func enemyUnder(_ b: Battle, x: Float, y: Float) -> Battle.Unit? {
+    func enemyUnder(_ b: Battle, x: Float, y: Float) -> Battle.Unit? { unitUnder(b, x: x, y: y, side: 1) }
+    func unitUnder(_ b: Battle, x: Float, y: Float, side: Int? = nil) -> Battle.Unit? {
         let (wx, wy) = Battlefield.world(x / CombatScreen.sceneScale, y / CombatScreen.sceneScale)
         return b.units.first { u in
-            guard u.alive, u.side == 1 else { return false }
+            guard u.alive, side == nil || u.side == side else { return false }
             if wx >= Float(u.x), wx < Float(u.x + u.size), wy >= Float(u.y), wy < Float(u.y + u.size) { return true }
             let (cx, cy) = CombatScreen.point(u.centre.0, u.centre.1)
             return abs(x - cx) < 18 && y < cy && y > cy - 70

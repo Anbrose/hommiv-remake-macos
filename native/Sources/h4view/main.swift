@@ -324,7 +324,10 @@ final class MapView: MTKView {
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
         let cx = mouse.x / renderer.uiScale
         var name = "normal"
-        if renderer.inCombat { name = renderer.combatCursor(x: cx, y: mouse.y / renderer.uiScale) }
+        if renderer.inCombat {
+            name = renderer.combatCursor(x: cx, y: mouse.y / renderer.uiScale)
+            if let cs = renderer.combat, let b = cs.battle { cs.hover(renderer.unitUnder(b, x: cx, y: mouse.y / renderer.uiScale)?.id, now: Date()) }
+        }
         else if renderer.townOpen == nil, renderer.popup == nil, renderer.creatureDialog == nil, renderer.adventureDialog == nil, renderer.ui == nil || cx < Float(AdventureUI.mapViewportWidth) {
             name = renderer.cursorKind(mapPoint: renderer.pan + mouse / renderer.zoom)
         }

@@ -242,6 +242,8 @@ public final class GameState {
     public var heroes: [Hero] = []
     /// Things that happened this frame, for the UI (e.g. "picked up Resources.Gold").
     public var log: [String] = []
+    /// Sounds the last actions call for (names under "sound.", e.g. miscellaneous.flag_mine), for the UI to play.
+    public var sounds: [String] = []
     /// The map's scripted events and their state.
     public let scripts = ScriptState()
     /// The player's treasury (starting amounts of a normal game).
@@ -524,6 +526,7 @@ public final class GameState {
         towns[i].buildings.insert(b.keyword)
         towns[i].builtToday = true
         if let c = b.creature, let def = tables?.creature(c) { towns[i].available[c, default: 0] += def.growth }
+        sounds.append("miscellaneous.town_build")
         log.append("built \(b.name) in \(towns[i].name)")
     }
 
@@ -751,7 +754,7 @@ public final class GameState {
         }
         if let i = mine(for: p) {
             if mines[i].owned { log.append("\(mines[i].resource) mine already yours") }
-            else { mines[i].owned = true; log.append("captured a mine: +\(mines[i].amount) \(mines[i].resource) per day") }
+            else { mines[i].owned = true; sounds.append("miscellaneous.flag_mine"); log.append("captured a mine: +\(mines[i].amount) \(mines[i].resource) per day") }
             hero.target = nil
         }
         if let i = dwelling(for: p), let c = tables?.creature(dwellings[i].creature) {
@@ -856,6 +859,7 @@ public final class GameState {
         case "Campfire": gain("Gold", 500); gain("Wood", 5)
         default: break
         }
+        sounds.append("miscellaneous.pick_up.0\((p.cellX + p.cellY) % 6 + 1)")
         log.append("picked up \(p.name) at (\(p.cellX),\(p.cellY))")
     }
 

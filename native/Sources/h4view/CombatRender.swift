@@ -315,6 +315,7 @@ extension Renderer {
         guard !cs.busy, cs.result == nil, let cur = b.current, cur.side == 0 else { return }
         for (hs, action) in [("defend", "defend"), ("wait", "wait"), ("auto_attack", "auto"), ("retreat", "retreat"), ("surrender", "surrender"), ("melee", "melee")] {
             guard let slot = cs.hotspot(hs), x >= Float(slot.x), x < Float(slot.x + slot.width), y >= Float(slot.y), y < Float(slot.y + slot.height) else { continue }
+            sound?.play("miscellaneous.button")
             switch action {
             case "defend": b.defend()
             case "wait": b.wait()

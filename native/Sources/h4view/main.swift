@@ -63,6 +63,11 @@ var t0 = Date()
 func lap(_ what: String) { print("\(what): \(Int(Date().timeIntervalSince(t0) * 1000)) ms"); t0 = Date() }
 let archive = try H4Archive(url: URL(fileURLWithPath: args[1]))
 let movies = Movies(dataDirectory: URL(fileURLWithPath: args[1]).deletingLastPathComponent())
+let gameSound = GameSound(dataDirectory: URL(fileURLWithPath: args[1]).deletingLastPathComponent())
+if let names = ProcessInfo.processInfo.environment["H4SOUNDCHECK"] {   // debugging aid: which sounds exist and decode
+    for n in names.split(separator: ",") { print("\(n): \(gameSound.data(String(n)).map { "\($0.count) bytes" } ?? "missing")") }
+    exit(0)
+}
 func writePNG(_ bm: Bitmap, to path: String) {
     // straight (non-premultiplied) RGBA: CGImage accepts it, CGContext would not
     guard let provider = CGDataProvider(data: Data(bm.pixels) as CFData),
@@ -402,7 +407,7 @@ final class MapView: MTKView {
             let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale
             if renderer.townOpen != nil { renderer.townClick(x: cx, y: cy); return }
             if cx >= Float(AdventureUI.mapViewportWidth) {
-                if ui.hit("end_turn", x: cx, y: cy) { g.endTurn() }
+                if ui.hit("end_turn", x: cx, y: cy) { renderer.sound?.play("miscellaneous.button"); g.endTurn() }
                 else if ui.hit("mini_map", x: cx, y: cy), let mm = ui.hotspot("mini_map") {   // the minimap: bring the view there
                     let n = Float(g.map.size)
                     let col = (cx - Float(mm.x)) / Float(mm.width) * n - n / 2, row = (cy - Float(mm.y)) / Float(mm.height) * n + n / 2
@@ -495,6 +500,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         renderer.town = townScreen
         renderer.combat = combatScreen
     renderer.movies = movies
+    renderer.sound = gameSound
+    combatScreen?.sound = gameSound
         renderer.onTitle = { [weak self] t in if self?.window.title != t { self?.window.title = t } }
         view.renderer = renderer
         view.cursors = GameCursors(archive: archive)

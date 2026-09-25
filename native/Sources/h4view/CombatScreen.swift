@@ -52,6 +52,7 @@ final class CombatScreen {
     var retreatTown: Int?
     /// When the results dialog appeared (its movie runs from then).
     var resultShownAt: Date?
+    var sound: GameSound?
     var idleRandom = GameRandom(seed: 0x563870)
     var strings: [String: String] = [:]
     var effectSprites: [String: Sprite] = [:]
@@ -167,6 +168,10 @@ final class CombatScreen {
             if let st = st, let d = t.creature(st.creature) { var f = fighter(d, st.count, army: monsterArmy); f.slot = k; defenders.append(f) }
         }
         battle = Battle(field: f, attackers: attackers, defenders: defenders, seed: seed)
+        // combat.start, then the six combat pieces in turn (heroes4.exe 0x62a720 / 0x62a830)
+        var pieces = (1...6).map { "combat.music.\($0)" }
+        let r = seed % 6; pieces = Array(pieces[r...] + pieces[..<r])
+        sound?.playMusic(first: "combat.start", then: pieces)
         queue = []; playing = nil; unitPos = [:]; unitState = [:]; resultShownAt = nil; dead = []; dying = []; pendingDeaths = []; hits = []; pendingCount = []; shownPos = [:]; shownCount = [:]; result = nil; showResults = false; floaters = []; effects = []
         pump()
     }
@@ -258,6 +263,7 @@ final class CombatScreen {
             let loops = max(length - preDist - postDist > 0 ? 1 : 0, Int((length - preDist - postDist + loop / 2) / loop))
             let loopTime = stateDuration(u.actor, "walk", face)
             let walkTime = Double(loops) * (loopTime > 0 ? loopTime : Double(loop / 16) / CombatScreen.cellsPerSecond)
+            sound?.startLoop("\(u.actor).walk", key: "walk|\(id)")
             moves[id] = Move(length: length / 16, preDist: preDist / 16, postDist: postDist / 16, preTime: preTime, walkTime: walkTime, postTime: postTime)
             unitPos[id] = (Float(start.0), Float(start.1))   // from this frame on, not only from the next update
             playing = Anim(event: e, started: now, duration: preTime + walkTime + postTime)
@@ -274,6 +280,7 @@ final class CombatScreen {
         case .together:
             break
         case .die(let id):
+            sound?.actor(b.unit(id).actor, "die")
             pendingDeaths.remove(id)
             dying.insert(id)
             unitState[id] = ("die", now, true)
@@ -281,6 +288,7 @@ final class CombatScreen {
             playing = Anim(event: e, started: now, duration: max(0.2, stateDuration(du.actor, "die", du.facing)))
         case .defend(let id):
             unitState[id] = ("block", now, true)
+            sound?.actor(b.unit(id).actor, "block")
             let bu = b.unit(id)
             playing = Anim(event: e, started: now, duration: max(0.1, stateDuration(bu.actor, "block", bu.facing)))
         case .morale(let id, let good):
@@ -292,6 +300,7 @@ final class CombatScreen {
             playing = Anim(event: e, started: now, duration: effectDuration(name))
         case .effect(let id, let name, let dmg, let killed, let left):
             if effectSprite(name) != nil { effects.append((name, id, now)) }
+            sound?.play("spell.\(name)")
             let c = shownCentre(b.unit(id))
             shownCount[id] = left
             blowMessages(damage: dmg, killed: killed, at: c, since: now, side: b.unit(id).side)
@@ -300,6 +309,7 @@ final class CombatScreen {
             break
         case .finished(let won):
             result = (won, b.round)
+            sound?.playMusic(won ? "combat.win" : "combat.lose", loop: false)
             playing = Anim(event: e, started: now, duration: 0.6)
         }
     }
@@ -309,6 +319,7 @@ final class CombatScreen {
             // it stays where this move ended until the queue has played out (the battle may already have moved it on)
             if let last = path.last { shownPos[id] = (Float(last.0), Float(last.1)) }
             unitPos[id] = nil; unitState[id] = nil; moves[id] = nil
+            sound?.stopLoop("walk|\(id)")
         case .melee, .shoot:
             break
         case .die(let id): dead.insert(id)
@@ -335,6 +346,7 @@ final class CombatScreen {
         a.facing = Battle.facing(dx: tc.0 - ac.0, dy: tc.1 - ac.1)
         let state = ranged ? "ranged" : "melee"
         unitState[id] = (state, now, true)
+        sound?.actor(a.actor, state)
         let hitAt = Double(actor(a.actor)?.state(state)?.hitFrame ?? 0) * framePeriod(a.actor, state) + (ranged ? 0.25 : 0)
         let attackTime = max(0.2, stateDuration(a.actor, state, a.facing))
         let flinchTime = left > 0 ? stateDuration(t.actor, "flinch", t.facing) : 0
@@ -351,7 +363,10 @@ final class CombatScreen {
         for h in hits where h.at <= now {
             // a unit swinging its own blow (a simultaneous exchange) is not cut short by a flinch
             let busySwinging = ["melee", "ranged"].contains(unitState[h.target]?.state ?? "")
-            if h.left > 0, !dying.contains(h.target), !busySwinging { unitState[h.target] = ("flinch", now, true) }
+            if h.left > 0, !dying.contains(h.target), !busySwinging {
+                unitState[h.target] = ("flinch", now, true)
+                if let b = battle { sound?.actor(b.unit(h.target).actor, "flinch") }
+            }
         }
         hits.removeAll { $0.at <= now }
         for p in pendingCount where p.at <= now { shownCount[p.unit] = p.left }

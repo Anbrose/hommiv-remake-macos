@@ -64,6 +64,18 @@ final class Renderer: NSObject, MTKViewDelegate {
     var combat: CombatScreen?
     /// The game's movies (movies.h4r), decoded on demand.
     var movies: Movies?
+    var sound: GameSound?
+
+    /// The music for where the player is: the town's alignment in a town, else the terrain under
+    /// the hero (terrain.<Terrain>); combat music is started by the battle itself.
+    func updateMusic() {
+        guard let s = sound, let g = game, !inCombat else { return }
+        if let t = townOpen, t < g.towns.count { s.playMusic("town.\(g.towns[t].alignment)"); return }
+        guard let h = g.heroes.first, let c = g.map.cells[g.level][h.x * g.map.size + h.y] else { return }
+        let names: [UInt8: String] = [0: "Water", 1: "grass", 2: "Rough", 3: "Swamp", 4: "Volcanic", 5: "Snow", 6: "Sand", 7: "Dirt", 8: "Subterranean"]
+        let name = g.level > 0 ? "Subterranean" : names[c.type] ?? "grass"
+        s.playMusic("terrain.\(name)")
+    }
     var combatMeleeMode = false
     /// The frame the pointer shows, when its frames are not an animation: the move / attack /
     /// activate and combat walk / fly pointers have one frame per 1, 2, 3 and 4+ days or turns.
@@ -967,6 +979,9 @@ final class Renderer: NSObject, MTKViewDelegate {
         if let g = game {
             g.update(dt: Float(min(dt, 0.1)))
             for line in g.log { print(line); toasts.append((line, now.addingTimeInterval(5))) }
+            for name in g.sounds { sound?.play(name) }
+            g.sounds.removeAll()
+            updateMusic()
             g.log.removeAll()
             collectFloaters(now: now)
             toasts.removeAll { $0.until < now }

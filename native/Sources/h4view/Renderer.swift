@@ -89,6 +89,33 @@ final class Renderer: NSObject, MTKViewDelegate {
         let name = g.level > 0 ? "Subterranean" : names[c.type] ?? "grass"
         s.playMusic("terrain.\(name)")
     }
+    /// The sounds of the objects near the middle of the view (sound.adv_object.<type>[.<subtype>]:
+    /// windmills, water wheels, stables, creature banks, ...), louder the nearer, four at most.
+    func updateAmbient(_ now: Date) {
+        guard let s = sound, let g = game else { return }
+        if inCombat || townOpen != nil { s.setAmbient([:]); return }
+        guard now.timeIntervalSince(lastAmbientCheck) > 0.5 else { return }
+        lastAmbientCheck = now
+        let centre = cell(at: pan + SIMD2(Float(AdventureUI.mapViewportWidth), Float(AdventureUI.height)) * uiScale / 2 / zoom)
+        var near: [(key: String, name: String, d: Float)] = []
+        for p in scene.placed {
+            let dx = Float(p.cellX - centre.0), dy = Float(p.cellY - centre.1)
+            let d = (dx * dx + dy * dy).squareRoot()
+            guard d < 10 else { continue }
+            // scenery and working buildings loop; chests, gems, piles and fountains sound when visited
+            guard Renderer.ambientTypes.contains(p.type) else { continue }
+            let full = "adv_object.\(p.type).\(p.subtype)", short = "adv_object.\(p.type)"
+            guard let name = [full, short].first(where: { !p.type.isEmpty && s.has($0) }) else { continue }
+            near.append(("ambient|\(p.cellX),\(p.cellY)", name, d))
+        }
+        _ = g
+        var wanted: [String: (name: String, volume: Float)] = [:]
+        for n in near.sorted(by: { $0.d < $1.d }).prefix(4) { wanted[n.key] = (n.name, max(0.1, 1 - n.d / 10) * 0.6) }
+        s.setAmbient(wanted)
+    }
+    var lastAmbientCheck = Date.distantPast
+    static let ambientTypes: Set<String> = ["decorative", "windmill", "weekly_material_generator", "mine", "abandoned_mine", "creature_bank",
+                                            "creature_dwelling", "campfire", "buoy", "arena", "academy", "blacksmith", "movement_booster"]
     var combatMeleeMode = false
     /// The frame the pointer shows, when its frames are not an animation: the move / attack /
     /// activate and combat walk / fly pointers have one frame per 1, 2, 3 and 4+ days or turns.
@@ -1036,6 +1063,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             // the hero's ride: sound.hero horse.walk loops while a hero walks on the map
             if !inCombat, townOpen == nil, g.heroes.contains(where: { $0.isWalking }) { sound?.startLoop("hero horse.walk", key: "horse") }
             else { sound?.stopLoop("horse") }
+            updateAmbient(now)
             g.log.removeAll()
             collectFloaters(now: now)
             toasts.removeAll { $0.until < now }

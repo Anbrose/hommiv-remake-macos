@@ -85,6 +85,14 @@ final class GameSound: NSObject, AVAudioPlayerDelegate {
         loops[key] = p
     }
     func stopLoop(_ key: String) { loops.removeValue(forKey: key)?.stop() }
+    /// Keep exactly these ambient loops going (key -> sound, volume); others under the prefix stop.
+    func setAmbient(_ wanted: [String: (name: String, volume: Float)], prefix: String = "ambient|") {
+        for k in loops.keys where k.hasPrefix(prefix) && wanted[k] == nil { stopLoop(k) }
+        for (k, w) in wanted {
+            if loops[k] == nil { startLoop(w.name, key: k) }
+            loops[k]?.volume = effectVolume * w.volume
+        }
+    }
 
     // MARK: music
 

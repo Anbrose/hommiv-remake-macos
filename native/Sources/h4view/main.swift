@@ -194,6 +194,16 @@ if ProcessInfo.processInfo.environment["H4DEBUG"] != nil {
         print("hero army of player \(o.owner ?? -1) at (\(o.x),\(o.y)): stacks \(o.army?.compactMap { $0 }.map { "\($0.count)x\($0.creature)" } ?? []) heroes \(o.heroes.map { "lv\($0.level) class \($0.heroClass) portrait \($0.portrait) '\($0.name)' skills \($0.skills.map { "\($0)" } ?? "random") equipped \($0.equipped) backpack \($0.backpack)" })")
     }
 }
+if ProcessInfo.processInfo.environment["H4AMBIENT"] != nil {   // debugging aid: the objects that have an ambient sound
+    let snd = GameSound(dataDirectory: URL(fileURLWithPath: args[1]).deletingLastPathComponent())
+    var found: [String: Int] = [:], missing: [String: Int] = [:]
+    for p in scene.placed where !p.type.isEmpty {
+        let full = "adv_object.\(p.type).\(p.subtype)", short = "adv_object.\(p.type)"
+        if let n = [full, short].first(where: { snd.has($0) }) { found[n, default: 0] += 1 } else { missing[full, default: 0] += 1 }
+    }
+    print("ambient found \(found)\nnone for \(missing)")
+    exit(0)
+}
 // the map's scripts: loaded, then day 1's events (the opening story, ...)
 game.loadScripts()
 // a saved game: its state over the freshly started scenario (day events already ran then)

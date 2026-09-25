@@ -17,11 +17,16 @@ public struct CombatActor {
     public let states: [State]
     /// Footprint on the combat grid, size x size cells (byte 2: sprite 3, peasant 4, dragon 7).
     public let size: Int
+    /// World units (16 per cell) covered by the prewalk, by one loop of walk, and by postwalk
+    /// (header u16s at 4, 6, 8; heroes4.exe keeps them at +0xc, +0x10, +0x14 of the model and
+    /// fits a whole number of walk loops to the path, 0x7dec80).
+    public let prewalkDistance: Int, walkDistance: Int, postwalkDistance: Int
 
     public init(data d: Data) throws {
         var r = ByteReader(d)
         guard d.count > 108, r.u16() == 6 else { throw H4Error.corrupt("combat_actor: bad header") }
         size = max(1, Int(r.byte(at: 2)))
+        prewalkDistance = Int(r.peekU16(at: 4)); walkDistance = max(1, Int(r.peekU16(at: 6))); postwalkDistance = Int(r.peekU16(at: 8))
         r.pos = 106
         let n = Int(r.u16())
         var list: [State] = []

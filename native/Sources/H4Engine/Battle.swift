@@ -71,7 +71,7 @@ public final class Battle {
     public let field: Battlefield
     public private(set) var round = 0
     public private(set) var order: [Int] = []
-    public private(set) var events: [Event] = []
+    public private(set) var events: [Event] = [] { didSet { version &+= 1 } }
     public private(set) var experience = 0
     public private(set) var finished: Bool? = nil
     var rng: GameRandom
@@ -348,29 +348,65 @@ public final class Battle {
     /// Path costs; Flying (and Teleport) pass over obstacles and creatures, landing only on free cells.
     func explore(_ u: Unit, budget: Float? = nil) -> [Int: Float] {
         let limit = budget ?? moveBudget(u)
+        let cacheKey = "\(u.id)|\(u.x)|\(u.y)|\(limit)|\(version)"
+        if let hit = exploreCache[cacheKey] { return hit }
         let flies = u.stats.has("flying")
-        func free(_ x: Int, _ y: Int) -> Bool {
-            flies ? x >= 0 && y >= 0 && x + u.size <= Battlefield.size && y + u.size <= Battlefield.size
-                  : field.fits(x, y, size: u.size) && !overlaps(x, y, u.size, except: u.id)
+        let n = Battlefield.size
+        // where the footprint may stand, worked out once per search
+        var blocked = [Bool](repeating: false, count: n * n)
+        for x in 0..<n { for y in 0..<n {
+            blocked[x * n + y] = flies ? (x + u.size > n || y + u.size > n) : !(field.fits(x, y, size: u.size) && !overlaps(x, y, u.size, except: u.id))
+        } }
+        var fits = [Bool](repeating: false, count: n * n)
+        if !flies { for x in 0..<n { for y in 0..<n { fits[x * n + y] = field.fits(x, y, size: u.size) } } }
+        var dist = [Float](repeating: .infinity, count: n * n)
+        dist[u.x * n + u.y] = 0
+        // a binary heap of (cost, cell)
+        var heap: [(Float, Int)] = [(0, u.x * n + u.y)]
+        func push(_ e: (Float, Int)) {
+            heap.append(e); var i = heap.count - 1
+            while i > 0 { let p = (i - 1) / 2; if heap[p].0 <= heap[i].0 { break }; heap.swapAt(p, i); i = p }
         }
-        var dist: [Int: Float] = [Battle.key(u.x, u.y): 0]
-        var open: [(Float, Int, Int)] = [(0, u.x, u.y)]
-        while !open.isEmpty {
-            var best = 0
-            for k in 1..<open.count where open[k].0 < open[best].0 { best = k }
-            let (c, x, y) = open.remove(at: best)
-            if c > dist[Battle.key(x, y), default: .infinity] { continue }
+        func pop() -> (Float, Int) {
+            let top = heap[0]; let last = heap.removeLast()
+            if !heap.isEmpty {
+                heap[0] = last; var i = 0
+                while true {
+                    let l = 2 * i + 1, r = l + 1; var m = i
+                    if l < heap.count, heap[l].0 < heap[m].0 { m = l }
+                    if r < heap.count, heap[r].0 < heap[m].0 { m = r }
+                    if m == i { break }
+                    heap.swapAt(i, m); i = m
+                }
+            }
+            return top
+        }
+        var out: [Int: Float] = [:]
+        while !heap.isEmpty {
+            let (c, k) = pop()
+            if c > dist[k] { continue }
+            out[k] = c
+            let x = k / n, y = k % n
             for s in Battle.steps {
                 let nx = x + s.dx, ny = y + s.dy
+                guard nx >= 0, ny >= 0, nx < n, ny < n else { continue }
                 let nc = c + s.cost
-                guard nc <= limit + 0.001, free(nx, ny) else { continue }
-                if s.cost > 1, !flies, !(field.fits(x + s.dx, y, size: u.size) || field.fits(x, y + s.dy, size: u.size)) { continue }
-                let k = Battle.key(nx, ny)
-                if nc < dist[k, default: .infinity] { dist[k] = nc; open.append((nc, nx, ny)) }
+                let nk = nx * n + ny
+                guard nc <= limit + 0.001, !blocked[nk] else { continue }
+                if s.cost > 1, !flies {
+                    let a = (x + s.dx) * n + y, b = x * n + y + s.dy
+                    guard (x + s.dx < n && fits[a]) || (y + s.dy < n && fits[b]) else { continue }
+                }
+                if nc < dist[nk] { dist[nk] = nc; push((nc, nk)) }
             }
         }
-        return dist
+        if exploreCache.count > 64 { exploreCache.removeAll() }
+        exploreCache[cacheKey] = out
+        return out
     }
+    /// Searches keep until anything happens on the field.
+    var exploreCache: [String: [Int: Float]] = [:]
+    var version = 0
 
     /// Cells of movement needed to reach a position ignoring this turn's limit (for the turns shown by the walk cursor).
     public func cost(_ u: Unit, to x: Int, _ y: Int) -> Float? {
@@ -740,6 +776,15 @@ public final class Battle {
             if d < bestD { bestD = d; best = (x, y) }
         }
         if let b = best, !(b.0 == u.x && b.1 == u.y) { _ = move(to: b.0, b.1) } else { defend() }
+    }
+
+    /// The attacker's hero left the field (retreat): the battle is over, lost.
+    public private(set) var retreated = false
+    public func retreat() {
+        guard finished == nil else { return }
+        retreated = true
+        finished = false
+        events.append(.finished(attackerWon: false))
     }
 
     public func autoResolve() {

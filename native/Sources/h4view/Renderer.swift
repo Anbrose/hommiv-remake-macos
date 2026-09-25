@@ -324,6 +324,23 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// The status line shown when the mouse rests on the map: text and canvas position.
     var hover: (text: String, x: Int, y: Int)?
     var iconSheets: [String: [String: UILayer]] = [:]
+
+    /// Bring a map cell to the middle of the map viewport (as a click in the hero or town list does).
+    func centre(onCell c: (Int, Int)) {
+        let viewportW = ui == nil ? viewSize.x : Float(AdventureUI.mapViewportWidth) * uiScale
+        let (sx, sy) = scene.screen(x: c.0, y: c.1)
+        pan = SIMD2(Float(sx) - viewportW / 2 / zoom, Float(sy) - viewSize.y / 2 / zoom)
+    }
+    func centre(onTown i: Int) {
+        guard let g = game, i < g.towns.count else { return }
+        let t = g.towns[i]
+        if let p = scene.placed.first(where: { g.town(for: $0) == i }) {
+            centre(onCell: (p.cellX + p.sprite.footprint.w / 2, p.cellY + p.sprite.footprint.h / 2))
+        } else { centre(onCell: (t.x, t.y)) }
+    }
+    /// A question or notice of the game's own (retreat, surrender): the text, whether it has
+    /// Cancel beside OK, and what OK does.
+    var prompt: (text: String, cancel: Bool, ok: (() -> Void)?)?
     lazy var cream: MTLTexture = {
         var bm = Bitmap(width: 2, height: 2)
         for i in 0..<4 { bm.pixels[i * 4] = 255; bm.pixels[i * 4 + 1] = 255; bm.pixels[i * 4 + 2] = 224; bm.pixels[i * 4 + 3] = 255 }

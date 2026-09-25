@@ -570,6 +570,32 @@ public final class GameState {
         checkScenario(newDay: false)
     }
 
+    /// Where a hero retreats to: the player's nearest town (none: the hero cannot retreat,
+    /// "no_town_after_retreat.combat").
+    public func retreatTown(for hero: Hero) -> Int? {
+        towns.indices.filter { towns[$0].owned }.min { a, b in
+            let da = (towns[a].x - hero.x) * (towns[a].x - hero.x) + (towns[a].y - hero.y) * (towns[a].y - hero.y)
+            let db = (towns[b].x - hero.x) * (towns[b].x - hero.x) + (towns[b].y - hero.y) * (towns[b].y - hero.y)
+            return da < db
+        }
+    }
+    /// The hero left the battle ("wish_to_retreat.combat": all the troops are lost) and stands
+    /// at the gate of the town; the monsters keep what they lost.
+    public func retreat(hero: Hero, monsterAt i: Int, monstersLeft: Int, to town: Int) {
+        hero.army = []
+        if i < monsters.count { monsters[i].count = max(1, monstersLeft) }
+        if let p = scene.placed.first(where: { self.town(for: $0) == town }) {
+            let gate = gateCells(p).first { passability.isFree($0.0, $0.1) } ?? gateCells(p)[0]
+            hero.x = gate.0; hero.y = gate.1
+        }
+        hero.movement = 0; hero.path = []; hero.plan = []; hero.target = nil
+        refreshMovement(hero)
+        pendingBattle = nil
+        log.append("\(hero.name) retreats to \(towns[town].name)")
+        runContinuous()
+        checkScenario(newDay: false)
+    }
+
     /// Give a hero the usual starting army: the two cheapest level-1 creatures of his alignment,
     /// half a week's growth each.
     public func giveStartingArmy(_ hero: Hero) {

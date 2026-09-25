@@ -183,7 +183,8 @@ if let out = snapshot {
        let p = scene.placed.first(where: { $0.cellX == target.0 && $0.cellY == target.1 }), let mi = game.monster(for: p) {
         cs.start(game: game, hero: hero, monsterAt: mi, p, terrain: 1)
         if let b = cs.battle { for _ in 0..<battleSteps { b.autoAct() }; _ = b.takeEvents(); cs.pump(); if b.finished != nil { cs.result = (b.finished!, b.round); cs.showResults = battleResults }
-            if let n = ProcessInfo.processInfo.environment["H4INFO"].flatMap({ Int($0) }), b.units.indices.contains(n) { cs.info = b.units[n].id } }   // snapshot: open a unit's creature window
+            if let n = ProcessInfo.processInfo.environment["H4INFO"].flatMap({ Int($0) }), b.units.indices.contains(n) { cs.info = b.units[n].id }
+            if ProcessInfo.processInfo.environment["H4RETREAT"] != nil { renderer.askRetreat() } }   // snapshot: the retreat question   // snapshot: open a unit's creature window
         print("battle: round \(cs.battle?.round ?? 0), units \(cs.battle?.units.map { "\($0.stats.name)x\($0.stats.count) morale \($0.stats.morale)@(\($0.x),\($0.y))" }.joined(separator: " ") ?? "")")
     }
     if openHeroScreen { renderer.adventureDialog = .hero(0) }
@@ -395,9 +396,20 @@ final class MapView: MTKView {
             if renderer.townOpen != nil { renderer.townClick(x: cx, y: cy); return }
             if cx >= Float(AdventureUI.mapViewportWidth) {
                 if ui.hit("end_turn", x: cx, y: cy) { g.endTurn() }
-                else if ui.hit("Town_list", x: cx, y: cy), let i = g.towns.firstIndex(where: { $0.owned }) { renderer.townOpen = i }
-                else if ui.hit("Hero_List", x: cx, y: cy) {   // a portrait opens the hero screen
-                    for (i, (hx, hy)) in AdventureUI.heroSlots.enumerated() where i < g.heroes.count && abs(cx - Float(hx)) < 30 && abs(cy - Float(hy)) < 30 { renderer.adventureDialog = .hero(i) }
+                else if ui.hit("Town_list", x: cx, y: cy), let list = ui.hotspot("Town_list") {
+                    // a town card: one click brings the map to the town, a double click opens it
+                    let owned = g.towns.indices.filter { g.towns[$0].owned }
+                    let row = Int((cy - Float(list.y) - 8) / 72)
+                    if row >= 0, row < min(3, owned.count) {
+                        let i = owned[row]
+                        if e.clickCount >= 2 { renderer.townOpen = i } else { renderer.centre(onTown: i) }
+                    }
+                }
+                else if ui.hit("Hero_List", x: cx, y: cy) {   // a portrait: one click centres the map on the hero, a double click opens the hero screen
+                    for (i, (hx, hy)) in AdventureUI.heroSlots.enumerated() where i < g.heroes.count && abs(cx - Float(hx)) < 30 && abs(cy - Float(hy)) < 30 {
+                        if e.clickCount >= 2 { renderer.adventureDialog = .hero(i) }
+                        else { renderer.centre(onCell: (Int(g.heroes[i].position.x.rounded()), Int(g.heroes[i].position.y.rounded()))) }
+                    }
                 }
                 return
             }
@@ -444,8 +456,8 @@ final class MapView: MTKView {
         case 36, 76: if renderer.townOpen == nil, !renderer.inCombat { renderer.game?.endTurn() }   // Return / Enter
         case 14: if renderer.townOpen == nil, !renderer.inCombat { renderer.game?.endTurn() }       // E
         case 46: renderer.showReach.toggle()   // M = movement shadow
-        case 1: if renderer.inCombat, let b = renderer.combat?.battle, !(renderer.combat?.busy ?? true), b.finished == nil { b.wait(); renderer.combat?.pump() }   // S = wait
-        case 2: if renderer.inCombat, let b = renderer.combat?.battle, !(renderer.combat?.busy ?? true), b.finished == nil { b.defend(); renderer.combat?.pump() } // D = defend
+        case 1: if renderer.inCombat, renderer.prompt == nil, let b = renderer.combat?.battle, !(renderer.combat?.busy ?? true), b.finished == nil { b.wait(); renderer.combat?.pump() }   // S = wait
+        case 2: if renderer.inCombat, renderer.prompt == nil, let b = renderer.combat?.battle, !(renderer.combat?.busy ?? true), b.finished == nil { b.defend(); renderer.combat?.pump() } // D = defend
         case 53:   // Escape closes a dialog, then leaves the town
             if renderer.townDialog != nil { renderer.townDialog = nil }
             else if renderer.townOpen != nil { renderer.townOpen = nil }

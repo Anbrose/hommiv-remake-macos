@@ -39,6 +39,8 @@ final class CombatScreen {
     var hovered: Int?
     /// The unit whose creature window is open (right click), if any.
     var info: Int?
+    /// The town a retreating hero goes to.
+    var retreatTown: Int?
     var idleRandom = GameRandom(seed: 0x563870)
     var strings: [String: String] = [:]
     var effectSprites: [String: Sprite] = [:]
@@ -172,27 +174,25 @@ final class CombatScreen {
             if now.timeIntervalSince(p.started) >= p.duration {
                 finish(p.event)
                 playing = nil
-            } else if case .move(let id, let path, let start, _) = p.event, !path.isEmpty {
-                // prewalk (a flyer's take-off) in place, walk / fly along the path, postwalk at the end
+            } else if case .move(let id, let path, let start, _) = p.event, !path.isEmpty, let m = moves[id] {
+                // prewalk (a flyer's take-off), whole loops of walk, postwalk, each covering its
+                // share of the path's length (0x7dec80)
                 let elapsed = now.timeIntervalSince(p.started)
-                let (pre, walk) = moveTimes[id] ?? (0, 0)
-                let begin = (Float(start.0), Float(start.1)), last = (Float(path[path.count - 1].0), Float(path[path.count - 1].1))
-                if elapsed < pre {
-                    unitPos[id] = begin
-                    if unitState[id]?.state != "prewalk" { unitState[id] = ("prewalk", now, true) }
-                    b.unit(id).facing = Battle.facing(dx: Float(path[0].0) - begin.0, dy: Float(path[0].1) - begin.1)
-                } else if elapsed < pre + walk {
-                    let t = Float((elapsed - pre) * CombatScreen.cellsPerSecond)
-                    let k = min(path.count - 1, Int(t)), f = t - Float(k)
-                    let from = k == 0 ? begin : (Float(path[k - 1].0), Float(path[k - 1].1))
-                    let to = (Float(path[k].0), Float(path[k].1))
-                    unitPos[id] = (from.0 + (to.0 - from.0) * f, from.1 + (to.1 - from.1) * f)
-                    if unitState[id]?.state != "walk" { unitState[id] = ("walk", now, false) }
-                    b.unit(id).facing = Battle.facing(dx: to.0 - from.0, dy: to.1 - from.1)
+                let state: String, d: Float
+                if elapsed < m.preTime {
+                    state = "prewalk"; d = m.preDist * Float(elapsed / max(0.001, m.preTime))
+                } else if elapsed < m.preTime + m.walkTime {
+                    state = "walk"; d = m.preDist + (m.length - m.preDist - m.postDist) * Float((elapsed - m.preTime) / max(0.001, m.walkTime))
                 } else {
-                    unitPos[id] = last
-                    if unitState[id]?.state != "postwalk" { unitState[id] = ("postwalk", now, true) }
+                    state = "postwalk"; d = (m.length - m.postDist) + m.postDist * Float(min(1, (elapsed - m.preTime - m.walkTime) / max(0.001, m.postTime)))
                 }
+                let pts = [start] + path
+                var geo: Float = 0
+                for k in 1..<pts.count { let dx = Float(pts[k].0 - pts[k - 1].0), dy = Float(pts[k].1 - pts[k - 1].1); geo += (dx * dx + dy * dy).squareRoot() }
+                let (pos, dir) = CombatScreen.along(pts, m.length > 0 ? d / m.length * geo : geo)
+                unitPos[id] = pos
+                if unitState[id]?.state != state { unitState[id] = (state, now, state != "walk") }
+                if dir.0 != 0 || dir.1 != 0 { b.unit(id).facing = Battle.facing(dx: dir.0, dy: dir.1) }
             }
             return
         }
@@ -213,14 +213,29 @@ final class CombatScreen {
     func begin(_ e: Battle.Event, now: Date) {
         guard let b = battle else { return }
         switch e {
-        case .move(let id, let path, _, let flying):
-            // flyers take off first (0x7dd400: prewalk, walk, postwalk); walkers only stop (0x7de960: walk, postwalk)
-            let u = b.unit(id), face = u.facing
-            let pre = flying ? stateDuration(u.actor, "prewalk", face) : 0
-            let walk = Double(path.count) / CombatScreen.cellsPerSecond
-            let post = stateDuration(u.actor, "postwalk", face)
-            moveTimes[id] = (pre, walk)
-            playing = Anim(event: e, started: now, duration: pre + walk + post)
+        case .move(let id, let path, let start, let flying):
+            // flyers take off first (0x7dd400: prewalk, walk, postwalk); walkers walk and stop (0x7de960: walk, postwalk)
+            let u = b.unit(id)
+            let pts = [start] + path
+            let face = pts.count > 1 ? Battle.facing(dx: Float(pts[1].0 - pts[0].0), dy: Float(pts[1].1 - pts[0].1)) : u.facing
+            // the path's length in world units: 16 a straight step, 24 a diagonal one (0x7dec80); a flight is a straight line
+            var length: Float = 0
+            for k in 1..<max(1, pts.count) {
+                let dx = abs(pts[k].0 - pts[k - 1].0), dy = abs(pts[k].1 - pts[k - 1].1)
+                length += flying ? 16 * Float(dx * dx + dy * dy).squareRoot() : Float(dx != 0 && dy != 0 ? 24 : 16)
+            }
+            let a = actor(u.actor)
+            let preTime = flying ? stateDuration(u.actor, "prewalk", face) : 0
+            let postTime = stateDuration(u.actor, "postwalk", face)
+            var preDist = preTime > 0 ? Float(a?.prewalkDistance ?? 16) : 0
+            var postDist = postTime > 0 ? Float(a?.postwalkDistance ?? 16) : 0
+            if preDist + postDist > length { let k = length / max(1, preDist + postDist); preDist *= k; postDist *= k }
+            let loop = Float(a?.walkDistance ?? 64)
+            let loops = max(length - preDist - postDist > 0 ? 1 : 0, Int((length - preDist - postDist + loop / 2) / loop))
+            let loopTime = stateDuration(u.actor, "walk", face)
+            let walkTime = Double(loops) * (loopTime > 0 ? loopTime : Double(loop / 16) / CombatScreen.cellsPerSecond)
+            moves[id] = Move(length: length / 16, preDist: preDist / 16, postDist: postDist / 16, preTime: preTime, walkTime: walkTime, postTime: postTime)
+            playing = Anim(event: e, started: now, duration: preTime + walkTime + postTime)
         case .melee(let id, let target, let dmg, let killed):
             unitState[id] = ("melee", now, true)
             playing = Anim(event: e, started: now, duration: 0.6)
@@ -258,7 +273,7 @@ final class CombatScreen {
     }
     func finish(_ e: Battle.Event) {
         switch e {
-        case .move(let id, _, _, _): unitPos[id] = nil; unitState[id] = nil; moveTimes[id] = nil
+        case .move(let id, _, _, _): unitPos[id] = nil; unitState[id] = nil; moves[id] = nil
         case .melee(_, let target, _, _), .shoot(_, let target, _, _):
             if let b = battle, b.unit(target).alive { unitState[target] = ("flinch", Date(), true) }
         case .die(let id): dead.insert(id)
@@ -269,8 +284,25 @@ final class CombatScreen {
 
     var busy: Bool { playing != nil || !queue.isEmpty }
 
-    /// Phase lengths of the move being played: take-off, then the walk or flight.
-    var moveTimes: [Int: (Double, Double)] = [:]
+    /// The move being played: its length and the part each phase covers (cells) and lasts (s).
+    struct Move { var length, preDist, postDist: Float; var preTime, walkTime, postTime: Double }
+    var moves: [Int: Move] = [:]
+    /// The point `d` cells along a polyline of cells, and the direction there.
+    static func along(_ pts: [(Int, Int)], _ d: Float) -> ((Float, Float), (Float, Float)) {
+        var left = max(0, d)
+        for k in 1..<max(1, pts.count) {
+            let a = (Float(pts[k - 1].0), Float(pts[k - 1].1)), b = (Float(pts[k].0), Float(pts[k].1))
+            let dx = b.0 - a.0, dy = b.1 - a.1
+            let seg = (dx * dx + dy * dy).squareRoot()
+            if left <= seg || k == pts.count - 1 {
+                let f = seg > 0 ? min(1, left / seg) : 1
+                return ((a.0 + dx * f, a.1 + dy * f), (dx, dy))
+            }
+            left -= seg
+        }
+        let p = pts.last.map { (Float($0.0), Float($0.1)) } ?? (0, 0)
+        return (p, (0, 0))
+    }
     var stateDurations: [String: Double] = [:]
     /// How long an actor's one-off state runs (its frames at their own speed, as the renderer plays them).
     func stateDuration(_ actorName: String, _ state: String, _ facing: String) -> Double {

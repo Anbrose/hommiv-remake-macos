@@ -161,16 +161,22 @@ extension Renderer {
     /// button under it.
     static let messageWidth = 440
     func messageLayout() -> (x: Int, y: Int, w: Int, h: Int, lines: [String], font: H4Font)? {
-        guard let g = game, let text = g.scripts.messages.first, let ui = ui else { return nil }
+        guard let g = game, let text = prompt?.text ?? g.scripts.messages.first, let ui = ui else { return nil }
         let font = ui.dateFont
         let w = Renderer.messageWidth
         let lines = text.components(separatedBy: "\n").flatMap { $0.isEmpty ? [""] : AdventureUI.wrap($0, font: font, width: w - 60) }
         let h = min(AdventureUI.height - 40, 40 + lines.count * font.lineHeight + 70)
-        return ((AdventureUI.mapViewportWidth - w) / 2, (AdventureUI.height - h) / 2, w, h, lines, font)
+        let across = inCombat ? AdventureUI.width : AdventureUI.mapViewportWidth
+        return ((across - w) / 2, (AdventureUI.height - h) / 2, w, h, lines, font)
     }
     func okRect() -> (x: Int, y: Int, w: Int, h: Int)? {
         guard let m = messageLayout() else { return nil }
+        if prompt?.cancel == true { return (m.x + m.w / 2 - 66 - 20, m.y + m.h - 54, 66, 32) }
         return (m.x + (m.w - 66) / 2, m.y + m.h - 54, 66, 32)
+    }
+    func cancelRect() -> (x: Int, y: Int, w: Int, h: Int)? {
+        guard prompt?.cancel == true, let m = messageLayout() else { return nil }
+        return (m.x + m.w / 2 + 20, m.y + m.h - 54, 66, 32)
     }
     func cropped(_ b: Bitmap, _ w: Int, _ h: Int) -> Bitmap {
         var out = Bitmap(width: w, height: h)
@@ -214,10 +220,21 @@ extension Renderer {
         if let ok = okRect(), let b = ui.button("ok") {
             out.append(Quad(texture: uiTexture("button|ok|\(b.name)", { b.bitmap }), x: ok.x + (ok.w - b.width) / 2, y: ok.y + (ok.h - b.height) / 2, w: b.width, h: b.height))
         }
+        if let c = cancelRect(), let b = ui.button("cancel") {
+            out.append(Quad(texture: uiTexture("button|cancel|\(b.name)", { b.bitmap }), x: c.x + (c.w - b.width) / 2, y: c.y + (c.h - b.height) / 2, w: b.width, h: b.height))
+        }
         return out
     }
     /// A click while a script message is up: OK takes it away. Returns true when the box was open.
     func messageBoxClick(x: Float, y: Float) -> Bool {
+        func on(_ r: (x: Int, y: Int, w: Int, h: Int)?) -> Bool {
+            guard let r = r else { return false }
+            return x >= Float(r.x) && x < Float(r.x + r.w) && y >= Float(r.y) && y < Float(r.y + r.h)
+        }
+        if let p = prompt {   // the game's own box comes first; it stays until OK or Cancel
+            if on(okRect()) { prompt = nil; p.ok?() } else if on(cancelRect()) { prompt = nil }
+            return true
+        }
         guard let g = game, !g.scripts.messages.isEmpty else { return false }
         if let ok = okRect(), x >= Float(ok.x), x < Float(ok.x + ok.w), y >= Float(ok.y), y < Float(ok.y + ok.h) { g.scripts.messages.removeFirst() }
         return true

@@ -90,8 +90,8 @@ extension Renderer {
                     if let st = st, st.once {
                         index = min(tl.count - 1, Int(now.timeIntervalSince(st.since) / period))
                         if index == tl.count - 1, now.timeIntervalSince(st.since) >= Double(tl.count) * period, state == "flinch" || state == "block" || state == "fidget" { cs.idleDone(u.id, now: now) }
-                    } else if state == "walk" {
-                        index = Int(now.timeIntervalSince(st?.since ?? now) * 12) % tl.count
+                    } else if state == "walk" {   // loops at its own speed (one loop covers the actor's walk distance)
+                        index = Int(now.timeIntervalSince(st?.since ?? now) / period) % tl.count
                     } else {
                         index = Int((now.timeIntervalSince1970 + Double(u.id) * 0.37) / period) % tl.count
                     }
@@ -168,7 +168,7 @@ extension Renderer {
         }
         for (hs, name) in [("cast_spell", "cast_spell"), ("defend", "defend"), ("wait", "wait"), ("melee", "melee"), ("auto_attack", "auto"), ("combat_options", "options"), ("retreat", "retreat"), ("surrender", "surrender")] {
             guard let slot = cs.hotspot(hs) else { continue }
-            let disabled = ["cast_spell", "options", "surrender"].contains(name) || (name == "melee" && !(b.current?.shots ?? 0 > 0))
+            let disabled = ["cast_spell", "options"].contains(name) || (name == "melee" && !(b.current?.shots ?? 0 > 0))
             if let img = ui.button("combat.\(name)", state: disabled ? "Disabled" : "Released") {
                 out.append(Quad(texture: uiTexture("button|combat.\(name)|\(disabled)", { img.bitmap }), x: slot.x + (slot.width - img.width) / 2, y: slot.y + (slot.height - img.height) / 2, w: img.width, h: img.height))
             }
@@ -180,6 +180,7 @@ extension Renderer {
         out += combatInfoQuads()
         out += hoverQuads()
         if cs.showResults { out += combatResultQuads() }
+        if prompt != nil { out += messageBoxQuads() }
         return out
     }
 
@@ -223,7 +224,11 @@ extension Renderer {
         let ox = (AdventureUI.width - 798) / 2, oy = (AdventureUI.height - 599) / 2
         var out = dialogImages(d, key: "results", at: ox, oy, skip: ["ok_button"])
         out += centred(r.won ? "Victory!" : "Defeat", in: d["Title"], at: ox, oy, font: ui.dateFont)
-        let text = r.won ? "Your army has won the battle after \(r.rounds) rounds and gains \(b.experience) experience." : "Your army was defeated after \(r.rounds) rounds."
+        var text = r.won ? "Your army has won the battle after \(r.rounds) rounds and gains \(b.experience) experience." : "Your army was defeated after \(r.rounds) rounds."
+        if b.retreated, let h = cs.hero, let t = cs.retreatTown, let g = game {
+            text = self.text("one_hero_retreats.combat", "%Hero_name retreats shamefully to %town_name.")
+                .replacingOccurrences(of: "%Hero_name", with: h.name).replacingOccurrences(of: "%town_name", with: g.towns[t].name)
+        }
         out += paragraph(text, in: d["Combat_Results_Text"], at: ox, oy, font: ui.numberFont)
         let winner = r.won ? 0 : 1, loser = 1 - winner
         func portrait(side: Int, in slot: String) {
@@ -259,18 +264,20 @@ extension Renderer {
     /// A click on the combat screen (canvas coordinates).
     func combatClick(x: Float, y: Float) {
         guard let cs = combat, let b = cs.battle, let g = game else { return }
+        if prompt != nil { _ = messageBoxClick(x: x, y: y); return }
         if cs.info != nil { cs.info = nil; return }   // a click closes the creature window (OK or anywhere)
         if cs.showResults {
             closeCombat(); return
         }
         guard !cs.busy, cs.result == nil, let cur = b.current, cur.side == 0 else { return }
-        for (hs, action) in [("defend", "defend"), ("wait", "wait"), ("auto_attack", "auto"), ("retreat", "retreat"), ("melee", "melee")] {
+        for (hs, action) in [("defend", "defend"), ("wait", "wait"), ("auto_attack", "auto"), ("retreat", "retreat"), ("surrender", "surrender"), ("melee", "melee")] {
             guard let slot = cs.hotspot(hs), x >= Float(slot.x), x < Float(slot.x + slot.width), y >= Float(slot.y), y < Float(slot.y + slot.height) else { continue }
             switch action {
             case "defend": b.defend()
             case "wait": b.wait()
             case "auto": b.autoResolve()
-            case "retreat": while b.finished == nil, let u = b.current, u.side == 0 { u.stats.count = 0; b.defend() }; b.autoResolve()
+            case "retreat": askRetreat()
+            case "surrender": prompt = (text("no_surrender_to_neutral.combat", "You cannot surrender to neutral armies."), false, nil)   // monsters take no surrender
             case "melee": combatMeleeMode.toggle()
             default: break
             }
@@ -288,9 +295,28 @@ extension Renderer {
         _ = g
     }
 
+    func text(_ key: String, _ fallback: String) -> String { game?.tables?.strings[key] ?? fallback }
+
+    /// Retreat (the original's texts): only a hero can retreat, to the player's nearest town,
+    /// losing all the troops, after "wish_to_retreat.combat"; without a town, "no_town_after_retreat.combat".
+    func askRetreat() {
+        guard let cs = combat, let b = cs.battle, let g = game, let h = cs.hero else { return }
+        guard let town = g.retreatTown(for: h) else {
+            prompt = (text("no_town_after_retreat.combat", "You must have a town to retreat."), false, nil); return
+        }
+        cs.retreatTown = town
+        let q = text("wish_to_retreat.combat", "Are you sure you want to retreat to %town_name?  You will lose all your troops!")
+            .replacingOccurrences(of: "%town_name", with: g.towns[town].name)
+        prompt = (q, true, { [weak self] in b.retreat(); self?.combat?.pump() })
+    }
+
     /// Leave the combat screen and apply the result to the map.
     func closeCombat() {
         guard let cs = combat, let b = cs.battle, let g = game, let h = cs.hero, let p = cs.placed, let t = g.tables else { combat?.battle = nil; return }
+        if b.retreated, let town = cs.retreatTown {
+            g.retreat(hero: h, monsterAt: cs.monsterIndex, monstersLeft: b.units.first { $0.side == 1 }?.stats.count ?? 0, to: town)
+            cs.battle = nil; return
+        }
         let won = b.finished ?? false
         let army = b.units.filter { $0.side == 0 && !$0.stats.isHero && $0.alive }.map { Hero.Stack(creature: $0.keyword, count: $0.stats.count) }
         let left = b.units.first { $0.side == 1 }?.stats.count ?? 0
@@ -314,7 +340,7 @@ extension Renderer {
 
     /// Which combat cursor fits the cell under the pointer.
     func combatCursor(x: Float, y: Float) -> String {
-        guard let cs = combat, let b = cs.battle, cs.info == nil, !cs.busy, cs.result == nil, let cur = b.current, cur.side == 0, x < 885 else { return "combat.normal" }
+        guard let cs = combat, let b = cs.battle, cs.info == nil, prompt == nil, !cs.busy, cs.result == nil, let cur = b.current, cur.side == 0, x < 885 else { return "combat.normal" }
         walkTurns = nil
         if let t = enemyUnder(b, x: x, y: y) {
             if b.canShoot(cur), !combatMeleeMode { return "combat.shoot" }

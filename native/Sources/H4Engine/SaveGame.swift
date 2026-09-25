@@ -15,6 +15,8 @@ public struct SaveGame: Codable {
     public var dwellings: [CellCount]
     public var monsters: [MonsterState]
     public var removed: [MapScene.SavedObject]
+    /// Objects moved on the map (wandering stacks that walked up to a hero), in order.
+    public var moved: [MapScene.MovedObject]? = nil
     public var scripts: ScriptSave
     public var outcome: Bool?
     public var victoryDays: Int?
@@ -83,7 +85,7 @@ extension GameState {
                  dwellings: dwellings.map { .init(x: $0.x, y: $0.y, count: $0.available) },
                  monsters: monsters.map { .init(x: $0.x, y: $0.y, name: $0.name, creature: $0.creature, count: $0.count,
                                                 extra: $0.extra.map { .init(creature: $0.creature, count: $0.count) }) },
-                 removed: scene.removed,
+                 removed: scene.removed, moved: scene.moved,
                  scripts: .init(numbers: scripts.numbers, flags: scripts.flags, messages: scripts.messages,
                                 victoryText: scripts.victoryText, lossText: scripts.lossText, standardVictoryOn: scripts.standardVictoryOn,
                                 mapEventsEnabled: scripts.mapEvents.map { $0.enabled },
@@ -95,6 +97,12 @@ extension GameState {
     public func restore(_ s: SaveGame) {
         day = s.day
         resources = s.resources
+        for m in s.moved ?? [] {
+            if let p = scene.placed.first(where: { $0.cellX == m.fromX && $0.cellY == m.fromY && $0.name == m.name }) {
+                passability.free(m.fromX, m.fromY); passability.block(m.toX, m.toY)
+                scene.relocate(p, toX: m.toX, y: m.toY)
+            }
+        }
         scene.removeAll(s.removed)
         for o in s.removed { passability.free(o.x, o.y) }
         heroes = s.heroes.map { st in

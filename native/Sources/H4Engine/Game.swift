@@ -270,7 +270,8 @@ public final class GameState {
     public struct Mine { public let x: Int, y: Int, name: String, resource: String, amount: Int; public var owned: Bool }
     public struct Dwelling { public let x: Int, y: Int, name: String, creature: String; public var available: Int }
     public struct Monster {
-        public let x: Int, y: Int, name: String, creature: String; public var count: Int
+        public var x: Int, y: Int
+        public let name: String, creature: String; public var count: Int
         /// The lower-level stack spending what is left of the monster's value (heroes4.exe 0x7f32b0).
         /// The army's other stacks: a random monster's escort, or a placed army's further stacks.
         public var extra: [(creature: String, count: Int)] = []
@@ -336,26 +337,35 @@ public final class GameState {
     public var towns: [Town] = []
     public var mines: [Mine] = []
     public var dwellings: [Dwelling] = []
-    public var monsters: [Monster] = [] { didSet { dangerCache = nil } }
+    public var monsters: [Monster] = [] { didSet { dangerCache = nil; zoneCache = [:] } }
 
-    /// How far a wandering stack guards: cells within this straight-line distance (in cells)
-    /// of the stack. Measured on the original ("the path turns yellow [when] the route passes
-    /// within the guard radius of an enemy army", manual): cells at distance 5.0 were yellow,
-    /// at 5.1 green, whatever the terrain in between.
-    public static let guardRadius: Float = 5
+    /// A wandering stack's guard zone (heroes4.exe 0x4979f0): the cells a flood from the stack
+    /// reaches within the 5 x 5 square around it (two cells each way), walking over passable
+    /// ground -- obstacles and water cut it short.
+    var zoneCache: [Int: Set<Int>] = [:]
+    public func zone(of i: Int) -> Set<Int> {
+        if let z = zoneCache[i] { return z }
+        let m = monsters[i], n = map.size
+        var seen: Set<Int> = [m.x * n + m.y], out = Set<Int>(), queue = [(m.x, m.y)]
+        while !queue.isEmpty {
+            let (x, y) = queue.removeFirst()
+            for dx in -1...1 { for dy in -1...1 where dx != 0 || dy != 0 {
+                let nx = x + dx, ny = y + dy
+                guard abs(nx - m.x) <= 2, abs(ny - m.y) <= 2, nx >= 0, ny >= 0, nx < n, ny < n, !seen.contains(nx * n + ny) else { continue }
+                seen.insert(nx * n + ny)
+                guard passability.canStep(from: x, y, to: nx, ny) || (x == m.x && y == m.y && passability.isFree(nx, ny)) else { continue }
+                out.insert(nx * n + ny); queue.append((nx, ny))
+            } }
+        }
+        zoneCache[i] = out
+        return out
+    }
     var dangerCache: Set<Int>?
-    /// Cells inside some wandering stack's guard radius.
+    /// Cells inside some wandering stack's guard zone.
     public var dangerCells: Set<Int> {
         if let d = dangerCache { return d }
         var out = Set<Int>()
-        let n = map.size
-        let r = Int(GameState.guardRadius)
-        for m in monsters {
-            for dx in -r...r { for dy in -r...r where Float(dx * dx + dy * dy).squareRoot() <= GameState.guardRadius + 0.001 {
-                let x = m.x + dx, y = m.y + dy
-                if x >= 0, x < n, y >= 0, y < n { out.insert(x * n + y) }
-            } }
-        }
+        for i in monsters.indices { out.formUnion(zone(of: i)) }
         dangerCache = out
         return out
     }
@@ -378,11 +388,7 @@ public final class GameState {
     /// the cell and that notices him there.
     public func threat(to h: Hero, at x: Int, _ y: Int) -> Int? {
         guard isDangerous(x, y) else { return nil }
-        return monsters.indices.first { i in
-            let m = monsters[i]
-            let dx = Float(m.x - x), dy = Float(m.y - y)
-            return (dx * dx + dy * dy).squareRoot() <= GameState.guardRadius + 0.001 && notices(m, h, at: x, y)
-        }
+        return monsters.indices.first { i in zone(of: i).contains(x * map.size + y) && notices(monsters[i], h, at: x, y) }
     }
 
     /// The movement an army gets per day: the slowest of the hero and its creatures.
@@ -947,8 +953,69 @@ public final class GameState {
         h.path = h.plan; h.plan = []; h.progress = 0
     }
 
+    /// A wandering stack walking up to a hero it fell on: its route (inside its guard square) to
+    /// a cell next to the hero; the battle starts when it gets there.
+    public var charge: (monster: Int, hero: Hero, path: [(x: Int, y: Int)], progress: Float)?
+    func startCharge(_ i: Int, at h: Hero) {
+        let m = monsters[i], n = map.size
+        // the nearest cell next to the hero the stack can walk to within its square
+        var prev: [Int: Int] = [:], queue = [(m.x, m.y)], goal: (Int, Int)? = nil
+        prev[m.x * n + m.y] = -1
+        if max(abs(m.x - h.x), abs(m.y - h.y)) <= 1 { goal = (m.x, m.y) }
+        while goal == nil, !queue.isEmpty {
+            let (x, y) = queue.removeFirst()
+            for dx in -1...1 { for dy in -1...1 where dx != 0 || dy != 0 {
+                let nx = x + dx, ny = y + dy
+                guard prev[nx * n + ny] == nil, abs(nx - m.x) <= 2, abs(ny - m.y) <= 2, !(nx == h.x && ny == h.y),
+                      passability.canStep(from: x, y, to: nx, ny) || (x == m.x && y == m.y && passability.isFree(nx, ny)) else { continue }
+                prev[nx * n + ny] = x * n + y
+                if max(abs(nx - h.x), abs(ny - h.y)) <= 1 { goal = (nx, ny); break }
+                queue.append((nx, ny))
+            }; if goal != nil { break } }
+        }
+        var path: [(x: Int, y: Int)] = []
+        if let g = goal {
+            var k = g.0 * n + g.1
+            while k != m.x * n + m.y, let p = prev[k], p >= 0 { path.append((k / n, k % n)); k = p }
+            path.reverse()
+        }
+        charge = (i, h, path, 0)
+        if path.isEmpty { finishCharge() }
+    }
+    func finishCharge() {
+        guard let c = charge else { return }
+        charge = nil
+        guard c.monster < monsters.count, let p = scene.placed.first(where: { monster(for: $0) == c.monster }) else { return }
+        var placed = p
+        if let end = c.path.last {
+            passability.free(monsters[c.monster].x, monsters[c.monster].y)
+            monsters[c.monster].x = end.x; monsters[c.monster].y = end.y
+            passability.block(end.x, end.y)
+            placed = scene.relocate(p, toX: end.x, y: end.y)
+            dangerCache = nil; zoneCache = [:]
+        }
+        fight(hero: c.hero, monsterAt: c.monster, placed)
+    }
+    /// Where a charging stack is drawn now (fractional cell), for the renderer.
+    public var chargePosition: (monster: Int, x: Float, y: Float)? {
+        guard let c = charge, c.monster < monsters.count else { return nil }
+        let m = monsters[c.monster]
+        let pts = [(x: m.x, y: m.y)] + c.path
+        let t = min(Float(pts.count - 1), c.progress)
+        let k = min(pts.count - 2, Int(t)), f = t - Float(max(0, k))
+        guard pts.count > 1 else { return (c.monster, Float(m.x), Float(m.y)) }
+        let a = pts[max(0, k)], b = pts[max(0, k) + 1]
+        return (c.monster, Float(a.x) + Float(b.x - a.x) * f, Float(a.y) + Float(b.y - a.y) * f)
+    }
+
     /// Advance walking heroes by dt seconds.
     public func update(dt: Float) {
+        if var c = charge {   // a stack walking up to a hero: nothing else moves meanwhile
+            c.progress += dt * GameState.cellsPerSecond
+            charge = c
+            if c.progress >= Float(c.path.count) { finishCharge() }
+            return
+        }
         for h in heroes where h.isWalking {
             let next = h.path[0]
             let stepCost = passability.stepCost(from: h.x, h.y, to: next.x, next.y)
@@ -964,11 +1031,10 @@ public final class GameState {
                 h.progress = 0
                 // stepping into a wandering stack's guard radius where it notices the hero: it falls on
                 // him and the walk ends there (unless he is on his way to fight that very stack)
-                if let i = threat(to: h, at: h.x, h.y), !(h.target.map { $0.x == monsters[i].x && $0.y == monsters[i].y } ?? false),
-                   let p = scene.placed.first(where: { monster(for: $0) == i }) {
+                if let i = threat(to: h, at: h.x, h.y), !(h.target.map { $0.x == monsters[i].x && $0.y == monsters[i].y } ?? false) {
                     h.plan = h.path; h.path = []
                     log.append("\(tables?.creature(monsters[i].creature)?.plural ?? monsters[i].creature) attack \(h.name)!")
-                    fight(hero: h, monsterAt: i, p)
+                    startCharge(i, at: h)
                     continue
                 }
                 if h.path.isEmpty, let t = h.target,

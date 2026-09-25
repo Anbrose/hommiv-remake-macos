@@ -16,6 +16,8 @@ public struct MapObject {
     public var town: TownSettings? = nil
     /// A placed army's stacks (creature id, count; 0 = random), for type "army".
     public var army: [(creature: Int, count: Int)?]? = nil
+    /// The heroes of a placed army (players' starting heroes are armies placed on the map).
+    public var heroes: [MapHero] = []
     /// A random monster's size range in peasants (min, max), when the editor set one.
     public var monsterRange: (min: Int, max: Int)? = nil
 
@@ -249,18 +251,81 @@ public struct MapFile {
     /// A creature array (0x640d00): u16 version 0, 7 slots of u8 kind (0xff empty, 0 creature:
     /// u16 version, i16 id, i16 count, version 1: u16 extra count). Heroes and extras are not read.
     static func parseCreatureArray(_ rd: inout ByteReader) -> [(creature: Int, count: Int)?]? {
+        var heroes: [MapHero] = []
+        return parseCreatureArray(&rd, heroes: &heroes)
+    }
+    /// A creature array (0x640d00): u16 0, then 7 slots -- 0xff empty, 0 a creature stack
+    /// (u16 version, i16 creature, i16 count[, u16 0]), 1 a hero (parseHero).
+    static func parseCreatureArray(_ rd: inout ByteReader, heroes: inout [MapHero]) -> [(creature: Int, count: Int)?]? {
         guard rd.remaining >= 2, rd.u16() == 0 else { return nil }
         var out: [(creature: Int, count: Int)?] = []
         for _ in 0..<7 {
             guard rd.remaining >= 1 else { return nil }
             let kind = rd.u8()
             if kind == 0xff { out.append(nil); continue }
+            if kind == 1 {
+                guard let (h, end) = MapFile.parseHero(rd.data, at: rd.pos) else { return nil }
+                heroes.append(h); out.append(nil); rd.pos = end
+                continue
+            }
             guard kind == 0, rd.remaining >= 6 else { return nil }
             let v = rd.u16(), id = Int(Int16(bitPattern: rd.u16())), n = Int(Int16(bitPattern: rd.u16()))
             if v >= 1 { guard rd.remaining >= 2, rd.u16() == 0 else { return nil } }
             out.append(id >= 0 ? (id, n) : nil)
         }
         return out
+    }
+
+    /// A hero in a creature array (slot kind 1, t_hero's reader 0x72f4e0, versions 8...10):
+    /// u16 version, i16 portrait, i8 class, i8 gender (-1: random), u8 level (v5+), four stat
+    /// bytes (v10+; two u16 + two u8 before), string16 name and biography, u8 custom skills +
+    /// 36 i8 levels (v3+), the spells (u8 version: 23 or 24 bytes, v4+), 14 equipped artifact
+    /// slots (u8 flag + artifact), the backpack (u16 n + artifacts), then its events (three
+    /// standard ones and the timed, triggerable and continuous lists) and u8 (v9+).
+    /// An artifact (0x664640): u16 id, and for a scroll or a spell potion (0xa6, 0x7c) u16 spell.
+    public static func parseHero(_ d: Data, at start: Int) -> (hero: MapHero, end: Int)? {
+        var r = ByteReader(d, at: start)
+        func ok(_ n: Int) -> Bool { r.remaining >= n }
+        guard ok(2) else { return nil }
+        let v = Int(r.u16())
+        guard (8...10).contains(v), ok(5) else { return nil }
+        var h = MapHero()
+        h.portrait = Int(Int16(bitPattern: r.u16()))
+        h.heroClass = Int(Int8(bitPattern: r.u8())); h.gender = Int(Int8(bitPattern: r.u8()))
+        h.level = Int(r.u8())
+        if v >= 10 { guard ok(4) else { return nil }; h.stats = (0..<4).map { _ in Int(r.u8()) } }
+        else { guard ok(6) else { return nil }; h.stats = [Int(r.u16()), Int(r.u16()), Int(r.u8()), Int(r.u8())] }
+        guard ok(2) else { return nil }; h.name = r.string16()
+        guard ok(2) else { return nil }; h.biography = r.string16()
+        guard ok(1) else { return nil }
+        if r.u8() != 0 { guard ok(36) else { return nil }; h.skills = (0..<36).map { _ in Int(Int8(bitPattern: r.u8())) } }
+        guard ok(1) else { return nil }
+        let sv = Int(r.u8())
+        guard sv <= 2, ok(sv == 0 ? 23 : 24) else { return nil }
+        h.spells = [UInt8](r.bytes(sv == 0 ? 23 : 24))
+        func artifact() -> Int? {
+            guard ok(2) else { return nil }
+            let id = Int(r.u16())
+            guard id <= 0xf8 else { return nil }
+            if id == 0xa6 || id == 0x7c { guard ok(2) else { return nil }; _ = r.u16() }
+            return id
+        }
+        for _ in 0..<14 {
+            guard ok(1) else { return nil }
+            if r.u8() != 0 { guard let a = artifact() else { return nil }; h.equipped.append(a) }
+        }
+        guard ok(2) else { return nil }
+        let n = Int(r.u16())
+        guard n <= 200 else { return nil }
+        for _ in 0..<n { guard let a = artifact() else { return nil }; h.backpack.append(a) }
+        var sr = ScriptReader(d, at: r.pos)
+        // three standard events (0x738700), then the timed, triggerable and continuous lists
+        guard let b = try? (0..<3).map({ try sr.builtinEvent(slot: $0) }), let timed = try? sr.list({ try $0.timedEvent() }),
+              let trig = try? sr.list({ try $0.triggerableEvent() }), let cont = try? sr.list({ try $0.continuousEvent() }) else { return nil }
+        h.events = b + timed + trig + cont
+        var end = sr.position
+        if v >= 9 { end += 1 }
+        return (h, end)
     }
 
     /// Armies placed in the editor (the object loop 0x4ced20 with flag 1: t_army, no model
@@ -276,11 +341,16 @@ public struct MapFile {
             let x = Int(Int32(bitPattern: r.peekU32(at: p))), y = Int(Int32(bitPattern: r.peekU32(at: p + 4))), lv = Int(Int32(bitPattern: r.peekU32(at: p + 8)))
             guard (0..<size).contains(x), (0..<size).contains(y), lv == 0 || lv == 1 else { continue }
             let v = Int(r.peekU16(at: p + 13))
-            guard (3...9).contains(v), r.byte(at: p + 15) == 6 else { continue }
+            let owner = Int(r.byte(at: p + 15))
+            guard (3...9).contains(v), owner <= 6 else { continue }
             var rd = ByteReader(d, at: p + 16)
-            guard let stacks = MapFile.parseCreatureArray(&rd), stacks.contains(where: { $0 != nil }) else { continue }
-            var o = MapObject(name: "army", type: "army", subtype: "", terrain: "", x: x, y: y, level: lv)
-            o.army = stacks
+            var heroes: [MapHero] = []
+            guard let stacks = MapFile.parseCreatureArray(&rd, heroes: &heroes), stacks.contains(where: { $0 != nil }) || !heroes.isEmpty else { continue }
+            // a player's army carries its heroes; a neutral one is a stack to fight
+            guard owner == 6 || !heroes.isEmpty else { continue }
+            var o = MapObject(name: "army", type: owner == 6 ? "army" : "hero_army", subtype: "", terrain: "", x: x, y: y, level: lv)
+            o.army = stacks; o.heroes = heroes
+            o.owner = owner == 6 ? nil : owner
             out.append(o)
         }
         return out
@@ -329,4 +399,16 @@ public struct MapFile {
         }
         return objs
     }
+}
+
+/// A hero as a map sets it up (heroes4.exe t_hero, 0x72f4e0); -1 fields are "random".
+public struct MapHero {
+    public var portrait = -1, heroClass = -1, gender = -1, level = 1
+    public var stats: [Int] = []
+    public var name = "", biography = ""
+    /// 36 skill levels (-1 none, 0 basic ... 4 grandmaster), or nil: the class's own at random.
+    public var skills: [Int]? = nil
+    public var spells: [UInt8] = []
+    public var equipped: [Int] = [], backpack: [Int] = []
+    public var events: [MapEvent] = []
 }

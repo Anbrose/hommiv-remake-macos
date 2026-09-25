@@ -223,6 +223,24 @@ public final class MapScene {
         placed = out.sorted { $0.depth < $1.depth }
     }
 
+    /// Move an object to another cell (a wandering stack that walked up to a hero); returns it as placed there.
+    @discardableResult
+    public func relocate(_ p: Placed, toX x: Int, y: Int) -> Placed {
+        let (sx, sy0) = screen(x: x, y: y)
+        let sy = sy0 - 16
+        let depth = (x + y + p.sprite.footprint.w + p.sprite.footprint.h - 2) * 1000 + (y - x) + 500
+        let q = Placed(name: p.name, sprite: p.sprite, image: p.image, shadow: p.shadow,
+                       x: sx + Int(p.sprite.origin.x) + p.image.box.left, y: sy + Int(p.sprite.origin.y) + p.image.box.top,
+                       anchorX: sx, anchorY: sy, cellX: x, cellY: y, category: p.category, depth: depth, type: p.type, subtype: p.subtype)
+        placed.removeAll { $0.cellX == p.cellX && $0.cellY == p.cellY && $0.name == p.name && $0.depth == p.depth }
+        let i = placed.firstIndex { $0.depth > depth } ?? placed.count
+        placed.insert(q, at: i)
+        moved.append(MovedObject(fromX: p.cellX, fromY: p.cellY, name: p.name, toX: x, toY: y))
+        return q
+    }
+    public struct MovedObject: Codable { public let fromX: Int, fromY: Int, name: String, toX: Int, toY: Int }
+    public private(set) var moved: [MovedObject] = []
+
     /// Take an object off the map (a pickup that was collected).
     public func remove(_ p: Placed) {
         placed.removeAll { $0.cellX == p.cellX && $0.cellY == p.cellY && $0.name == p.name && $0.depth == p.depth }

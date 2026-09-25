@@ -155,6 +155,26 @@ if let town = scene.placed.first(where: { p in ownedByFirst.map { p.category == 
         lap("\(hero.name) the \(cls) at \(cell) by \(game.towns.first { $0.owned }?.name ?? town.name)")
     }
 }
+if let f = ProcessInfo.processInfo.environment["H4HEROAT"] {   // debugging aid: parse a hero record at file:offset of a raw map dump
+    let parts = f.split(separator: ":")
+    if parts.count == 2, let d = try? Data(contentsOf: URL(fileURLWithPath: String(parts[0]))), let off = Int(parts[1]) {
+        if let (h, end) = MapFile.parseHero(d, at: off) { print("hero lv\(h.level) end \(end) events \(h.events.count)") } else { print("hero parse failed") }
+        if let ev = ProcessInfo.processInfo.environment["H4EVAT"].flatMap({ Int($0) }) {
+            var sr = ScriptReader(d, at: ev)
+            do { _ = try sr.builtinEvent(slot: 0); print("builtin ok at \(sr.position)")
+                 let t = try sr.list({ try $0.timedEvent() }); print("timed \(t.count) at \(sr.position)")
+                 let g = try sr.list({ try $0.triggerableEvent() }); print("trig \(g.count) at \(sr.position)")
+                 let c = try sr.list({ try $0.continuousEvent() }); print("cont \(c.count) at \(sr.position)") }
+            catch { print("event error \(error) at \(sr.position)") }
+        }
+    }
+    exit(0)
+}
+if ProcessInfo.processInfo.environment["H4DEBUG"] != nil {
+    for o in game.map.objects where o.type == "hero_army" {
+        print("hero army of player \(o.owner ?? -1) at (\(o.x),\(o.y)): stacks \(o.army?.compactMap { $0 }.map { "\($0.count)x\($0.creature)" } ?? []) heroes \(o.heroes.map { "lv\($0.level) class \($0.heroClass) portrait \($0.portrait) '\($0.name)' skills \($0.skills.map { "\($0)" } ?? "random") equipped \($0.equipped) backpack \($0.backpack)" })")
+    }
+}
 // the map's scripts: loaded, then day 1's events (the opening story, ...)
 game.loadScripts()
 // a saved game: its state over the freshly started scenario (day events already ran then)
@@ -232,7 +252,7 @@ if let out = snapshot {
             game.click(hero: hero, x: target.0, y: target.1)
         }
         var frames = 0
-        while frames < 600, game.heroes.first?.isWalking == true || frames < 90 { game.update(dt: 1.0 / 60); frames += 1 }   // walk until arrival (at least 1.5 s)
+        while frames < 600, game.heroes.first?.isWalking == true || game.charge != nil || frames < 90 { game.update(dt: 1.0 / 60); frames += 1 }   // walk until arrival (at least 1.5 s)
         snapTime = Double(frames) / 60
         for line in game.log { print(line) }
         game.log.removeAll()

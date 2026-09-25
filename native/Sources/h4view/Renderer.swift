@@ -967,7 +967,12 @@ final class Renderer: NSObject, MTKViewDelegate {
             while let first = pending.first, first.depth <= Float(p.depth) { out += first.quads; pending.removeFirst() }
             if Float(p.anchorX) < minX || Float(p.anchorX) > maxX || Float(p.anchorY) < minY || Float(p.anchorY) > maxY { continue }
             let (f, sh) = frame(of: p, at: t)
-            let ox = p.anchorX + Int(p.sprite.origin.x), oy = p.anchorY + Int(p.sprite.origin.y)
+            var ox = p.anchorX + Int(p.sprite.origin.x), oy = p.anchorY + Int(p.sprite.origin.y)
+            // a wandering stack walking up to a hero: drawn where it has got to
+            if let g = game, let cp = g.chargePosition, g.monster(for: p) == cp.monster {
+                let (sx, sy) = screen(cp.x, cp.y)
+                ox = Int(sx) + Int(p.sprite.origin.x); oy = Int(sy) - 16 + Int(p.sprite.origin.y)
+            }
             if let base = p.sprite.baseFrame, f.name != base.name {   // animated towns: frames are deltas over base_frame
                 if let s = sh { out.append(Quad(texture: texture(for: s, of: p.name), x: ox + s.box.left, y: oy + s.box.top, w: s.bitmap.width, h: s.bitmap.height)) }
                 out.append(Quad(texture: texture(for: base, of: p.name), x: ox + base.box.left, y: oy + base.box.top, w: base.bitmap.width, h: base.bitmap.height))

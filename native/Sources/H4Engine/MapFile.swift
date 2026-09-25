@@ -14,6 +14,8 @@ public struct MapObject {
     public var customName: String? = nil
     /// A town's editor settings (garrison, built and allowed buildings).
     public var town: TownSettings? = nil
+    /// A placed army's stacks (creature id, count; 0 = random), for type "army".
+    public var army: [(creature: Int, count: Int)?]? = nil
     /// A random monster's size range in peasants (min, max), when the editor set one.
     public var monsterRange: (min: Int, max: Int)? = nil
 
@@ -150,7 +152,7 @@ public struct MapFile {
         guard let (cellsFlat, terrainPos) = MapFile.findTerrain(d, from: headerEnd, count: perLevel * levels) else {
             throw H4Error.corrupt("map: terrain not found")
         }
-        objects = MapFile.parseObjects(d, end: terrainPos, names: objectNames)
+        objects = MapFile.parseObjects(d, end: terrainPos, names: objectNames) + MapFile.parseArmies(d, end: terrainPos, size: size)
         var grids: [[Cell?]] = []
         for lv in 0..<levels {
             var g = [Cell?](repeating: nil, count: size * size)
@@ -212,6 +214,29 @@ public struct MapFile {
             let v = rd.u16(), id = Int(Int16(bitPattern: rd.u16())), n = Int(Int16(bitPattern: rd.u16()))
             if v >= 1 { guard rd.remaining >= 2, rd.u16() == 0 else { return nil } }
             out.append(id >= 0 ? (id, n) : nil)
+        }
+        return out
+    }
+
+    /// Armies placed in the editor (the object loop 0x4ced20 with flag 1: t_army, no model
+    /// name): i32 x, i32 y, i32 level, u8 1, then t_army's record (0x523a30): u16 version,
+    /// u8 owner (6 = neutral), the creature array. Found by that shape; neutral ones only.
+    static func parseArmies(_ d: Data, end: Int, size: Int) -> [MapObject] {
+        let r = ByteReader(d)
+        var out: [MapObject] = []
+        var p = 0
+        while p + 30 < end {
+            defer { p += 1 }
+            guard r.byte(at: p + 12) == 1 else { continue }
+            let x = Int(Int32(bitPattern: r.peekU32(at: p))), y = Int(Int32(bitPattern: r.peekU32(at: p + 4))), lv = Int(Int32(bitPattern: r.peekU32(at: p + 8)))
+            guard (0..<size).contains(x), (0..<size).contains(y), lv == 0 || lv == 1 else { continue }
+            let v = Int(r.peekU16(at: p + 13))
+            guard (3...9).contains(v), r.byte(at: p + 15) == 6 else { continue }
+            var rd = ByteReader(d, at: p + 16)
+            guard let stacks = MapFile.parseCreatureArray(&rd), stacks.contains(where: { $0 != nil }) else { continue }
+            var o = MapObject(name: "army", type: "army", subtype: "", terrain: "", x: x, y: y, level: lv)
+            o.army = stacks
+            out.append(o)
         }
         return out
     }

@@ -122,7 +122,7 @@ final class CombatScreen {
         // morale from each army's alignments (heroes4.exe 0x640310)
         let heroArmy: [(alignment: String, undead: Bool)] = [(h.alignment, false)] + h.army.compactMap { st in t.creature(st.creature).map { ($0.alignment, Combatant(creature: $0, count: 1).has("undead")) } }
         var monsterArmy: [(alignment: String, undead: Bool)] = [(c.alignment, Combatant(creature: c, count: 1).has("undead"))]
-        if let e = g.monsters[i].escort, let ed = t.creature(e.creature) { monsterArmy.append((ed.alignment, Combatant(creature: ed, count: 1).has("undead"))) }
+        for e in g.monsters[i].extra { if let ed = t.creature(e.creature) { monsterArmy.append((ed.alignment, Combatant(creature: ed, count: 1).has("undead"))) } }
         func fighter(_ cd: CreatureDef, _ n: Int, army: [(alignment: String, undead: Bool)]) -> Battle.Fighter {
             var st = Combatant(creature: cd, count: n)
             st.morale = Battle.armyMorale(own: cd.alignment, army: army)
@@ -138,7 +138,7 @@ final class CombatScreen {
         // a wandering stack has no hero: it splits against the attacker's stacks (0x62da90)
         func backRow(_ d: CreatureDef) -> Bool { d.shots > 0 || Combatant(creature: d, count: 1).has("ranged") }
         var stacks = [Battle.ArmySlot(creature: c.keyword, count: g.monsters[i].count, backRow: backRow(c))]
-        if let e = g.monsters[i].escort, let ed = t.creature(e.creature) { stacks.append(Battle.ArmySlot(creature: ed.keyword, count: e.count, backRow: backRow(ed))) }
+        for e in g.monsters[i].extra { if let ed = t.creature(e.creature) { stacks.append(Battle.ArmySlot(creature: ed.keyword, count: e.count, backRow: backRow(ed))) } }
         let split = Battle.splitArmy(stacks, enemyStacks: attackers.count)
         var defenders: [Battle.Fighter] = []
         for (k, st) in split.enumerated() {

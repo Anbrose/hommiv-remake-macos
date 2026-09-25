@@ -99,6 +99,12 @@ public struct RandomResolver {
             let pool = RandomResolver.creaturePool.flatMap { lv < $0.count && !$0[lv].isEmpty ? $0[lv] : nil } ?? RandomResolver.creatures[lv]
             let c = RandomResolver.pick(pool, o)
             return creatureEntry(c, facing: RandomResolver.pick(RandomResolver.directions, o, 1)).map { [$0] } ?? []
+        case "army":
+            // a placed army shows its highest-level stack
+            let kws = (o.army ?? []).compactMap { $0.flatMap { $0.creature < RuleTables.creatureIds.count ? RuleTables.creatureIds[$0.creature] : nil } }
+            func level(_ k: String) -> Int { (RandomResolver.creaturePool?.firstIndex { $0.contains(k) } ?? -1) + 1 }
+            guard let c = kws.max(by: { level($0) < level($1) }) else { return [] }
+            return creatureEntry(c, facing: RandomResolver.pick(RandomResolver.directions, o, 1)).map { [$0] } ?? []
         case "random_material_pile":
             name = "adv_object.Resources.\(RandomResolver.pick(RandomResolver.resources, o)).h4d"
         case "random_artifact":

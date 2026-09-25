@@ -262,9 +262,10 @@ public final class GameState {
     public struct Monster {
         public let x: Int, y: Int, name: String, creature: String; public var count: Int
         /// The lower-level stack spending what is left of the monster's value (heroes4.exe 0x7f32b0).
-        public var escort: (creature: String, count: Int)? = nil
-        public init(x: Int, y: Int, name: String, creature: String, count: Int, escort: (creature: String, count: Int)? = nil) {
-            self.x = x; self.y = y; self.name = name; self.creature = creature; self.count = count; self.escort = escort
+        /// The army's other stacks: a random monster's escort, or a placed army's further stacks.
+        public var extra: [(creature: String, count: Int)] = []
+        public init(x: Int, y: Int, name: String, creature: String, count: Int, extra: [(creature: String, count: Int)] = []) {
+            self.x = x; self.y = y; self.name = name; self.creature = creature; self.count = count; self.extra = extra
         }
     }
 
@@ -641,10 +642,34 @@ public final class GameState {
                     let record = map.objects.first { $0.type == "random_monster" && $0.x == p.cellX && $0.y == p.cellY && $0.level == level }
                     var rng = GameRandom(seed: p.cellX * 7919 + p.cellY * 104729 + level * 1299709)
                     let army = monsterArmy(c, level: RandomResolver.level(p.subtype), range: record?.monsterRange, rng: &rng)
-                    monsters.append(Monster(x: p.cellX, y: p.cellY, name: p.name, creature: c.keyword, count: army.count, escort: army.escort))
+                    monsters.append(Monster(x: p.cellX, y: p.cellY, name: p.name, creature: c.keyword, count: army.count, extra: army.escort.map { [$0] } ?? []))
                     let count = army.count
                     passability.block(p.cellX, p.cellY)
                     if ProcessInfo.processInfo.environment["H4DEBUG"] != nil { print("monster: \(count) \(c.plural) at (\(p.cellX),\(p.cellY))") }
+                }
+            } else if p.type == "army", let t = tables,
+                      let record = map.objects.first(where: { $0.type == "army" && $0.x == p.cellX && $0.y == p.cellY && $0.level == level }) {
+                // a placed army (t_army): its stacks; a count of 0 is the game's random size for the
+                // creature's level (0x63e1d7: 0.8-1.2 x the level budget / experience, at least 1)
+                var rng = GameRandom(seed: p.cellX * 6151 + p.cellY * 92821 + level * 3079)
+                var stacks: [(creature: String, count: Int)] = []
+                for case let (id, n)? in record.army ?? [] where id < RuleTables.creatureIds.count {
+                    guard let c = t.creature(RuleTables.creatureIds[id]) else { continue }
+                    var count = n
+                    if count <= 0 {
+                        let base = Double(GameState.monsterBudget[min(4, max(1, c.level))])
+                        let lo = Int(base * 0.8), hi = Int(base * 1.2)
+                        count = max(1, (rng.next() % (hi - lo + 1) + lo) / max(1, c.experience))
+                    }
+                    stacks.append((c.keyword, count))
+                }
+                // the one shown on the map leads (the highest level, as the resolver drew it)
+                let shown = stacks.max { (t.creature($0.creature)?.level ?? 0) < (t.creature($1.creature)?.level ?? 0) }
+                if let lead = shown, let k = stacks.firstIndex(where: { $0.creature == lead.creature }) {
+                    var rest = stacks; rest.remove(at: k)
+                    monsters.append(Monster(x: p.cellX, y: p.cellY, name: p.name, creature: lead.creature, count: lead.count, extra: rest))
+                    passability.block(p.cellX, p.cellY)
+                    if ProcessInfo.processInfo.environment["H4DEBUG"] != nil { print("army: \(stacks) at (\(p.cellX),\(p.cellY))") }
                 }
             } else if p.category == "creature generators", let t = tables {
                 var short = p.name.replacingOccurrences(of: "adv_object.creature generators.", with: "").replacingOccurrences(of: ".h4d", with: "").lowercased()

@@ -903,6 +903,20 @@ final class Renderer: NSObject, MTKViewDelegate {
         return out
     }
 
+    /// A cell's draw depth, raised past every large object whose footprint it stands in front of.
+    /// An object sorts by its footprint's bottom row, but a cell beside one of its front walls
+    /// (beyond it in x or in y, e.g. a town's gate) is nearer the viewer than the whole object.
+    func inFront(_ x: Int, _ y: Int, _ depth: Float) -> Float {
+        var d = depth
+        for p in scene.placed where p.sprite.footprint.w * p.sprite.footprint.h > 1 && Float(p.depth) >= d {
+            let x0 = p.cellX, y0 = p.cellY, x1 = p.cellX + p.sprite.footprint.w, y1 = p.cellY + p.sprite.footprint.h
+            guard x >= x0 - 1, y >= y0 - 1, x <= x1 + 1, y <= y1 + 1 else { continue }
+            let beyondX = x >= x1 && y >= y0, beyondY = y >= y1 && x >= x0
+            if beyondX || beyondY { d = Float(p.depth) + 1 }
+        }
+        return d
+    }
+
     func quads(at t: Double) -> [Quad] {
         var out = terrain
         let minX = pan.x - 512, minY = pan.y - 512, maxX = pan.x + viewSize.x / zoom + 512, maxY = pan.y + viewSize.y / zoom + 512
@@ -919,12 +933,12 @@ final class Renderer: NSObject, MTKViewDelegate {
                     var q: [Quad] = []
                     if let sh = s.shadow(for: f) { q.append(Quad(texture: texture(for: sh, of: a.name), x: ox + sh.box.left, y: oy + sh.box.top, w: sh.bitmap.width, h: sh.bitmap.height)) }
                     q.append(Quad(texture: texture(for: f, of: a.name), x: ox + f.box.left, y: oy + f.box.top, w: f.bitmap.width, h: f.bitmap.height))
-                    pending.append((Float((a.x + a.y) * 1000 + (a.y - a.x) + 499) + (raise > 0 ? 2500 : 0), q))
+                    pending.append((inFront(a.x, a.y, Float((a.x + a.y) * 1000 + (a.y - a.x) + 499) + (raise > 0 ? 2500 : 0)), q))
                 }
                 let (px, py) = h.position
                 // on a bridge the hero is drawn after the bridge pieces around it
                 let raised: Float = h.elevation(in: g.passability) > 0 ? 2500 : 0
-                pending.append(((px + py) * 1000 + (py - px) + 500 + raised, heroQuads(h, at: t)))
+                pending.append((inFront(Int(px.rounded()), Int(py.rounded()), (px + py) * 1000 + (py - px) + 500 + raised), heroQuads(h, at: t)))
             }
             pending.sort { $0.depth < $1.depth }
         }

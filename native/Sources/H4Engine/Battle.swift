@@ -322,7 +322,7 @@ public final class Battle {
     }
 
     static let steps: [(dx: Int, dy: Int, cost: Float)] = [(1, 0, 1), (-1, 0, 1), (0, 1, 1), (0, -1, 1), (1, 1, 1.5), (-1, -1, 1.5), (1, -1, 1.5), (-1, 1, 1.5)]
-    static func key(_ x: Int, _ y: Int) -> Int { x * Battlefield.size + y }
+    public static func key(_ x: Int, _ y: Int) -> Int { x * Battlefield.size + y }
 
     /// Footprint positions the unit can reach, with the cost, within `budget` cells (its Move by default).
     public func reachable(_ u: Unit, budget: Float? = nil) -> [Int: Float] {
@@ -361,6 +361,7 @@ public final class Battle {
         var fits = [Bool](repeating: false, count: n * n)
         if !flies { for x in 0..<n { for y in 0..<n { fits[x * n + y] = field.fits(x, y, size: u.size) } } }
         var dist = [Float](repeating: .infinity, count: n * n)
+        var parent = [Int](repeating: -1, count: n * n)
         dist[u.x * n + u.y] = 0
         // a binary heap of (cost, cell)
         var heap: [(Float, Int)] = [(0, u.x * n + u.y)]
@@ -382,31 +383,52 @@ public final class Battle {
             }
             return top
         }
+        // zones of control (heroes4.exe 0x572370, used by the path finder 0x60d610): standing next
+        // to an enemy, every step costs a quarter of the unit's movement more, except straight
+        // towards or away from that enemy; the extra comes before a diagonal's x 1.5. A flyer is
+        // held only by flying enemies; Ignore Zones of Control is never held.
+        let zoc = u.stats.has("ignore_zones_of_control") ? [] : units.filter { e in
+            e.alive && e.id != u.id && side(of: e) != side(of: u) && (!flies || e.stats.has("flying"))
+        }
+        let zocCost = Float(u.move) / (u.stats.aged ? 2 : 1) / 4
         var out: [Int: Float] = [:]
         while !heap.isEmpty {
             let (c, k) = pop()
             if c > dist[k] { continue }
             out[k] = c
             let x = k / n, y = k % n
+            // the axes along which this cell may be left freely (nil: not held at all)
+            var free: [(Int, Int)]? = nil
+            for e in zoc where Battle.touches(x, y, u.size, e) {
+                let dx = e.centre.0 - (Float(x) + Float(u.size) / 2), dy = e.centre.1 - (Float(y) + Float(u.size) / 2)
+                let a = (atan2(dy, dx) / (Float.pi / 4)).rounded()
+                let d = (Int(a) % 8 + 8) % 8
+                let dirs = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)]
+                free = (free ?? []) + [dirs[d], dirs[(d + 4) % 8]]
+            }
             for s in Battle.steps {
                 let nx = x + s.dx, ny = y + s.dy
                 guard nx >= 0, ny >= 0, nx < n, ny < n else { continue }
-                let nc = c + s.cost
+                var nc = c + s.cost
+                if let f = free, !f.contains(where: { $0 == (s.dx, s.dy) }) { nc += zocCost * s.cost }
                 let nk = nx * n + ny
                 guard nc <= limit + 0.001, !blocked[nk] else { continue }
                 if s.cost > 1, !flies {
                     let a = (x + s.dx) * n + y, b = x * n + y + s.dy
                     guard (x + s.dx < n && fits[a]) || (y + s.dy < n && fits[b]) else { continue }
                 }
-                if nc < dist[nk] { dist[nk] = nc; push((nc, nk)) }
+                if nc < dist[nk] { dist[nk] = nc; parent[nk] = k; push((nc, nk)) }
             }
         }
-        if exploreCache.count > 64 { exploreCache.removeAll() }
+        if exploreCache.count > 64 { exploreCache.removeAll(); parentCache.removeAll() }
         exploreCache[cacheKey] = out
+        parentCache[cacheKey] = parent
         return out
     }
     /// Searches keep until anything happens on the field.
     var exploreCache: [String: [Int: Float]] = [:]
+    /// Each searched cell's predecessor on its cheapest path (-1: none), per search.
+    var parentCache: [String: [Int]] = [:]
     var version = 0
 
     /// Cells of movement needed to reach a position ignoring this turn's limit (for the turns shown by the walk cursor).
@@ -429,20 +451,16 @@ public final class Battle {
             }
             return line
         }
-        let reach = explore(u)
-        guard reachable(u)[Battle.key(gx, gy)] != nil else { return nil }
+        _ = explore(u)
+        guard reachable(u)[Battle.key(gx, gy)] != nil,
+              let parent = parentCache["\(u.id)|\(u.x)|\(u.y)|\(moveBudget(u))|\(version)"] else { return nil }
         var out: [(Int, Int)] = []
-        var x = gx, y = gy
-        while !(x == u.x && y == u.y) {
-            out.append((x, y))
-            let here = reach[Battle.key(x, y)]!
-            var next: (Int, Int)? = nil
-            for s in Battle.steps {
-                let px = x - s.dx, py = y - s.dy
-                if let c = reach[Battle.key(px, py)], abs(here - c - s.cost) < 0.01 { next = (px, py); break }
-            }
-            guard let n = next else { return nil }
-            (x, y) = n
+        var k = Battle.key(gx, gy)
+        let start = Battle.key(u.x, u.y)
+        while k != start {
+            out.append((k / Battlefield.size, k % Battlefield.size))
+            k = parent[k]
+            if k < 0 || out.count > Battlefield.size * Battlefield.size { return nil }
         }
         return out.reversed()
     }

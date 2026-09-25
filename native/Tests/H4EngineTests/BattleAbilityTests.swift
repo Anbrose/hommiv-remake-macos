@@ -84,4 +84,21 @@ final class BattleAbilityTests: XCTestCase {
         XCTAssertEqual(Array(kinds.prefix(4)), ["move", "melee", "die", "move"])
         XCTAssertTrue(h.x == start.0 && h.y == start.1)
     }
+
+    /// Zones of control (0x572370): next to an enemy a sideways step costs a quarter of the
+    /// movement more; straight away from it is free.
+    func testZoneOfControl() {
+        let field = Battlefield(terrain: 1, variant: 0, kinds: [], frequency: [:], adjacency: [:], seed: 1)
+        let a = Battle.Fighter(stats: stack(creature("squire"), 5), keyword: "squire", actor: "squire", size: 2, move: 20, shots: 0)
+        let d = Battle.Fighter(stats: stack(creature("peasant"), 5), keyword: "peasant", actor: "peasant", size: 2, move: 20, shots: 0)
+        let b = Battle(field: field, attackers: [a], defenders: [d], seed: 1)
+        let u = b.units.first { $0.side == 0 }!, e = b.units.first { $0.side == 1 }!
+        u.x = 50; u.y = 50; e.x = 52; e.y = 50       // the enemy right next to it along +x
+        _ = b.takeEvents()
+        let reach = b.reachable(u)
+        XCTAssertEqual(reach[Battle.key(49, 50)], 1)            // straight away: 1 cell
+        // sideways directly would cost 1 + move / 4 = 6; stepping back first (free) and then
+        // diagonally out of the zone costs 1 + 1.5
+        XCTAssertEqual(reach[Battle.key(50, 51)], 2.5)
+    }
 }

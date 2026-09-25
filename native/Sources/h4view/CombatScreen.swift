@@ -134,7 +134,11 @@ final class CombatScreen {
         heroStats.morale = Battle.armyMorale(own: h.alignment, army: heroArmy)
         var attackers = [Battle.Fighter(stats: heroStats, keyword: h.keyword, actor: classActor, size: actor(classActor)?.size ?? 4, move: 24, shots: 0, slot: 0)]
         for (k, s) in h.army.enumerated() { if let cd = t.creature(s.creature) { var f = fighter(cd, s.count, army: heroArmy); f.slot = k + 1; attackers.append(f) } }
-        let defenders = [fighter(c, g.monsters[i].count, army: monsterArmy)]
+        // a wandering stack has no hero: it splits against the attacker's stacks (0x62da90)
+        let backRow = c.shots > 0 || Combatant(creature: c, count: 1).has("ranged")
+        let split = Battle.splitArmy([Battle.ArmySlot(creature: c.keyword, count: g.monsters[i].count, backRow: backRow)], enemyStacks: attackers.count)
+        var defenders: [Battle.Fighter] = []
+        for (k, st) in split.enumerated() { if let st = st { var f = fighter(c, st.count, army: monsterArmy); f.slot = k; defenders.append(f) } }
         battle = Battle(field: f, attackers: attackers, defenders: defenders, seed: seed)
         queue = []; playing = nil; unitPos = [:]; unitState = [:]; dead = []; result = nil; showResults = false; floaters = []; effects = []
         pump()

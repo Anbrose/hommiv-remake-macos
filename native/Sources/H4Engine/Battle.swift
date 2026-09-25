@@ -63,6 +63,60 @@ public final class Battle {
     public var current: Unit? { order.first.flatMap { id in units.first { $0.id == id } } }
     public func unit(_ id: Int) -> Unit { units.first { $0.id == id }! }
 
+    /// A stack in an army slot, as the split leaves it.
+    public struct ArmySlot {
+        public var creature: String; public var count: Int; public var backRow: Bool
+        public init(creature: String, count: Int, backRow: Bool) { self.creature = creature; self.count = count; self.backRow = backRow }
+    }
+    /// Preferred slots (heroes4.exe 0x9842a8): melee stacks take the front line (0, 2, 4, 6 face
+    /// the enemy in every formation), ranged stacks and heroes the back line.
+    public static let slotOrder = [[2, 4, 0, 6, 3, 1, 5], [3, 1, 5, 2, 4, 0, 6]]
+
+    /// An army without a hero before battle (heroes4.exe 0x62da90): its stacks move to their
+    /// preferred slots, then while the enemy has more stacks each stack of more than one creature
+    /// splits into up to 4 (melee) or 3 (back row) even parts, no more than the enemy's excess + 1,
+    /// the free preferred slots allow, or that kind's share; the original keeps the remainder.
+    public static func splitArmy(_ stacks: [ArmySlot], enemyStacks: Int) -> [ArmySlot?] {
+        var slots = [ArmySlot?](repeating: nil, count: 7)
+        var kinds = [0, 0]
+        for st in stacks where st.count > 0 {
+            let c = st.backRow ? 1 : 0
+            kinds[c] += 1
+            if let slot = slotOrder[c].first(where: { slots[$0] == nil }) { slots[slot] = st }
+        }
+        let own = slots.compactMap { $0 }.count
+        var excess = enemyStacks - own
+        guard excess > 0, own > 0 else { return slots }
+        var done = [Bool](repeating: false, count: 7)
+        for s in 0..<7 where !done[s] {
+            guard let st = slots[s] else { continue }
+            let c = st.backRow ? 1 : 0
+            if st.count > 1 {
+                let most = min(c == 1 ? 3 : 4, excess + 1)
+                var pieces = 1
+                for k in 0..<most where slotOrder[c][k] != s && slots[slotOrder[c][k]] == nil { pieces += 1 }
+                pieces = min(pieces, st.count, most / max(1, kinds[c]))
+                if pieces > 1 {
+                    excess -= pieces - 1
+                    var left = pieces, k = 0
+                    for _ in 1..<pieces {
+                        while k < 7, slotOrder[c][k] == s || slots[slotOrder[c][k]] != nil { k += 1 }
+                        guard k < 7 else { break }
+                        let target = slotOrder[c][k]
+                        let n = slots[s]!.count / left
+                        slots[target] = ArmySlot(creature: st.creature, count: n, backRow: st.backRow)
+                        slots[s]!.count -= n
+                        done[target] = true
+                        left -= 1
+                    }
+                }
+            }
+            done[s] = true
+            kinds[c] -= 1
+        }
+        return slots
+    }
+
     /// Army formations (t_creature_array +0x2c, set by the army dialog's buttons).
     public enum Formation: Int { case loose = 0, tight = 1, square = 2 }
 

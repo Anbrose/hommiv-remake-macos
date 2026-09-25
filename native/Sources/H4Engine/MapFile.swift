@@ -105,6 +105,14 @@ public struct MapFile {
     public let playerSpecs: [PlayerSpec]
     public let name: String
     public let description: String
+    /// Team of each player colour (players on one team are allies).
+    public let teams: [Int: Int]
+    /// The editor's win/loss texts (nil = the standard ones) and whether the standard victory
+    /// condition ("be the only player to own towns") is on.
+    public let victoryText: String?, lossText: String?
+    public let standardVictory: Bool
+    /// The colour the human plays: the first player slot a human may take.
+    public var humanColour: Int { playerSpecs.first { $0.canBeHuman }?.colour ?? playerSpecs.first?.colour ?? 0 }
     /// Map difficulty (0 easy ... 4 impossible), the byte after the name.
     public let difficulty: Int
     public let objects: [MapObject]
@@ -145,6 +153,19 @@ public struct MapFile {
         name = r.string16()
         difficulty = Int(r.u8())
         description = r.string16()
+        // teams, win/loss texts (heroes4.exe 0x77a74c): u16 version, u8 teams, per team u8 colour
+        // mask; u8 + string16 custom victory text; u8 + string16 custom loss text; from version
+        // 25 u8 "standard victory condition enabled"
+        var tm: [Int: Int] = [:], vt: String? = nil, lt: String? = nil, std = true
+        if r.remaining > 8 {
+            _ = r.u16()
+            let n = Int(r.u8())
+            for team in 0..<min(n, 6) { let mask = r.u8(); for p in 0..<6 where mask & (1 << p) != 0 { tm[p] = team } }
+            if r.u8() != 0 { vt = r.string16() }
+            if r.u8() != 0 { lt = r.string16() }
+            if version >= 25 { std = r.u8() != 0 }
+        }
+        teams = tm; victoryText = vt; lossText = lt; standardVictory = std
         let headerEnd = r.pos
 
         let pts = MapFile.diamond(size)

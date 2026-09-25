@@ -250,6 +250,8 @@ public final class GameState {
         public var name: String
         public let alignment: String
         public var owned: Bool
+        /// The owning player (0 = the human), nil when neutral.
+        public var owner: Int? = nil
         public var buildings: Set<String> = []          // building keywords, as in the buildings table
         /// Buildings the map allows (the editor's town settings); nil = all.
         public var allowed: Set<String>? = nil
@@ -613,6 +615,8 @@ public final class GameState {
                     if last == "castle" { town.buildings.insert("castle") }
                 }
                 town.buildings.formUnion(["village hall", "prison"])   // always (0x89a97b)
+                town.owner = settings?.owner
+                town.owned = settings?.owner == map.humanColour
                 town.allowed = settings?.allowed.map { RuleTables.buildings($0, alignment: faction) }
                 if let t = tables {
                     for b in t.buildings(for: faction) where town.buildings.contains(b.keyword) {
@@ -686,7 +690,7 @@ public final class GameState {
         if isPickup(p) { take(hero: hero, p); return }
         if let i = monster(for: p) { fight(hero: hero, monsterAt: i, p); return }
         if let i = town(for: p) {
-            if !towns[i].owned { towns[i].owned = true; log.append("\(towns[i].name) is yours") }
+            if !towns[i].owned { towns[i].owned = true; towns[i].owner = map.humanColour; log.append("\(towns[i].name) is yours"); checkScenario(newDay: false) }
             enteredTown = i
             hero.target = nil
             return
@@ -873,7 +877,46 @@ public final class GameState {
         }
     }
 
+    /// The scenario's outcome: true won, false lost, nil still playing.
+    public var outcome: Bool? = nil
+    /// Days left for the standard victory: when one side owns every owned town it must hold
+    /// them 3 days (heroes4.exe 0x4c57c6); the same count is the losers' time to take one back.
+    public var victoryDays: Int? = nil
+
+    func text(_ key: String, _ fallback: String) -> String { tables?.strings[key] ?? fallback }
+
+    /// The standard conditions: lose with no towns and no armies ("Lose all towns and
+    /// armies."); win by being the only side to own towns for 3 days.
+    public func checkScenario(newDay: Bool) {
+        guard outcome == nil else { return }
+        let me = map.humanColour, myTeam = map.teams[me]
+        func ally(_ p: Int) -> Bool { p == me || (myTeam != nil && map.teams[p] == myTeam) }
+        let held = towns.compactMap { $0.owner }
+        if heroes.isEmpty && !held.contains(where: ally) {
+            outcome = false
+            log.append(map.lossText ?? text("default_loss_condition", "Lose all towns and armies."))
+            return
+        }
+        guard map.standardVictory else { return }
+        if !held.isEmpty && held.allSatisfy(ally) {
+            if let d = victoryDays {
+                guard newDay else { return }
+                if d <= 1 { victoryDays = 0; outcome = true; log.append(map.victoryText ?? text("default_victory_condition", "Be the only player to own towns.")); return }
+                victoryDays = d - 1
+                log.append(d - 1 == 1 ? text("victory_pending_singular.adventure_map", "Hold your towns for one more day to win the game!")
+                           : text("victory_pending_plural.adventure_map", "Hold your towns for another %days days to win the game!").replacingOccurrences(of: "%days", with: "\(d - 1)"))
+            } else {
+                victoryDays = 3
+                log.append(text("victory_initiated.adventure_map", "Victory is at hand!  Hold your towns for 3 days and your foes will be defeated!"))
+            }
+        } else if victoryDays != nil {
+            victoryDays = nil
+            log.append(text("victory_terminated.adventure_map", "Your opponent has taken steps to undermine your victory.  A town has been reclaimed!"))
+        }
+    }
+
     public func endTurn() {
+        defer { checkScenario(newDay: true) }
         day += 1
         for h in heroes { h.maxMovement = armyMovement(h); h.movement = h.maxMovement; h.path = []; h.plan = [] }
         for (res, amount) in income { resources[res, default: 0] += amount }

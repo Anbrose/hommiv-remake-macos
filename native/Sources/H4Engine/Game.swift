@@ -179,6 +179,10 @@ public final class Hero {
     }
     public var army: [Stack] = []
     public static let armySlots = 7   // the hero plus six stacks
+    /// Secondary skills by family keyword ("stealth", "scouting", "tactics", ...) at level
+    /// 1 basic ... 5 grandmaster (table.skills: <family>_<basic|advanced|expert|master|grandmaster>).
+    public var skills: [String: Int] = [:]
+    public func skill(_ family: String) -> Int { skills[family] ?? 0 }
     public var experience = 0
     public var level: Int { 1 + experience / 1000 }
     public var home: (x: Int, y: Int) = (0, 0)   // where a beaten hero regroups
@@ -356,6 +360,30 @@ public final class GameState {
         return out
     }
     public func isDangerous(_ x: Int, _ y: Int) -> Bool { dangerCells.contains(x * map.size + y) }
+
+    /// Does a wandering stack notice the hero on a cell? Stealth (table.skills) hides the hero from
+    /// creatures up to its level: a stack of a higher level sees him, one of the same level only
+    /// when he is next to it (Master Stealth: 4th level creatures when adjacent), lower levels and
+    /// anything against Grandmaster Stealth never. Creatures have no Scouting.
+    public func notices(_ m: Monster, _ h: Hero, at x: Int, _ y: Int) -> Bool {
+        let stealth = h.skill("stealth")
+        guard stealth > 0 else { return true }
+        guard stealth < 5, let level = tables?.creature(m.creature)?.level else { return stealth == 0 }
+        let adjacent = max(abs(m.x - x), abs(m.y - y)) <= 1
+        if level > stealth { return true }
+        if level == stealth || (stealth == 4 && level == 4) { return adjacent }
+        return false
+    }
+    /// The wandering stack that would fall on the hero on this cell: one whose guard radius holds
+    /// the cell and that notices him there.
+    public func threat(to h: Hero, at x: Int, _ y: Int) -> Int? {
+        guard isDangerous(x, y) else { return nil }
+        return monsters.indices.first { i in
+            let m = monsters[i]
+            let dx = Float(m.x - x), dy = Float(m.y - y)
+            return (dx * dx + dy * dy).squareRoot() <= GameState.guardRadius + 0.001 && notices(m, h, at: x, y)
+        }
+    }
 
     /// The movement an army gets per day: the slowest of the hero and its creatures.
     public func armyMovement(_ h: Hero) -> Float {
@@ -928,6 +956,15 @@ public final class GameState {
                 h.movement -= stepCost
                 h.path.removeFirst()
                 h.progress = 0
+                // stepping into a wandering stack's guard radius where it notices the hero: it falls on
+                // him and the walk ends there (unless he is on his way to fight that very stack)
+                if let i = threat(to: h, at: h.x, h.y), !(h.target.map { $0.x == monsters[i].x && $0.y == monsters[i].y } ?? false),
+                   let p = scene.placed.first(where: { monster(for: $0) == i }) {
+                    h.plan = h.path; h.path = []
+                    log.append("\(tables?.creature(monsters[i].creature)?.plural ?? monsters[i].creature) attack \(h.name)!")
+                    fight(hero: h, monsterAt: i, p)
+                    continue
+                }
                 if h.path.isEmpty, let t = h.target,
                    let p = scene.placed.first(where: { $0.cellX == t.x && $0.cellY == t.y && $0.name == t.name }), canUse(from: (h.x, h.y), p) {
                     interact(hero: h, p)
@@ -1033,7 +1070,7 @@ public final class GameState {
         for (k, c) in plan.enumerated() {
             let stepCost = visiting && k == plan.count - 1 ? 0 : passability.stepCost(from: px, py, to: c.x, c.y)
             // green while affordable, yellow inside a wandering stack's guard radius, red beyond this turn
-            let colour = left + 0.001 < stepCost ? "red_arrow" : isDangerous(c.x, c.y) ? "yellow_arrow" : "green_arrow"
+            let colour = left + 0.001 < stepCost ? "red_arrow" : threat(to: h, at: c.x, c.y) != nil ? "yellow_arrow" : "green_arrow"
             left -= stepCost
             if k == plan.count - 1 { out.append((c.x, c.y, "\(colour).dest")); break }
             let n = plan[k + 1]

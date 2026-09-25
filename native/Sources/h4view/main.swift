@@ -147,6 +147,10 @@ if let town = scene.placed.first(where: { p in ownedByFirst.map { p.category == 
         lap("\(hero.name) the \(cls) at \(cell) by \(game.towns.first { $0.owned }?.name ?? town.name)")
     }
 }
+// the map's scripts: loaded, then day 1's events (the opening story, ...)
+game.loadScripts()
+game.runDayEvents()
+for m in game.scripts.messages { print("script text: \(m.prefix(100))") }
 
 // The adventure screen chrome (frame, panel, fonts); the map alone if the UI files are missing.
 var ui: AdventureUI? = nil
@@ -357,6 +361,7 @@ final class MapView: MTKView {
             renderer.combatClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale)
             return
         }
+        if renderer.messageBoxClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale) { return }   // a script message: only OK
         if renderer.popup != nil {   // an open right-click box: a left click outside it closes it, and does nothing else
             let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale
             if !renderer.onPopup(cx, cy) { renderer.popup = nil }

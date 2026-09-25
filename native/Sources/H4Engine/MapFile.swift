@@ -59,6 +59,13 @@ public struct MapObject {
         } else if rd.remaining >= 1 {
             t.hasFort = rd.u8() != 0
         }
+        // the town's events: 4 standard ones (slot 1 when captured, 3 when visited), then the
+        // timed, triggerable and continuous lists (0x417e40 ... 0x418550)
+        var sr = ScriptReader(rd.data, at: rd.pos)
+        if let b = try? (0..<4).map({ try sr.builtinEvent(slot: $0) }), let timed = try? sr.list({ try $0.timedEvent() }),
+           let trig = try? sr.list({ try $0.triggerableEvent() }), let cont = try? sr.list({ try $0.continuousEvent() }) {
+            t.events = b + timed + trig + cont
+        }
         return t
     }
 }
@@ -76,6 +83,8 @@ public struct TownSettings {
     /// Building ids (0...42, per town type: see RuleTables.buildingIds) as bit sets.
     public var built: UInt64? = nil, allowed: UInt64? = nil
     public var hasFort = false
+    /// The town's scripted events.
+    public var events: [MapEvent] = []
 }
 
 public struct Overlay {
@@ -111,6 +120,8 @@ public struct MapFile {
     /// condition ("be the only player to own towns") is on.
     public let victoryText: String?, lossText: String?
     public let standardVictory: Bool
+    /// The map's own events (timed, triggerable, continuous).
+    public let events: [MapEvent]
     /// The colour the human plays: the first player slot a human may take.
     public var humanColour: Int { playerSpecs.first { $0.canBeHuman }?.colour ?? playerSpecs.first?.colour ?? 0 }
     /// Map difficulty (0 easy ... 4 impossible), the byte after the name.
@@ -166,6 +177,19 @@ public struct MapFile {
             if version >= 25 { std = r.u8() != 0 }
         }
         teams = tm; victoryText = vt; lossText = lt; standardVictory = std
+        // then (0x77aa49) prologue / epilogue flags (v >= 24; a set one carries a block not
+        // decoded here), the carryover text (v >= 27), a flag (v >= 29): the map's event lists follow
+        var exact = true
+        if version >= 24, r.remaining >= 2 { if r.u8() != 0 { exact = false }; if r.u8() != 0 { exact = false } }
+        if exact, version >= 27, r.remaining >= 2 { _ = r.string16() }
+        if exact, version >= 29, r.remaining >= 1 { _ = r.u8() }
+        if exact {
+            var sr = ScriptReader(d, at: r.pos)
+            if let timed = try? sr.list({ try $0.timedEvent() }), let trig = try? sr.list({ try $0.triggerableEvent(trailer: false) }),
+               let cont = try? sr.list({ try $0.continuousEvent(trailer: false) }) { events = timed + trig + cont } else { events = [] }
+        } else {
+            events = ScriptReader.mapEvents(d, from: r.pos)
+        }
         let headerEnd = r.pos
 
         let pts = MapFile.diamond(size)

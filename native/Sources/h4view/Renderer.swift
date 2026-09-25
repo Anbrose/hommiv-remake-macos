@@ -459,6 +459,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         out += popupQuads()
         out += creatureDialogQuads()
         out += adventureDialogQuads()
+        out += messageBoxQuads()
         return out
     }
     var showBlocked = false   // debug: mark every cell a hero cannot enter

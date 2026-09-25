@@ -242,6 +242,8 @@ public final class GameState {
     public var heroes: [Hero] = []
     /// Things that happened this frame, for the UI (e.g. "picked up Resources.Gold").
     public var log: [String] = []
+    /// The map's scripted events and their state.
+    public let scripts = ScriptState()
     /// The player's treasury (starting amounts of a normal game).
     public var resources: [String: Int] = ["Wood": 15, "Ore": 15, "Mercury": 7, "Sulfur": 7, "Crystal": 7, "Gems": 7, "Gold": 15000]
     public var tables: RuleTables?
@@ -564,6 +566,8 @@ public final class GameState {
         }
         hero.target = nil
         pendingBattle = nil
+        runContinuous()
+        checkScenario(newDay: false)
     }
 
     /// Give a hero the usual starting army: the two cheapest level-1 creatures of his alignment,
@@ -690,7 +694,14 @@ public final class GameState {
         if isPickup(p) { take(hero: hero, p); return }
         if let i = monster(for: p) { fight(hero: hero, monsterAt: i, p); return }
         if let i = town(for: p) {
-            if !towns[i].owned { towns[i].owned = true; towns[i].owner = map.humanColour; log.append("\(towns[i].name) is yours"); checkScenario(newDay: false) }
+            if !towns[i].owned {
+                let previous = towns[i].owner
+                towns[i].owned = true; towns[i].owner = map.humanColour; log.append("\(towns[i].name) is yours")
+                runTownEvent(i, slot: 1, previousOwner: previous, hero: hero)   // "captured"
+                checkScenario(newDay: false)
+            } else {
+                runTownEvent(i, slot: 3, hero: hero)                            // "visited"
+            }
             enteredTown = i
             hero.target = nil
             return
@@ -897,7 +908,7 @@ public final class GameState {
             log.append(map.lossText ?? text("default_loss_condition", "Lose all towns and armies."))
             return
         }
-        guard map.standardVictory else { return }
+        guard map.standardVictory && scripts.standardVictoryOn else { return }
         if !held.isEmpty && held.allSatisfy(ally) {
             if let d = victoryDays {
                 guard newDay else { return }
@@ -916,7 +927,7 @@ public final class GameState {
     }
 
     public func endTurn() {
-        defer { checkScenario(newDay: true) }
+        defer { runDayEvents(); checkScenario(newDay: true) }
         day += 1
         for h in heroes { h.maxMovement = armyMovement(h); h.movement = h.maxMovement; h.path = []; h.plan = [] }
         for (res, amount) in income { resources[res, default: 0] += amount }

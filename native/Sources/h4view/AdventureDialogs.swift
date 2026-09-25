@@ -152,3 +152,74 @@ extension Renderer {
         }
     }
 }
+
+// MARK: script messages
+
+extension Renderer {
+    /// The texts the map's scripts show, one box at a time: layers.dialog.generic is a frame of
+    /// corners, edges and a background tile (repeated to the size), the text wrapped inside, an OK
+    /// button under it.
+    static let messageWidth = 440
+    func messageLayout() -> (x: Int, y: Int, w: Int, h: Int, lines: [String], font: H4Font)? {
+        guard let g = game, let text = g.scripts.messages.first, let ui = ui else { return nil }
+        let font = ui.dateFont
+        let w = Renderer.messageWidth
+        let lines = text.components(separatedBy: "\n").flatMap { $0.isEmpty ? [""] : AdventureUI.wrap($0, font: font, width: w - 60) }
+        let h = min(AdventureUI.height - 40, 40 + lines.count * font.lineHeight + 70)
+        return ((AdventureUI.mapViewportWidth - w) / 2, (AdventureUI.height - h) / 2, w, h, lines, font)
+    }
+    func okRect() -> (x: Int, y: Int, w: Int, h: Int)? {
+        guard let m = messageLayout() else { return nil }
+        return (m.x + (m.w - 66) / 2, m.y + m.h - 54, 66, 32)
+    }
+    func cropped(_ b: Bitmap, _ w: Int, _ h: Int) -> Bitmap {
+        var out = Bitmap(width: w, height: h)
+        for y in 0..<min(h, b.height) { for x in 0..<min(w, b.width) {
+            let s = (y * b.width + x) * 4, d = (y * w + x) * 4
+            out.pixels[d..<(d + 4)] = b.pixels[s..<(s + 4)]
+        } }
+        return out
+    }
+    func messageBoxQuads() -> [Quad] {
+        guard let ui = ui, let m = messageLayout(), let d = ui.dialog("generic") else { return [] }
+        var out: [Quad] = []
+        func piece(_ name: String, _ x: Int, _ y: Int, w: Int? = nil, h: Int? = nil) {
+            guard let l = d[name] else { return }
+            let ww = min(w ?? l.width, l.width), hh = min(h ?? l.height, l.height)
+            let key = "gen|\(name)|\(ww)|\(hh)"
+            out.append(Quad(texture: uiTexture(key, { ww == l.width && hh == l.height ? l.bitmap : cropped(l.bitmap, ww, hh) }), x: x, y: y, w: ww, h: hh))
+        }
+        // the background, tiled over the inside
+        if let bg = d["Background"] {
+            var y = 6
+            while y < m.h - 6 {
+                var x = 6
+                while x < m.w - 6 { piece("Background", m.x + x, m.y + y, w: min(bg.width, m.w - 6 - x), h: min(bg.height, m.h - 6 - y)); x += bg.width }
+                y += bg.height
+            }
+        }
+        // the edges between the corners, then the corners
+        if let top = d["Top"], let left = d["Left"] {
+            var x = 31
+            while x < m.w - 26 { let w = min(top.width, m.w - 26 - x); piece("Top", m.x + x, m.y, w: w); piece("Bottom", m.x + x, m.y + m.h - 12, w: w); x += top.width }
+            var y = 28
+            while y < m.h - 36 { let h = min(left.height, m.h - 36 - y); piece("Left", m.x, m.y + y, h: h); piece("Right", m.x + m.w - 11, m.y + y, h: h); y += left.height }
+        }
+        piece("Top_Left", m.x, m.y); piece("Top_Right", m.x + m.w - 26, m.y)
+        piece("Bottom_Left", m.x, m.y + m.h - 36); piece("Bottom_Right", m.x + m.w - 26, m.y + m.h - 36)
+        for (i, line) in m.lines.enumerated() where !line.isEmpty {
+            let w = m.font.measure(line)
+            out.append(Quad(texture: uiTexture("msg|\(line)", { m.font.render(line, colour: (40, 24, 8)) }), x: m.x + (m.w - w) / 2, y: m.y + 30 + i * m.font.lineHeight, w: w, h: m.font.size))
+        }
+        if let ok = okRect(), let b = ui.button("ok") {
+            out.append(Quad(texture: uiTexture("button|ok|\(b.name)", { b.bitmap }), x: ok.x + (ok.w - b.width) / 2, y: ok.y + (ok.h - b.height) / 2, w: b.width, h: b.height))
+        }
+        return out
+    }
+    /// A click while a script message is up: OK takes it away. Returns true when the box was open.
+    func messageBoxClick(x: Float, y: Float) -> Bool {
+        guard let g = game, !g.scripts.messages.isEmpty else { return false }
+        if let ok = okRect(), x >= Float(ok.x), x < Float(ok.x + ok.w), y >= Float(ok.y), y < Float(ok.y + ok.h) { g.scripts.messages.removeFirst() }
+        return true
+    }
+}

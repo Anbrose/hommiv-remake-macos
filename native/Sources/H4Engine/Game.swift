@@ -107,6 +107,9 @@ public struct Passability {
         if x >= 0, x < size, y >= 0, y < size { blocked[x * size + y] = true }
     }
 
+    /// Pathfinding's relief on rough terrain for the army being routed (GameState sets it).
+    public var relief: Float = 0
+
     public func isFree(_ x: Int, _ y: Int) -> Bool {
         x >= 0 && x < size && y >= 0 && y < size && !blocked[x * size + y]
     }
@@ -116,7 +119,7 @@ public struct Passability {
     /// terrain"); x1.4 diagonally.
     public func stepCost(from x0: Int, _ y0: Int, to x1: Int, _ y1: Int) -> Float {
         let i = x1 * size + y1
-        let base = roadType[i] > 0 && roadType[x0 * size + y0] > 0 ? Passability.roadRate(roadType[i]) : cost[i]
+        let base = roadType[i] > 0 && roadType[x0 * size + y0] > 0 ? Passability.roadRate(roadType[i]) : cost[i] > 1 ? max(1, cost[i] - relief) : cost[i]
         return base * (x0 != x1 && y0 != y1 ? 1.4 : 1)
     }
 
@@ -209,7 +212,9 @@ public final class Hero {
     /// Movement per day: the slowest of the hero and the creatures travelling with it.
     public var maxMovement: Float
     /// A hero's own movement (the recording: a level 15 hero shows 22, a low one 20).
-    public static let baseMovement: Float = 20
+    /// A hero's own movement per day: 2256 points, 100 to a cell (heroes4.exe 0x72a260:
+    /// 1200 + 11 x 2400 / 25; the recording shows a hero with 22).
+    public static let baseMovement: Float = 22.56
     /// Remaining path (next cell first) while walking, and progress 0..1 to its first cell.
     public var path: [(x: Int, y: Int)] = []
     public var progress: Float = 0
@@ -412,7 +417,15 @@ public final class GameState {
     public func armyMovement(_ h: Hero) -> Float {
         var m = Hero.baseMovement
         for s in h.army { if let c = tables?.creature(s.creature), c.move > 0 { m = min(m, Float(c.move)) } }
-        return m
+        // Master / Grandmaster Pathfinding: the whole army +25% / +50% on land (0x6426c0)
+        let pf = ([h] + h.companions).map { $0.skill("pathfinding") }.max() ?? 0
+        return m * [1, 1, 1, 1, 1.25, 1.5][pf]
+    }
+    /// How much Pathfinding takes off rough terrain (in cells: 0.25, 0.5, then all of it; never
+    /// below the plain cost; heroes4.exe's table [0, 25, 50, 100, 100, 100] of 100 a cell).
+    public static func terrainRelief(_ h: Hero) -> Float {
+        let pf = ([h] + h.companions).map { $0.skill("pathfinding") }.max() ?? 0
+        return [0, 0.25, 0.5, 1, 1, 1][pf]
     }
     /// Recompute a hero's daily movement after its army changed (spent points stay spent).
     public func refreshMovement(_ h: Hero) {
@@ -544,9 +557,11 @@ public final class GameState {
     }
 
     /// A hero's combat numbers as the hero screen shows them (the quick-combat formulas).
-    public func heroStats(_ h: Hero) -> (attack: Int, defense: Int, damage: String, hitPoints: Int, speed: Int, move: Int) {
-        let c = Combatant(hero: h.name, level: h.level)
-        return (c.attack, c.defense, "\(c.damageLow)-\(c.damageHigh)", c.hitPoints, c.speed, Int(h.maxMovement))
+    public func heroStats(_ h: Hero) -> (attack: Int, defense: Int, damage: String, hitPoints: Int, speed: Int, move: Int, ranged: Int, shots: Int, spellPoints: Int) {
+        let c = Combatant(hero: h.name, level: h.level, skills: h.skills)
+        // spell points: 10, and 10 per level of Healing, Enchantment, Occultism, Conjuration and Herbalism (0x729ff0)
+        let sp = 10 + 10 * ["healing", "enchantment", "black", "conjuration", "herbalism"].reduce(0) { $0 + h.skill($1) }
+        return (c.attack, c.defense, "\(c.damageLow)-\(c.damageHigh)", c.hitPoints, c.speed, Int(h.maxMovement), c.rangedAttack ?? c.attack, c.shots, sp)
     }
 
     /// What a right click on a hero shows.
@@ -601,20 +616,51 @@ public final class GameState {
     /// Experience for an army: each of its heroes gains it, learning a skill per level reached.
     public func giveExperience(_ n: Int, to hero: Hero) {
         for h in [hero] + hero.companions {
-            let before = h.level
-            let learned = h.gainExperience(n, tables: tables, random: &random)
-            if h.level > before {
-                let names = learned.map { s -> String in
-                    let k = RuleTables.skillIds[s], lv = RuleTables.skillLevelNames[max(0, h.skill(k) - 1)]
-                    return tables?.skillTexts["\(k)_\(lv)"]?.name ?? k }
-                log.append("\(h.name) reaches level \(h.level)" + (names.isEmpty ? "" : ": " + names.joined(separator: ", ")))
-            }
+            h.experience += n
+            if Hero.level(for: h.experience) > h.level, !levelUpQueue.contains(where: { $0 === h }) { levelUpQueue.append(h) }
         }
+        nextLevelUp()
+    }
+
+    /// The player's heroes still to take levels: each level is a choice in the level-up dialog
+    /// (layers.dialog.choose_skill), the offer made by Hero.levelUpOffer (heroes4.exe 0x72bca0's
+    /// interactive path); a level with nothing to offer is taken at once.
+    public var levelUpQueue: [Hero] = []
+    /// The level-up waiting for the player's choice.
+    public var levelUp: (hero: Hero, offer: [(skill: Int, level: Int)])?
+    public func nextLevelUp() {
+        guard levelUp == nil else { return }
+        while let h = levelUpQueue.first {
+            guard h.level < min(70, Hero.level(for: h.experience)) else { levelUpQueue.removeFirst(); continue }
+            let offer = h.levelUpOffer(weights: tables?.skillWeights[h.classKeyword] ?? [:], random: &random)
+            if offer.isEmpty { h.level += 1; continue }
+            levelUp = (h, offer); return
+        }
+    }
+    /// The class a choice would make the hero (for the dialog's "will become a level ..." line).
+    public func classAfter(_ h: Hero, choosing e: (skill: Int, level: Int)) -> Int {
+        let saved = (h.skills, h.heroClass)
+        h.learn(e.skill, level: e.level); h.reconsiderClass()
+        let c = h.heroClass
+        h.skills = saved.0; h.heroClass = saved.1
+        return c
+    }
+    /// The player picked offer k: the level is gained, the skill learned, the class reconsidered.
+    public func chooseSkill(_ k: Int) {
+        guard let lu = levelUp, lu.offer.indices.contains(k) else { return }
+        let h = lu.hero, e = lu.offer[k]
+        h.level += 1
+        h.learn(e.skill, level: e.level)
+        h.reconsiderClass()
+        let k2 = RuleTables.skillIds[e.skill], lv = RuleTables.skillLevelNames[e.level]
+        log.append("\(h.name) reaches level \(h.level): \(tables?.skillTexts["\(k2)_\(lv)"]?.name ?? k2)")
+        levelUp = nil
+        nextLevelUp()
     }
 
     /// The hero's army as combatants, its heroes first.
     func combatants(of hero: Hero) -> [Combatant] {
-        var out = ([hero] + hero.companions).map { Combatant(hero: $0.name, level: $0.level) }
+        var out = ([hero] + hero.companions).map { Combatant(hero: $0.name, level: $0.level, skills: $0.skills) }
         for s in hero.army { if let c = tables?.creature(s.creature) { out.append(Combatant(creature: c, count: s.count)) } }
         return out
     }
@@ -879,6 +925,7 @@ public final class GameState {
     /// walk) to the cheapest neighbouring cell; it is used on arrival. A town is entered through
     /// the middle gate cell; when that is taken, through the nearer of the other two.
     public func click(hero: Hero, pickup p: MapScene.Placed) {
+        passability.relief = GameState.terrainRelief(hero)
         let walking = hero.isWalking
         if walking { interrupt(hero) }
         let from = standingCell(hero)
@@ -968,6 +1015,7 @@ public final class GameState {
 
     /// Click handling: first click plans a path to the cell, a second click on the same cell walks it.
     public func click(hero: Hero, x: Int, y: Int) {
+        passability.relief = GameState.terrainRelief(hero)
         if hero.isWalking {
             interrupt(hero)
             let from = standingCell(hero)
@@ -1055,6 +1103,7 @@ public final class GameState {
         }
         for h in heroes where h.isWalking {
             let next = h.path[0]
+            passability.relief = GameState.terrainRelief(h)
             let stepCost = passability.stepCost(from: h.x, h.y, to: next.x, next.y)
             // out of movement: stop here, keeping the rest of the route (red) to go on with later
             if h.movement + 0.001 < stepCost { h.plan = h.path; h.path = []; continue }
@@ -1147,6 +1196,7 @@ public final class GameState {
     /// is taken while its cost fits what is left, otherwise the next day starts with full
     /// movement. The adventure cursors show it (their frames are 1, 2, 3 and 4+ days). nil: no way there.
     public func daysToReach(_ h: Hero, _ goal: (Int, Int)) -> Int? {
+        passability.relief = GameState.terrainRelief(h)
         guard let route = passability.path(from: (h.x, h.y), to: goal) else { return nil }
         var left = h.movement, days = 1, px = h.x, py = h.y
         for c in route {
@@ -1159,6 +1209,7 @@ public final class GameState {
 
     /// the last cell gets the destination marker.
     public func arrows(for h: Hero) -> [(x: Int, y: Int, name: String)] {
+        passability.relief = GameState.terrainRelief(h)
         var plan = h.plan
         guard !plan.isEmpty else { return [] }
         // a route to an object ends on the object itself (as in the game), though the hero stops

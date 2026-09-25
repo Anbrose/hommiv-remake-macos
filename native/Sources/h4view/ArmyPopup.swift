@@ -56,8 +56,8 @@ extension Renderer {
             }
             let s = g.heroStats(h)
             values = [("Damage_Text", s.damage), ("Melee_Attack_Text", "\(s.attack)"), ("Melee_Defense_Text", "\(s.defense)"), ("Hit_Points_Text", "\(s.hitPoints)"),
-                      ("Speed_Text", "\(s.speed)"), ("Movement_Text", "\(Int(leader.movement.rounded()))/\(Int(leader.maxMovement))"),
-                      ("Shots_Text", "0"), ("Ranged_Attack_Text", "\(s.attack)"), ("Ranged_Defense_Text", "\(s.defense)"), ("Spell_Points_Text", "0"),
+                      ("Speed_Text", "\(s.speed)"), ("Movement_Text", "\(Int(leader.movement))/\(Int(leader.maxMovement))"),
+                      ("Shots_Text", "\(s.shots)"), ("Ranged_Attack_Text", "\(s.ranged)"), ("Ranged_Defense_Text", "\(s.defense)"), ("Spell_Points_Text", "\(s.spellPoints)"),
                       ("Experience_Text", "\(h.experience)"), ("Luck_Text", "0")]
         } else if let st = leader.army[safe: ap.selected - heroes.count], let c = g.tables?.creature(st.creature) {
             out += centred("\(st.count) \(st.count == 1 ? c.name : c.plural)", in: d["Title"], at: ox, oy, font: ui.dateFont)

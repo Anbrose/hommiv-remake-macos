@@ -99,8 +99,8 @@ extension Renderer {
             let m = Battle.armyMorale(own: h.alignment, army: moraleArmy)
             let moraleText = m > 0 ? "+\(m)" : "\(m)"
             let values: [(String, String)] = [("Damage_Text", s.damage), ("Hit_Points_Text", "\(s.hitPoints)"), ("Melee_Attack_Text", "\(s.attack)"), ("Melee_Defense_Text", "\(s.defense)"),
-                                              ("Ranged_Attack_Text", "\(s.attack)"), ("Ranged_Defense_Text", "\(s.defense)"), ("Speed_Text", "\(s.speed)"), ("Move_Text", "\(s.move)"),
-                                              ("Experience_Text", "\(h.experience)"), ("Spell_Points_Text", "0"), ("Shots_Text", "0"), ("Morale_Text", moraleText), ("Luck_Text", "0")]
+                                              ("Ranged_Attack_Text", "\(s.ranged)"), ("Ranged_Defense_Text", "\(s.defense)"), ("Speed_Text", "\(s.speed)"), ("Move_Text", "\(s.move)"),
+                                              ("Experience_Text", "\(h.experience)"), ("Spell_Points_Text", "\(s.spellPoints)"), ("Shots_Text", "\(s.shots)"), ("Morale_Text", moraleText), ("Luck_Text", "0")]
             for (slot, v) in values { out += centred(v, in: d[slot], at: ox, oy, font: ui.numberFont) }
             // the army: one row of creature_rings pieces (Left, Middle x5, Right) tiled by width in
             // Single_Ring_Background, as t_creature_array_window lays them out; labels last

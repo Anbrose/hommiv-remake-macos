@@ -158,11 +158,11 @@ final class CombatScreen {
         // a hero moves 24 cells (heroes4.exe: 2400 movement, 100 a cell) at Speed 6 plus skill bonuses
         var attackers: [Battle.Fighter] = []
         for (k, hh) in heroes.enumerated() {
-            var heroStats = Combatant(hero: hh.name, level: hh.level)
+            var heroStats = Combatant(hero: hh.name, level: hh.level, skills: hh.skills)
             heroStats.speed = 6
             heroStats.morale = Battle.armyMorale(own: hh.alignment, army: heroArmy)
             let model = "hero.\(hh.alignment)_fighter_male"
-            attackers.append(Battle.Fighter(stats: heroStats, keyword: hh.keyword, actor: actor(model) != nil ? model : classActor, size: actor(model)?.size ?? actor(classActor)?.size ?? 4, move: 24, shots: 0, slot: k))
+            attackers.append(Battle.Fighter(stats: heroStats, keyword: hh.keyword, actor: actor(model) != nil ? model : classActor, size: actor(model)?.size ?? actor(classActor)?.size ?? 4, move: 24, shots: heroStats.shots, slot: k))
         }
         for (k, s) in h.army.enumerated() { if let cd = t.creature(s.creature) { var f = fighter(cd, s.count, army: heroArmy, bonus: bonus); f.slot = k + heroes.count; attackers.append(f) } }
         // a wandering stack has no hero: it splits against the attacker's stacks (0x62da90)

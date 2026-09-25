@@ -245,6 +245,9 @@ if let out = snapshot {
         print("battle: round \(cs.battle?.round ?? 0), units \(cs.battle?.units.map { "\($0.stats.name)x\($0.stats.count) morale \($0.stats.morale)@(\($0.x),\($0.y))" }.joined(separator: " ") ?? "")")
     }
     if openHeroScreen { renderer.adventureDialog = .hero(0) }
+    if let n = ProcessInfo.processInfo.environment["H4LEVELUP"].flatMap({ Int($0) }), let h = game.heroes.first {   // snapshot: the level-up dialog
+        game.giveExperience(n, to: h); renderer.levelUpChoice = 0
+    }
     if let k = ProcessInfo.processInfo.environment["H4ARMYPOPUP"].flatMap({ Int($0) }) { renderer.armyPopup = ArmyPopup(hero: 0, selected: k) }   // snapshot: the right-click window
     if openChest, let h = game.heroes.first { game.chestOffer = (h, 1500, 1000); renderer.adventureDialog = .chest; renderer.chestChoice = true }
     if openTown {
@@ -422,6 +425,12 @@ final class MapView: MTKView {
             }
             return
         }
+        if renderer.game?.levelUp != nil {
+            if let tip = renderer.levelUpTip(x: p.mouse.x / renderer.uiScale, y: p.mouse.y / renderer.uiScale) {
+                renderer.hover = (tip, Int(p.mouse.x / renderer.uiScale), Int(p.mouse.y / renderer.uiScale))
+            }
+            return
+        }
         if renderer.adventureDialog != nil || renderer.armyPopup != nil {   // skills and artifacts on the hero windows
             if let tip = renderer.heroWindowTip(x: p.mouse.x / renderer.uiScale, y: p.mouse.y / renderer.uiScale) {
                 renderer.hover = (tip, Int(p.mouse.x / renderer.uiScale), Int(p.mouse.y / renderer.uiScale))
@@ -456,6 +465,7 @@ final class MapView: MTKView {
         if renderer.menuClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale) { return }
         if renderer.saveDialogClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale, double: e.clickCount >= 2) { return }
         if renderer.messageBoxClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale) { return }   // a script message: only OK
+        if renderer.levelUpClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale, double: e.clickCount >= 2) { return }
         if renderer.armyPopup != nil { renderer.armyPopupClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.popup != nil {   // an open right-click box: a left click outside it closes it, and does nothing else
             let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale

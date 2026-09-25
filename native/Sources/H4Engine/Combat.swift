@@ -48,11 +48,25 @@ public struct Combatant {
         noMeleePenalty = abilities.contains("normal_melee")
     }
 
-    /// A hero of the given level fights as one strong unit.
-    public init(hero name: String, level: Int) {
-        self.name = name; count = 1; hitPoints = 40 + 10 * level; damageLow = 6 + 2 * level; damageHigh = 10 + 3 * level
-        attack = 10 + 2 * level; defense = 10 + 2 * level; speed = 5; experience = 0; isHero = true
+    /// A hero as heroes4.exe rates one (verified in an emulator against the exe): hit points
+    /// 10 x level + 90 (0x72a1f0), damage (16L-16)/10+16 to (24L-24)/10+24 (0x72a090 / 0x72a130),
+    /// attack and defense from the Melee, Archery and Combat skills (0x732090 / 0x731ff0, shown x10:
+    /// melee 1, 1.5, 2, 3, 4, 4; ranged 0.7, 1, 1.5, 2, 3, 3; defense 1, 1.5, 2, 3, 4, 6), speed 6
+    /// (0x72a270), 12 shots with Archery, 24 at grandmaster (0x72a2f0).
+    public init(hero name: String, level: Int, skills: [String: Int] = [:]) {
+        func sk(_ k: String) -> Int { max(0, min(5, skills[k] ?? 0)) }
+        let melee = [10, 15, 20, 30, 40, 40], ranged = [7, 10, 15, 20, 30, 30], def = [10, 15, 20, 30, 40, 60]
+        self.name = name; count = 1
+        hitPoints = 10 * level + 90
+        damageLow = (16 * level - 16) / 10 + 16; damageHigh = (24 * level - 24) / 10 + 24
+        attack = melee[sk("combat")]; defense = def[sk("toughness")]; speed = 6; experience = 0; isHero = true
+        rangedAttack = ranged[sk("archery")]
+        shooter = sk("archery") > 0; noMeleePenalty = true
+        shots = sk("archery") == 0 ? 0 : sk("archery") == 5 ? 24 : 12
     }
+    /// A hero's ranged attack (its Archery), when it differs from the melee one.
+    public var rangedAttack: Int? = nil
+    public var shots = 0
 
     /// Take `damage` hit points, killing whole units from the front.
     public mutating func take(_ damage: Int) -> Int {
@@ -115,7 +129,7 @@ public enum QuickCombat {
         let points = moved * 100
         if !ranged, a.has("charging"), points > 500 { base = base * (points * 10 / 350 + 85) / 100 }
         if b.level == 4, a.has("giantslayer") || a.has(ranged ? "ranged_giantslayer" : "melee_giantslayer") { base *= 2 }
-        var attack = Float(a.attack)
+        var attack = Float(ranged ? (a.rangedAttack ?? a.attack) : a.attack)
         if !ranged, a.shooter, !a.noMeleePenalty { attack *= 0.5 }
         if a.weakened { attack *= 0.75 }
         if a.aged { attack *= 0.75 }

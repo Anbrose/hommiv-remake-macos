@@ -233,3 +233,24 @@ extension Hero {
         return h
     }
 }
+
+/// What an army's heroes give its creatures in battle, as table.skills states it: Offense and
+/// Defense +10% attack / defense per level, Tactics +1 speed per level and +1, 1.5, 2, 2.5, 3
+/// movement, Leadership +1 morale and luck per level. The best hero of the army counts.
+public struct ArmyBonuses {
+    public var attackPercent = 0, defensePercent = 0, speed = 0, moveThirds = 0, morale = 0, luck = 0
+    public init(heroes: [Hero]) {
+        func best(_ k: String) -> Int { heroes.map { $0.skill(k) }.max() ?? 0 }
+        attackPercent = 10 * best("offense"); defensePercent = 10 * best("defense")
+        let t = best("tactics")
+        speed = t; moveThirds = t == 0 ? 0 : Int(Double(3) * (1 + 0.5 * Double(t - 1)))
+        morale = best("leadership"); luck = best("leadership")
+    }
+    /// A creature stack with the bonuses.
+    public func apply(_ c: inout Combatant) {
+        c.attack = c.attack * (100 + attackPercent) / 100
+        c.defense = c.defense * (100 + defensePercent) / 100
+        c.speed += speed
+        c.morale += morale
+    }
+}

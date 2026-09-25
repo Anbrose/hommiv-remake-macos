@@ -425,6 +425,10 @@ public final class GameState {
         var out: [String: Int] = [:]
         for t in towns where t.owned { out["Gold", default: 0] += hallIncome(t) }
         for m in mines where m.owned { out[m.resource, default: 0] += m.amount }
+        // Estates: 100 gold a day per level of the skill, plus 10% per level of the hero (table.skills)
+        for h in heroes.flatMap({ [$0] + $0.companions }) where h.skill("estates") > 0 {
+            out["Gold", default: 0] += 100 * h.skill("estates") * (10 + h.level) / 10
+        }
         return out
     }
     public var day = 1

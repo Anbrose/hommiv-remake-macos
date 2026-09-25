@@ -143,21 +143,28 @@ final class CombatScreen {
         guard let f = field else { return }
         let classActor = "hero.\(h.alignment)_fighter_male"
         // morale from each army's alignments (heroes4.exe 0x640310)
-        let heroArmy: [(alignment: String, undead: Bool)] = [(h.alignment, false)] + h.army.compactMap { st in t.creature(st.creature).map { ($0.alignment, Combatant(creature: $0, count: 1).has("undead")) } }
+        let heroArmy: [(alignment: String, undead: Bool)] = ([h] + h.companions).map { ($0.alignment, false) } + h.army.compactMap { st in t.creature(st.creature).map { ($0.alignment, Combatant(creature: $0, count: 1).has("undead")) } }
         var monsterArmy: [(alignment: String, undead: Bool)] = [(c.alignment, Combatant(creature: c, count: 1).has("undead"))]
         for e in g.monsters[i].extra { if let ed = t.creature(e.creature) { monsterArmy.append((ed.alignment, Combatant(creature: ed, count: 1).has("undead"))) } }
-        func fighter(_ cd: CreatureDef, _ n: Int, army: [(alignment: String, undead: Bool)]) -> Battle.Fighter {
+        let heroes = [h] + h.companions
+        let bonus = ArmyBonuses(heroes: heroes)
+        func fighter(_ cd: CreatureDef, _ n: Int, army: [(alignment: String, undead: Bool)], bonus: ArmyBonuses? = nil) -> Battle.Fighter {
             var st = Combatant(creature: cd, count: n)
             st.morale = Battle.armyMorale(own: cd.alignment, army: army)
-            return Battle.Fighter(stats: st, keyword: cd.keyword, actor: cd.name, size: actor(cd.name)?.size ?? 4, move: cd.move, shots: cd.shots)
+            bonus?.apply(&st)
+            return Battle.Fighter(stats: st, keyword: cd.keyword, actor: cd.name, size: actor(cd.name)?.size ?? 4, move: cd.move + (bonus?.moveThirds ?? 0), shots: cd.shots)
         }
         strings = t.strings
         // a hero moves 24 cells (heroes4.exe: 2400 movement, 100 a cell) at Speed 6 plus skill bonuses
-        var heroStats = Combatant(hero: h.name, level: h.level)
-        heroStats.speed = 6
-        heroStats.morale = Battle.armyMorale(own: h.alignment, army: heroArmy)
-        var attackers = [Battle.Fighter(stats: heroStats, keyword: h.keyword, actor: classActor, size: actor(classActor)?.size ?? 4, move: 24, shots: 0, slot: 0)]
-        for (k, s) in h.army.enumerated() { if let cd = t.creature(s.creature) { var f = fighter(cd, s.count, army: heroArmy); f.slot = k + 1; attackers.append(f) } }
+        var attackers: [Battle.Fighter] = []
+        for (k, hh) in heroes.enumerated() {
+            var heroStats = Combatant(hero: hh.name, level: hh.level)
+            heroStats.speed = 6
+            heroStats.morale = Battle.armyMorale(own: hh.alignment, army: heroArmy)
+            let model = "hero.\(hh.alignment)_fighter_male"
+            attackers.append(Battle.Fighter(stats: heroStats, keyword: hh.keyword, actor: actor(model) != nil ? model : classActor, size: actor(model)?.size ?? actor(classActor)?.size ?? 4, move: 24, shots: 0, slot: k))
+        }
+        for (k, s) in h.army.enumerated() { if let cd = t.creature(s.creature) { var f = fighter(cd, s.count, army: heroArmy, bonus: bonus); f.slot = k + heroes.count; attackers.append(f) } }
         // a wandering stack has no hero: it splits against the attacker's stacks (0x62da90)
         func backRow(_ d: CreatureDef) -> Bool { d.shots > 0 || Combatant(creature: d, count: 1).has("ranged") }
         var stacks = [Battle.ArmySlot(creature: c.keyword, count: g.monsters[i].count, backRow: backRow(c))]

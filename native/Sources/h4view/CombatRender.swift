@@ -177,6 +177,7 @@ extension Renderer {
             let text = "\(wt.turns)"
             out.append(Quad(texture: uiTexture("turns|\(text)", { ui.numberFont.render(text, colour: (120, 190, 255)) }), x: wt.x + 12, y: wt.y + 8, w: ui.numberFont.measure(text), h: ui.numberFont.size))
         }
+        out += combatInfoQuads()
         out += hoverQuads()
         if cs.showResults { out += combatResultQuads() }
         return out
@@ -258,6 +259,7 @@ extension Renderer {
     /// A click on the combat screen (canvas coordinates).
     func combatClick(x: Float, y: Float) {
         guard let cs = combat, let b = cs.battle, let g = game else { return }
+        if cs.info != nil { cs.info = nil; return }   // a click closes the creature window (OK or anywhere)
         if cs.showResults {
             closeCombat(); return
         }
@@ -312,7 +314,7 @@ extension Renderer {
 
     /// Which combat cursor fits the cell under the pointer.
     func combatCursor(x: Float, y: Float) -> String {
-        guard let cs = combat, let b = cs.battle, !cs.busy, cs.result == nil, let cur = b.current, cur.side == 0, x < 885 else { return "combat.normal" }
+        guard let cs = combat, let b = cs.battle, cs.info == nil, !cs.busy, cs.result == nil, let cur = b.current, cur.side == 0, x < 885 else { return "combat.normal" }
         walkTurns = nil
         if let t = enemyUnder(b, x: x, y: y) {
             if b.canShoot(cur), !combatMeleeMode { return "combat.shoot" }
@@ -324,6 +326,6 @@ extension Renderer {
         let c = footprintAt(cur, x: x, y: y)
         guard let cost = b.cost(cur, to: c.0, c.1) else { return "combat.normal" }
         walkTurns = (max(1, Int((cost / Float(max(1, cur.move))).rounded(.up))), Int(x), Int(y))
-        return "combat.walk"
+        return cur.stats.has("flying") ? "combat.fly" : "combat.walk"
     }
 }

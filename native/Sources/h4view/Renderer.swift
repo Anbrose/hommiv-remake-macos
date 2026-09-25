@@ -323,6 +323,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     var minimapStamp = -1
     /// The status line shown when the mouse rests on the map: text and canvas position.
     var hover: (text: String, x: Int, y: Int)?
+    var iconSheets: [String: [String: UILayer]] = [:]
     lazy var cream: MTLTexture = {
         var bm = Bitmap(width: 2, height: 2)
         for i in 0..<4 { bm.pixels[i * 4] = 255; bm.pixels[i * 4 + 1] = 255; bm.pixels[i * 4 + 2] = 224; bm.pixels[i * 4 + 3] = 255 }
@@ -353,12 +354,18 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// The status line box: cream, black border, black text, to the right of the pointer.
     func hoverQuads() -> [Quad] {
         guard let h = hover, let ui = ui else { return [] }
-        let w = ui.numberFont.measure(h.text) + 8, ht = ui.numberFont.size + 4
+        // long texts (ability help) wrap at 300 px
+        let lines = ui.numberFont.measure(h.text) > 300 ? AdventureUI.wrap(h.text, font: ui.numberFont, width: 300) : [h.text]
+        let w = (lines.map { ui.numberFont.measure($0) }.max() ?? 0) + 8, lh = ui.numberFont.size + 2, ht = lh * lines.count + 2
         var x = h.x + 18, y = h.y - 4
-        if x + w > AdventureUI.mapViewportWidth { x = max(0, h.x - w - 4) }
+        let right = inCombat ? AdventureUI.width : AdventureUI.mapViewportWidth
+        if x + w > right { x = max(0, h.x - w - 4) }
         if y + ht > AdventureUI.height { y = AdventureUI.height - ht }
-        return [Quad(texture: black, x: x, y: y, w: w, h: ht), Quad(texture: cream, x: x + 1, y: y + 1, w: w - 2, h: ht - 2),
-                Quad(texture: uiTexture("num|\(h.text)", { ui.numberFont.render(h.text, colour: (0, 0, 0)) }), x: x + 4, y: y + 2, w: w - 8, h: ui.numberFont.size)]
+        var out = [Quad(texture: black, x: x, y: y, w: w, h: ht), Quad(texture: cream, x: x + 1, y: y + 1, w: w - 2, h: ht - 2)]
+        for (k, line) in lines.enumerated() {
+            out.append(Quad(texture: uiTexture("num|\(line)", { ui.numberFont.render(line, colour: (0, 0, 0)) }), x: x + 4, y: y + 2 + k * lh, w: ui.numberFont.measure(line), h: ui.numberFont.size))
+        }
+        return out
     }
     /// Device pixels per canvas pixel of the 1024x768 UI.
     var uiScale: Float { viewSize.y / Float(AdventureUI.height) }

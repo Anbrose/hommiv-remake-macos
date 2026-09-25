@@ -52,7 +52,8 @@ public final class Battle {
 
     /// What just happened, for the screen to animate in order.
     public enum Event {
-        case move(unit: Int, path: [(Int, Int)])
+        /// `path` excludes `from`; `flying` moves take off, fly straight and land (t_play_combat_flight).
+        case move(unit: Int, path: [(Int, Int)], from: (Int, Int), flying: Bool)
         case melee(unit: Int, target: Int, damage: Int, killed: Int)
         case shoot(unit: Int, target: Int, damage: Int, killed: Int)
         case die(unit: Int)
@@ -238,7 +239,7 @@ public final class Battle {
 
     /// Morale (heroes4.exe 0x5f0020): mechanical and undead creatures have none; otherwise the
     /// stack's morale from its army plus the side's loss penalty, clamped to -10...10.
-    func morale(_ u: Unit) -> Int {
+    public func morale(_ u: Unit) -> Int {
         if u.stats.has("mechanical") || u.stats.has("undead") { return 0 }
         return min(10, max(-10, u.stats.morale + lossPenalty[u.side]))
     }
@@ -379,6 +380,17 @@ public final class Battle {
     public func path(_ u: Unit, to gx: Int, _ gy: Int) -> [(Int, Int)]? {
         if u.stats.has("teleport") {   // Teleport: straight there
             return reachable(u)[Battle.key(gx, gy)] != nil ? [(gx, gy)] : nil
+        }
+        if u.stats.has("flying") {   // a flight (t_play_combat_flight) goes straight over everything
+            guard reachable(u)[Battle.key(gx, gy)] != nil else { return nil }
+            let n = max(abs(gx - u.x), abs(gy - u.y))
+            var line: [(Int, Int)] = []
+            for i in stride(from: 1, through: n, by: 1) {
+                let f = Float(i) / Float(n)
+                let x = u.x + Int((Float(gx - u.x) * f).rounded()), y = u.y + Int((Float(gy - u.y) * f).rounded())
+                line.append((x, y))
+            }
+            return line
         }
         let reach = explore(u)
         guard reachable(u)[Battle.key(gx, gy)] != nil else { return nil }
@@ -583,7 +595,7 @@ public final class Battle {
     public func move(to x: Int, _ y: Int) -> Bool {
         guard finished == nil, let u = current, let p = path(u, to: x, y), !p.isEmpty else { return false }
         u.moved += reachable(u)[Battle.key(x, y)] ?? 0
-        events.append(.move(unit: u.id, path: p))
+        events.append(.move(unit: u.id, path: p, from: (u.x, u.y), flying: u.stats.has("flying")))
         let prev = p.count > 1 ? p[p.count - 2] : (u.x, u.y)
         u.facing = Battle.facing(dx: Float(x - prev.0), dy: Float(y - prev.1))
         u.x = x; u.y = y
@@ -616,14 +628,15 @@ public final class Battle {
         let start = (u.x, u.y)
         if pos != (u.x, u.y), let p = path(u, to: pos.0, pos.1) {
             u.moved += reachable(u)[Battle.key(pos.0, pos.1)] ?? 0
-            events.append(.move(unit: u.id, path: p)); u.x = pos.0; u.y = pos.1
+            events.append(.move(unit: u.id, path: p, from: (u.x, u.y), flying: u.stats.has("flying"))); u.x = pos.0; u.y = pos.1
             release(by: u)
         }
         Battle.face(u, towards: t); Battle.face(t, towards: u)
         meleeExchange(u, t)
         // Strike and Return: back to where it started
         if u.alive, u.stats.has("strike_and_return"), (u.x, u.y) != start, !overlaps(start.0, start.1, u.size, except: u.id) {
-            events.append(.move(unit: u.id, path: [start])); u.x = start.0; u.y = start.1
+            let back = u.stats.has("flying") ? (path(u, to: start.0, start.1) ?? [start]) : [start]
+            events.append(.move(unit: u.id, path: back, from: (u.x, u.y), flying: u.stats.has("flying"))); u.x = start.0; u.y = start.1
         }
         endAction(u)
         return true

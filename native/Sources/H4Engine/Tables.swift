@@ -73,6 +73,8 @@ public final class RuleTables {
     /// Creature ability display names ("Normal Melee", "No Obstacle Penalty") -> the game's
     /// keywords ("normal_melee", "siege_machine"), from table.creature_abilities.
     public let abilityKeywords: [String: String]
+    /// Ability keyword (lower-cased) -> its display name and help text (table.creature_abilities).
+    public let abilityInfo: [String: (name: String, help: String)]
     /// table.combat_obstacles: how often an obstacle group appears on a terrain, and how often
     /// a group is placed next to another; frequencies usually/common/seldom/rare/never.
     public let obstacleFrequency: [String: [String: String]]   // terrain -> group -> frequency
@@ -175,11 +177,15 @@ public final class RuleTables {
             }
         }
         artifacts = arts
-        var ak: [String: String] = [:]
+        var ak: [String: String] = [:], info: [String: (name: String, help: String)] = [:]
         if let d = try? archive.payload("table.creature_abilities.h4d") {
-            for row in RuleTable(data: d).rows where row.count >= 2 && !row[0].isEmpty { ak[row[1].lowercased()] = row[0] }
+            for row in RuleTable(data: d).rows where row.count >= 2 && !row[0].isEmpty {
+                ak[row[1].lowercased()] = row[0]
+                info[row[0].lowercased()] = (row[1], row.count > 2 ? row[2] : "")
+            }
         }
         abilityKeywords = ak
+        abilityInfo = info
         var freq: [String: [String: String]] = [:], adj: [String: [String: String]] = [:]
         if let d = try? archive.payload("table.combat_obstacles.h4d") {
             let rows = RuleTable(data: d).rows

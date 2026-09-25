@@ -182,7 +182,8 @@ if let out = snapshot {
     if let target = battleAt, let hero = game.heroes.first, let cs = combatScreen,
        let p = scene.placed.first(where: { $0.cellX == target.0 && $0.cellY == target.1 }), let mi = game.monster(for: p) {
         cs.start(game: game, hero: hero, monsterAt: mi, p, terrain: 1)
-        if let b = cs.battle { for _ in 0..<battleSteps { b.autoAct() }; _ = b.takeEvents(); cs.pump(); if b.finished != nil { cs.result = (b.finished!, b.round); cs.showResults = battleResults } }
+        if let b = cs.battle { for _ in 0..<battleSteps { b.autoAct() }; _ = b.takeEvents(); cs.pump(); if b.finished != nil { cs.result = (b.finished!, b.round); cs.showResults = battleResults }
+            if let n = ProcessInfo.processInfo.environment["H4INFO"].flatMap({ Int($0) }), b.units.indices.contains(n) { cs.info = b.units[n].id } }   // snapshot: open a unit's creature window
         print("battle: round \(cs.battle?.round ?? 0), units \(cs.battle?.units.map { "\($0.stats.name)x\($0.stats.count) morale \($0.stats.morale)@(\($0.x),\($0.y))" }.joined(separator: " ") ?? "")")
     }
     if openHeroScreen { renderer.adventureDialog = .hero(0) }
@@ -335,12 +336,18 @@ final class MapView: MTKView {
         if name != cursorName { cursorName = name; cursorFrame = 0; cursors?.set(name)?.frames.first?.set() }
         // the status line appears once the pointer rests on the map for a moment
         renderer.hover = nil
-        hoverPending = (name == "normal" && (renderer.ui == nil || cx >= Float(AdventureUI.mapViewportWidth))) || (renderer.inCombat && !name.hasPrefix("combat.melee") && name != "combat.shoot") ? nil : (mouse, Date())
+        hoverPending = (name == "normal" && (renderer.ui == nil || cx >= Float(AdventureUI.mapViewportWidth))) || (renderer.inCombat && renderer.combat?.info == nil && !name.hasPrefix("combat.melee") && name != "combat.shoot") ? nil : (mouse, Date())
     }
     var hoverPending: (mouse: SIMD2<Float>, since: Date)?
     func tickHover() {
         guard let p = hoverPending, Date().timeIntervalSince(p.since) > 0.4, renderer.hover == nil, renderer.townOpen == nil else { return }
         if renderer.inCombat {
+            if renderer.combat?.info != nil {
+                if let tip = renderer.combatInfoTip(x: p.mouse.x / renderer.uiScale, y: p.mouse.y / renderer.uiScale) {
+                    renderer.hover = (tip, Int(p.mouse.x / renderer.uiScale), Int(p.mouse.y / renderer.uiScale))
+                }
+                return
+            }
             if let text = renderer.combatStatusText(x: p.mouse.x / renderer.uiScale, y: p.mouse.y / renderer.uiScale) {
                 renderer.hover = (text, Int(p.mouse.x / renderer.uiScale), Int(p.mouse.y / renderer.uiScale))
             }
@@ -405,6 +412,7 @@ final class MapView: MTKView {
         let scale = Float(window?.backingScaleFactor ?? 1)
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
         let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale
+        if renderer.inCombat { renderer.combatInspect(x: cx, y: cy); return }
         if renderer.onPopup(cx, cy) || renderer.onDialog(cx, cy).inside { return }
         if renderer.ui != nil, cx >= Float(AdventureUI.mapViewportWidth) { renderer.popup = nil; renderer.creatureDialog = nil; return }
         renderer.inspect(mapPoint: renderer.pan + mouse / renderer.zoom, canvas: (cx, cy))

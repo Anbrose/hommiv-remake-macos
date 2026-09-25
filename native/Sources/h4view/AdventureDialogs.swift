@@ -186,8 +186,10 @@ extension Renderer {
         } }
         return out
     }
-    func messageBoxQuads() -> [Quad] {
-        guard let ui = ui, let m = messageLayout(), let d = ui.dialog("generic") else { return [] }
+    /// The generic dialog frame (layers.dialog.generic): background tiled over the inside, edges
+    /// between the corners, the corners.
+    func frameQuads(x mx: Int, y my: Int, w mw: Int, h mh: Int) -> [Quad] {
+        guard let ui = ui, let d = ui.dialog("generic") else { return [] }
         var out: [Quad] = []
         func piece(_ name: String, _ x: Int, _ y: Int, w: Int? = nil, h: Int? = nil) {
             guard let l = d[name] else { return }
@@ -195,24 +197,28 @@ extension Renderer {
             let key = "gen|\(name)|\(ww)|\(hh)"
             out.append(Quad(texture: uiTexture(key, { ww == l.width && hh == l.height ? l.bitmap : cropped(l.bitmap, ww, hh) }), x: x, y: y, w: ww, h: hh))
         }
-        // the background, tiled over the inside
         if let bg = d["Background"] {
             var y = 6
-            while y < m.h - 6 {
+            while y < mh - 6 {
                 var x = 6
-                while x < m.w - 6 { piece("Background", m.x + x, m.y + y, w: min(bg.width, m.w - 6 - x), h: min(bg.height, m.h - 6 - y)); x += bg.width }
+                while x < mw - 6 { piece("Background", mx + x, my + y, w: min(bg.width, mw - 6 - x), h: min(bg.height, mh - 6 - y)); x += bg.width }
                 y += bg.height
             }
         }
-        // the edges between the corners, then the corners
         if let top = d["Top"], let left = d["Left"] {
             var x = 31
-            while x < m.w - 26 { let w = min(top.width, m.w - 26 - x); piece("Top", m.x + x, m.y, w: w); piece("Bottom", m.x + x, m.y + m.h - 12, w: w); x += top.width }
+            while x < mw - 26 { let w = min(top.width, mw - 26 - x); piece("Top", mx + x, my, w: w); piece("Bottom", mx + x, my + mh - 12, w: w); x += top.width }
             var y = 28
-            while y < m.h - 36 { let h = min(left.height, m.h - 36 - y); piece("Left", m.x, m.y + y, h: h); piece("Right", m.x + m.w - 11, m.y + y, h: h); y += left.height }
+            while y < mh - 36 { let h = min(left.height, mh - 36 - y); piece("Left", mx, my + y, h: h); piece("Right", mx + mw - 11, my + y, h: h); y += left.height }
         }
-        piece("Top_Left", m.x, m.y); piece("Top_Right", m.x + m.w - 26, m.y)
-        piece("Bottom_Left", m.x, m.y + m.h - 36); piece("Bottom_Right", m.x + m.w - 26, m.y + m.h - 36)
+        piece("Top_Left", mx, my); piece("Top_Right", mx + mw - 26, my)
+        piece("Bottom_Left", mx, my + mh - 36); piece("Bottom_Right", mx + mw - 26, my + mh - 36)
+        _ = ui
+        return out
+    }
+    func messageBoxQuads() -> [Quad] {
+        guard let ui = ui, let m = messageLayout() else { return [] }
+        var out = frameQuads(x: m.x, y: m.y, w: m.w, h: m.h)
         for (i, line) in m.lines.enumerated() where !line.isEmpty {
             let w = m.font.measure(line)
             out.append(Quad(texture: uiTexture("msg|\(line)", { m.font.render(line, colour: (40, 24, 8)) }), x: m.x + (m.w - w) / 2, y: m.y + 30 + i * m.font.lineHeight, w: w, h: m.font.size))

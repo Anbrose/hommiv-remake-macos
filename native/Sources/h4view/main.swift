@@ -193,6 +193,7 @@ if let out = snapshot {
     renderer.combat = combatScreen
     renderer.movies = movies
     if let m = ProcessInfo.processInfo.environment["H4SAVEDIALOG"] { renderer.openSaveDialog(m == "load" ? .load : .save) }   // snapshot the save / load dialog
+    if ProcessInfo.processInfo.environment["H4MENU"] != nil { renderer.openSystemMenu() }   // snapshot the system menu
     if walk != nil { game.quickCombatOnly = true }   // --walk snapshots resolve fights at once
     if let target = battleAt, let hero = game.heroes.first, let cs = combatScreen,
        let p = scene.placed.first(where: { $0.cellX == target.0 && $0.cellY == target.1 }), let mi = game.monster(for: p) {
@@ -406,6 +407,7 @@ final class MapView: MTKView {
             renderer.combatClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale)
             return
         }
+        if renderer.menuClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale) { return }
         if renderer.saveDialogClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale, double: e.clickCount >= 2) { return }
         if renderer.messageBoxClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale) { return }   // a script message: only OK
         if renderer.popup != nil {   // an open right-click box: a left click outside it closes it, and does nothing else
@@ -429,6 +431,9 @@ final class MapView: MTKView {
             if renderer.townOpen != nil { renderer.townClick(x: cx, y: cy); return }
             if cx >= Float(AdventureUI.mapViewportWidth) {
                 if ui.hit("end_turn", x: cx, y: cy) { g.endTurn() }
+                else if ui.hit("System_menu_button", x: cx, y: cy) { renderer.openSystemMenu() }
+                else if ui.hit("Game_menu_button", x: cx, y: cy) { renderer.openGameMenu() }
+                else if ui.hit("move_army_button", x: cx, y: cy) { g.continueMoving(hero) }   // the horse: go on along the kept route
                 else if ui.hit("mini_map", x: cx, y: cy), let mm = ui.hotspot("mini_map") {   // the minimap: bring the view there
                     let n = Float(g.map.size)
                     let col = (cx - Float(mm.x)) / Float(mm.width) * n - n / 2, row = (cy - Float(mm.y)) / Float(mm.height) * n + n / 2

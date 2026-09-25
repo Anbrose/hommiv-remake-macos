@@ -66,6 +66,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     var movies: Movies?
     var sound: GameSound?
     var saveDialog: SaveDialog?
+    var menu: PopupMenu?
     /// The game's archive and scenario files (for saving and for starting again from a save).
     var archivePath: String?, mapPath: String?
     var lastAutosaveDay: Int?
@@ -579,6 +580,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         out += adventureDialogQuads()
         out += messageBoxQuads()
         out += saveDialogQuads()
+        out += menuQuads()
         return out
     }
     var showBlocked = false   // debug: mark every cell a hero cannot enter
@@ -746,17 +748,22 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// stack, activate over something to visit, move over walkable ground, blocked elsewhere.
     func cursorKind(mapPoint m: SIMD2<Float>) -> String {
         cursorFrameIndex = nil
-        let kind = pointerKind(mapPoint: m)
-        guard ["move", "attack", "activate"].contains(kind), let g = game, let h = g.heroes.first else { return kind }
+        var kind = pointerKind(mapPoint: m)
+        // a free cell where a wandering stack would fall on the hero: the danger pointer
+        if kind == "move", let g = game, let h = g.heroes.first {
+            let c = cell(at: m)
+            if g.threat(to: h, at: c.0, c.1) != nil { kind = "Danger_Zone" }
+        }
+        guard ["move", "attack", "activate", "Danger_Zone"].contains(kind), let g = game, let h = g.heroes.first else { return kind }
         // the days to get there pick the frame; an object is reached from the cell before it
         var c = cell(at: m)
-        if kind != "move", let p = scene.placed.last(where: { g.isVisitable($0) && (underCursor($0, m) || onFootprint($0, c)) }) {
+        if kind != "move", kind != "Danger_Zone", let p = scene.placed.last(where: { g.isVisitable($0) && (underCursor($0, m) || onFootprint($0, c)) }) {
             c = kind == "attack" || g.town(for: p) == nil ? (p.cellX, p.cellY) : g.gateCells(p)[0]
         }
         let key = c.0 * g.map.size + c.1 + h.x * 1_000_003 + h.y * 7919 + Int(h.movement * 10) * 104729
         if dayCache?.cell != key {
             var days = g.daysToReach(h, c)
-            if days == nil, kind != "move" {   // an object: the cheapest free neighbour
+            if days == nil, kind != "move", kind != "Danger_Zone" {   // an object: the cheapest free neighbour
                 for dx in -1...1 { for dy in -1...1 where dx != 0 || dy != 0 {
                     if let d = g.daysToReach(h, (c.0 + dx, c.1 + dy)) { days = min(days ?? d, d) }
                 } }

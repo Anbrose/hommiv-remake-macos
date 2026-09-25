@@ -941,6 +941,12 @@ public final class GameState {
         }
     }
 
+    /// Go on along the route kept from before (the panel's "Continue Moving Army").
+    public func continueMoving(_ h: Hero) {
+        guard !h.isWalking, !h.plan.isEmpty else { return }
+        h.path = h.plan; h.plan = []; h.progress = 0
+    }
+
     /// Advance walking heroes by dt seconds.
     public func update(dt: Float) {
         for h in heroes where h.isWalking {

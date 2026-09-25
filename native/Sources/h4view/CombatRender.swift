@@ -133,8 +133,9 @@ extension Renderer {
                             q.append(Quad(texture: uiTexture("label|health|mb", { mb.bitmap }), x: bx + mb.x, y: by + mb.y, w: mb.width / 2, h: mb.height))
                         } else {
                             let count = String(cs.shownCount[u.id] ?? u.stats.count)
-                            let w = ui.numberFont.measure(count)
-                            q.append(Quad(texture: uiTexture("count|\(count)|white", { ui.numberFont.render(count, colour: (255, 255, 255)) }), x: boxX + (boxW - w) / 2, y: boxY + (boxH - ui.numberFont.size) / 2, w: w, h: ui.numberFont.size))
+                            let labelFont = ui.font(18)
+                            let w = labelFont.measure(count)
+                            q.append(Quad(texture: uiTexture("count18|\(count)|white", { labelFont.render(count, colour: (255, 255, 255)) }), x: boxX + (boxW - w) / 2, y: boxY + (boxH - labelFont.size) / 2, w: w, h: labelFont.size))
                         }
                     }
                 }
@@ -154,30 +155,34 @@ extension Renderer {
             out.append(Quad(texture: texture(for: fr, of: "spell.\(fx.name)"), x: Int(px) - width / 2 + fr.box.left, y: Int(py) - height + fr.box.top + 8, w: fr.bitmap.width, h: fr.bitmap.height))
         }
         // damage numbers
-        for fl in cs.floaters {
+        // floating messages: large white numbers with the message icon to their right, rising
+        let messageFont = ui.font(24)
+        for fl in cs.floaters where now >= fl.since {
             let age = Float(max(0, now.timeIntervalSince(fl.since)))
             let (px, py) = CombatScreen.point(fl.x, fl.y)
-            let w = ui.dateFont.measure(fl.text)
-            out.append(Quad(texture: uiTexture("date|\(fl.text)|red", { ui.dateFont.render(fl.text, colour: (255, 80, 60)) }), x: Int(px) - w / 2, y: Int(py - 70 - age * 25), w: w, h: ui.dateFont.size))
+            let icon = fl.icon.flatMap { iconSheet("combat_messages")[$0.lowercased()] }
+            let w = messageFont.measure(fl.text), iw = icon?.width ?? 0
+            let x0 = Int(px) - (w + iw) / 2, y0 = Int(py - 80 - age * 25) + fl.line * 30
+            let white = fl.icon != nil
+            out.append(Quad(texture: uiTexture("float|\(fl.text)|shadow", { messageFont.render(fl.text, colour: (0, 0, 0)) }), x: x0 + 1, y: y0 + 1, w: w, h: messageFont.size))
+            out.append(Quad(texture: uiTexture("float|\(fl.text)|\(white)", { messageFont.render(fl.text, colour: white ? (255, 255, 255) : (255, 80, 60)) }), x: x0, y: y0, w: w, h: messageFont.size))
+            if let ic = icon { out.append(Quad(texture: uiTexture("msgicon|\(ic.name)", { ic.bitmap }), x: x0 + w + 2, y: y0 + (messageFont.size - ic.height) / 2, w: ic.width, h: ic.height)) }
         }
         // the frame and the panel
-        for l in cs.frame.layers where l.isImage && l.name != "Ring_Released" {
+        for l in cs.frame.layers where l.isImage && l.name != "Ring_Released" && l.name != "creature_icon" {   // creature_icon is only a placeholder box
             out.append(Quad(texture: uiTexture("combatframe|\(l.name)", { l.bitmap }), x: l.x, y: l.y, w: l.width, h: l.height))
         }
         if let cur = b.current, cs.result == nil {
-            if let ring = cs.hotspot("Ring_Released") { out.append(Quad(texture: uiTexture("combatframe|ring", { ring.bitmap }), x: ring.x, y: ring.y, w: ring.width, h: ring.height)) }
-            if let slot = cs.hotspot("creature_icon") {
+            // the portrait centred in the ring, the ring over it
+            if let ring = cs.hotspot("Ring_Released") {
                 let icon = cur.stats.isHero ? ui.portrait(keyword: cur.keyword, alignment: cs.hero?.alignment ?? "life") : ui.creatureIcon(cur.keyword)
-                if let icon = icon { out.append(Quad(texture: uiTexture("icon|\(icon.name)", { icon.bitmap }), x: slot.x + (slot.width - icon.width) / 2, y: slot.y + (slot.height - icon.height) / 2, w: icon.width, h: icon.height)) }
+                if let icon = icon { out.append(Quad(texture: uiTexture("icon|\(icon.name)", { icon.bitmap }), x: ring.x + (ring.width - icon.width) / 2, y: ring.y + (ring.height - icon.height) / 2, w: icon.width, h: icon.height)) }
+                out.append(Quad(texture: uiTexture("combatframe|ring", { ring.bitmap }), x: ring.x, y: ring.y, w: ring.width, h: ring.height))
             }
             let health = "\(cur.stats.hitPoints - cur.stats.wounds)/\(cur.stats.hitPoints)"
             out += centred(health, in: cs.hotspot("Health_Text"), at: 0, 0, font: ui.numberFont)
             out += centred("\(cur.shots)", in: cs.hotspot("Shots_Text"), at: 0, 0, font: ui.numberFont)
             out += centred("0", in: cs.hotspot("Spell_Points_Text"), at: 0, 0, font: ui.numberFont)
-            let name = cur.stats.isHero ? cur.stats.name : "\(cur.stats.count) \(cur.stats.name)"
-            for (i, line) in AdventureUI.wrap(name + "\nRound \(b.round)", font: ui.numberFont, width: 95).enumerated() {
-                if let at = cs.hotspot("Action_Text") { out.append(Quad(texture: uiTexture("num|\(line)", { ui.numberFont.render(line, colour: (40, 24, 8)) }), x: at.x + (at.width - ui.numberFont.measure(line)) / 2, y: at.y + 40 + i * ui.numberFont.lineHeight, w: ui.numberFont.measure(line), h: ui.numberFont.size)) }
-            }
         }
         for (hs, name) in [("cast_spell", "cast_spell"), ("defend", "defend"), ("wait", "wait"), ("melee", "melee"), ("auto_attack", "auto"), ("combat_options", "options"), ("retreat", "retreat"), ("surrender", "surrender")] {
             guard let slot = cs.hotspot(hs) else { continue }

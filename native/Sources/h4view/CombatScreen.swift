@@ -27,7 +27,15 @@ final class CombatScreen {
     var dead: Set<Int> = []
     var result: (won: Bool, rounds: Int)?
     var showResults = false
-    var floaters: [(text: String, x: Float, y: Float, since: Date)] = []
+    /// Floating combat messages: text, where, since when, and the icon of layers.icons.combat_messages
+    /// beside it ("damage" the broken heart, "Death" the skull; nil none), and the line (0 top).
+    var floaters: [(text: String, x: Float, y: Float, since: Date, icon: String?, line: Int)] = []
+    /// The message pair of a blow (heroes4.exe 0x5661f0): "-%i" with the broken heart for the damage
+    /// and, when any die, "-%i" with the skull for the creatures killed.
+    func blowMessages(damage: Int, killed: Int, at c: (Float, Float), since: Date) {
+        if damage > 0 { floaters.append(("-\(damage)", c.0, c.1, since, "damage", 0)) }
+        if killed > 0 { floaters.append(("-\(killed)", c.0, c.1, since, "Death", 1)) }
+    }
     /// Spell-style effects playing over a unit (morale shows "sorrow" / "spiritual fervor").
     var effects: [(name: String, unit: Int, since: Date)] = []
     /// Idle creatures stand in their "wait" loop; the battle's idle timer (heroes4.exe 0x563870)
@@ -266,7 +274,7 @@ final class CombatScreen {
             let flinchTime = left > 0 ? stateDuration(t.actor, "flinch", t.facing) : 0
             hits.append((target: target, at: now.addingTimeInterval(hitAt), left: left))
             playing = Anim(event: e, started: now, duration: max(attackTime, hitAt + flinchTime))
-            floaters.append(("-\(dmg)" + (killed > 0 ? " (\(killed) killed)" : ""), tc.0, tc.1, now.addingTimeInterval(hitAt)))
+            blowMessages(damage: dmg, killed: killed, at: tc, since: now.addingTimeInterval(hitAt))
             pendingCount.append((target, left, now.addingTimeInterval(hitAt)))
         case .die(let id):
             pendingDeaths.remove(id)
@@ -283,13 +291,13 @@ final class CombatScreen {
             let name = good ? "spiritual fervor" : "sorrow"
             effects.append((name, id, now))
             let u = b.unit(id)
-            floaters.append((strings[good ? "combat_action.good_morale" : "combat_action.bad_morale"] ?? (good ? "Good Morale" : "Bad Morale"), u.centre.0, u.centre.1, now))
+            floaters.append((strings[good ? "combat_action.good_morale" : "combat_action.bad_morale"] ?? (good ? "Good Morale" : "Bad Morale"), u.centre.0, u.centre.1, now, nil, 0))
             playing = Anim(event: e, started: now, duration: effectDuration(name))
         case .effect(let id, let name, let dmg, let killed, let left):
             if effectSprite(name) != nil { effects.append((name, id, now)) }
             let c = shownCentre(b.unit(id))
             shownCount[id] = left
-            if dmg > 0 { floaters.append(("-\(dmg)" + (killed > 0 ? " (\(killed) killed)" : ""), c.0, c.1, now)) }
+            blowMessages(damage: dmg, killed: killed, at: c, since: now)
             playing = Anim(event: e, started: now, duration: min(1.2, effectSprite(name) != nil ? effectDuration(name) : 0.4))
         case .wait, .newRound:
             break

@@ -62,6 +62,7 @@ while i < args.count {
 var t0 = Date()
 func lap(_ what: String) { print("\(what): \(Int(Date().timeIntervalSince(t0) * 1000)) ms"); t0 = Date() }
 let archive = try H4Archive(url: URL(fileURLWithPath: args[1]))
+let movies = Movies(dataDirectory: URL(fileURLWithPath: args[1]).deletingLastPathComponent())
 func writePNG(_ bm: Bitmap, to path: String) {
     // straight (non-premultiplied) RGBA: CGImage accepts it, CGContext would not
     guard let provider = CGDataProvider(data: Data(bm.pixels) as CFData),
@@ -178,6 +179,7 @@ if let out = snapshot {
     renderer.ui = ui
     renderer.town = townScreen
     renderer.combat = combatScreen
+    renderer.movies = movies
     if walk != nil { game.quickCombatOnly = true }   // --walk snapshots resolve fights at once
     if let target = battleAt, let hero = game.heroes.first, let cs = combatScreen,
        let p = scene.placed.first(where: { $0.cellX == target.0 && $0.cellY == target.1 }), let mi = game.monster(for: p) {
@@ -492,6 +494,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         renderer.ui = ui
         renderer.town = townScreen
         renderer.combat = combatScreen
+    renderer.movies = movies
         renderer.onTitle = { [weak self] t in if self?.window.title != t { self?.window.title = t } }
         view.renderer = renderer
         view.cursors = GameCursors(archive: archive)

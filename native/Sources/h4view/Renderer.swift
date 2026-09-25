@@ -62,6 +62,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     var townDialog: TownDialog? = nil
     var adventureDialog: AdventureDialog? = nil
     var combat: CombatScreen?
+    /// The game's movies (movies.h4r), decoded on demand.
+    var movies: Movies?
     var combatMeleeMode = false
     /// The frame the pointer shows, when its frames are not an animation: the move / attack /
     /// activate and combat walk / fly pointers have one frame per 1, 2, 3 and 4+ days or turns.

@@ -50,6 +50,8 @@ final class CombatScreen {
     var info: Int?
     /// The town a retreating hero goes to.
     var retreatTown: Int?
+    /// When the results dialog appeared (its movie runs from then).
+    var resultShownAt: Date?
     var idleRandom = GameRandom(seed: 0x563870)
     var strings: [String: String] = [:]
     var effectSprites: [String: Sprite] = [:]
@@ -165,7 +167,7 @@ final class CombatScreen {
             if let st = st, let d = t.creature(st.creature) { var f = fighter(d, st.count, army: monsterArmy); f.slot = k; defenders.append(f) }
         }
         battle = Battle(field: f, attackers: attackers, defenders: defenders, seed: seed)
-        queue = []; playing = nil; unitPos = [:]; unitState = [:]; dead = []; dying = []; pendingDeaths = []; hits = []; pendingCount = []; shownPos = [:]; shownCount = [:]; result = nil; showResults = false; floaters = []; effects = []
+        queue = []; playing = nil; unitPos = [:]; unitState = [:]; resultShownAt = nil; dead = []; dying = []; pendingDeaths = []; hits = []; pendingCount = []; shownPos = [:]; shownCount = [:]; result = nil; showResults = false; floaters = []; effects = []
         pump()
     }
 

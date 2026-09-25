@@ -7,7 +7,11 @@ public struct UILayer {
     public let kind: UInt8          // 0 opaque image, 4 image with alpha, 1 hotspot
     public let x: Int, y: Int, width: Int, height: Int
     public let bitmap: Bitmap       // RGBA (index 0 of the palette transparent)
-    public var isImage: Bool { kind != 1 }
+    public var isImage: Bool { kind != 1 && !isMarker }
+    /// Colours in the layer's palette: a 2-colour "image" is a placeholder box that marks a slot
+    /// for text or a picture (Victor, creature_icon, ok_button, ...), not something to draw.
+    public var paletteSize = 256
+    public var isMarker: Bool { kind != 1 && paletteSize <= 3 }
     public init(name: String, kind: UInt8, x: Int, y: Int, width: Int, height: Int, bitmap: Bitmap) {
         self.name = name; self.kind = kind; self.x = x; self.y = y; self.width = width; self.height = height; self.bitmap = bitmap
     }
@@ -76,7 +80,9 @@ public struct LayerFile {
             }
             p = alphaStart
             if kind == 4 { p += (px + 1) / 2 + (px > 0 ? ((px + 4 + 63) / 64 + 1) / 2 : 0) }
-            out.append(UILayer(name: name, kind: kind, x: x0, y: y0, width: w, height: h, bitmap: bm))
+            var layer = UILayer(name: name, kind: kind, x: x0, y: y0, width: w, height: h, bitmap: bm)
+            layer.paletteSize = npal
+            out.append(layer)
         }
         layers = out
     }

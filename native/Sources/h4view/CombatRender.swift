@@ -233,39 +233,68 @@ extension Renderer {
     }
 
     /// layers.dialog.Combat_results: victor and loser portraits, losses.
+    /// The combat results (layers.dialog.Combat_results): the title, the outcome text, the battle's
+    /// movie in Cut_Scene (movies.h4r: win_battle / lose_battle / retreat, intro once then the
+    /// loop), the winner left and the loser right in their frames with "Victorious" / "Defeated"
+    /// under them, and each side's "Casualties": every stack with the creatures it lost.
     func combatResultQuads() -> [Quad] {
         guard let cs = combat, let b = cs.battle, let ui = ui, let d = ui.dialog("Combat_results"), let r = cs.result else { return [] }
         let ox = (AdventureUI.width - 798) / 2, oy = (AdventureUI.height - 599) / 2
-        var out = dialogImages(d, key: "results", at: ox, oy, skip: ["ok_button"])
-        out += centred(r.won ? "Victory!" : "Defeat", in: d["Title"], at: ox, oy, font: ui.dateFont)
-        var text = r.won ? "Your army has won the battle after \(r.rounds) rounds and gains \(b.experience) experience." : "Your army was defeated after \(r.rounds) rounds."
+        var out = dialogImages(d, key: "results", at: ox, oy)
+        out += centred(text("combat_results_title.combat", "Combat Results"), in: d["Title"], at: ox, oy, font: ui.font(18))
+        var line = r.won ? text("player_won_battle.combat", "You have vanquished your foe!") + "  \(b.experience) experience." : "Your army was defeated after \(r.rounds) rounds."
         if b.retreated, let h = cs.hero, let t = cs.retreatTown, let g = game {
-            text = self.text("one_hero_retreats.combat", "%Hero_name retreats shamefully to %town_name.")
+            line = text("one_hero_retreats.combat", "%Hero_name retreats shamefully to %town_name.")
                 .replacingOccurrences(of: "%Hero_name", with: h.name).replacingOccurrences(of: "%town_name", with: g.towns[t].name)
         }
-        out += paragraph(text, in: d["Combat_Results_Text"], at: ox, oy, font: ui.numberFont)
-        let winner = r.won ? 0 : 1, loser = 1 - winner
-        func portrait(side: Int, in slot: String) {
-            guard let s = d[slot] else { return }
-            let lead = b.units.first { $0.side == side }
-            let icon = lead.map { u in u.stats.isHero ? ui.portrait(keyword: u.keyword, alignment: cs.hero?.alignment ?? "life") : ui.creatureIcon(u.keyword) } ?? nil
-            if let icon = icon { out.append(Quad(texture: uiTexture("icon|\(icon.name)", { icon.bitmap }), x: ox + s.x + (s.width - icon.width) / 2, y: oy + s.y + (s.height - icon.height) / 2, w: icon.width, h: icon.height)) }
+        out += paragraph(line, in: d["Combat_Results_Text"], at: ox, oy, font: ui.dateFont)
+        // the movie
+        if let slot = d["Cut_Scene"], let movies = movies {
+            let kind = r.won ? "win_battle" : b.retreated ? "retreat" : "lose_battle"
+            let since = cs.resultShownAt ?? Date()
+            if cs.resultShownAt == nil { cs.resultShownAt = since }
+            let t = Date().timeIntervalSince(since)
+            var frame: (Movie, Int)? = nil
+            if let intro = movies.movie("\(kind)_intro") {
+                let n = Int(t * intro.fps)
+                if n < intro.frames.count { frame = (intro, n) }
+                else if let loop = movies.movie("\(kind)_loop") {
+                    frame = (loop, Int((t - Double(intro.frames.count) / intro.fps) * loop.fps) % loop.frames.count)
+                } else { frame = (intro, intro.frames.count - 1) }
+            }
+            if let (m, i) = frame {
+                out.append(Quad(texture: uiTexture("movie|\(kind)|\(ObjectIdentifier(m).hashValue)|\(i)", { m.frames[i] }), x: ox + slot.x + (slot.width - m.width) / 2, y: oy + slot.y + (slot.height - m.height) / 2, w: m.width, h: m.height))
+            }
         }
-        portrait(side: winner, in: "Winner_Portrait"); portrait(side: loser, in: "Loser_Portrait")
+        let winner = r.won ? 0 : 1, loser = 1 - winner
+        func icon(_ u: Battle.Unit, size: Int) -> UILayer? {
+            u.stats.isHero ? (ui.portrait(keyword: u.keyword, alignment: cs.hero?.alignment ?? "life", size: size) ?? ui.portrait(keyword: u.keyword, alignment: cs.hero?.alignment ?? "life"))
+                           : (ui.creatureIcon(u.keyword, size: size) ?? ui.creatureIcon(u.keyword))
+        }
+        // the side's leader in its frame, and the label under it
+        func leader(side: Int, frame: String, label: String, text words: String) {
+            if let f = d[frame], let lead = b.units.first(where: { $0.side == side }), let ic = icon(lead, size: 82) {
+                out.append(Quad(texture: uiTexture("icon82|\(ic.name)", { ic.bitmap }), x: ox + f.x + (f.width - ic.width) / 2, y: oy + f.y + (f.height - ic.height) / 2, w: ic.width, h: ic.height))
+                out.append(Quad(texture: uiTexture("dlg|results|\(frame)", { f.bitmap }), x: ox + f.x, y: oy + f.y, w: f.width, h: f.height))
+            }
+            out += centred(words, in: d[label], at: ox, oy, font: ui.font(18))
+        }
+        leader(side: winner, frame: "Winner_Frame", label: "Victor", text: text("victorious.combat", "Victorious"))
+        leader(side: loser, frame: "Loser_Frame", label: "Defeated", text: text("defeated.combat", "Defeated"))
+        out += centred(text("creatures_lost_victor.combat", "Casualties"), in: d["Victor_Losses"], at: ox, oy, font: ui.dateFont)
+        out += centred(text("creatures_lost_victor.combat", "Casualties"), in: d["Defeated_Losses"], at: ox, oy, font: ui.dateFont)
+        // casualties: each stack of the side (up to 8, four to a row) with what it lost
         func losses(side: Int, in slot: String) {
             guard let s = d[slot] else { return }
             let units = b.units.filter { $0.side == side }
-            let step = s.width / 7
-            for (k, u) in units.prefix(7).enumerated() {
-                let cx = ox + s.x + step * k + step / 2, cy = oy + s.y + s.height / 2
-                let icon = u.stats.isHero ? ui.portrait(keyword: u.keyword, alignment: cs.hero?.alignment ?? "life") : ui.creatureIcon(u.keyword)
-                if let icon = icon { out.append(Quad(texture: uiTexture("icon|\(icon.name)", { icon.bitmap }), x: cx - icon.width / 2, y: cy - icon.height / 2 - 8, w: icon.width, h: icon.height)) }
-                let lost = u.stats.isHero ? (u.alive ? "" : "dead") : "\(u.stats.count)"
-                if !lost.isEmpty {
-                    let w = ui.numberFont.measure(lost)
-                    out.append(Quad(texture: shade, x: cx - w / 2 - 4, y: cy + 20, w: w + 8, h: ui.numberFont.size + 2))
-                    out.append(Quad(texture: uiTexture("count|\(lost)", { ui.numberFont.render(lost, colour: (255, 236, 200)) }), x: cx - w / 2, y: cy + 21, w: w, h: ui.numberFont.size))
-                }
+            let cols = 4, stepX = s.width / cols, stepY = s.height / 2
+            for (k, u) in units.prefix(8).enumerated() {
+                let cx = ox + s.x + stepX * (k % cols) + stepX / 2, top = oy + s.y + stepY * (k / cols) + 4
+                if let ic = icon(u, size: 52) { out.append(Quad(texture: uiTexture("icon|\(ic.name)", { ic.bitmap }), x: cx - ic.width / 2, y: top, w: ic.width, h: ic.height)) }
+                let lost = u.stats.isHero ? (u.alive ? "0" : text("combat_label.dead", "dead")) : "\(u.initialCount - u.stats.count)"
+                let w = ui.numberFont.measure(lost)
+                out.append(Quad(texture: shade, x: cx - w / 2 - 4, y: top + 54, w: w + 8, h: ui.numberFont.size + 2))
+                out.append(Quad(texture: uiTexture("count|\(lost)", { ui.numberFont.render(lost, colour: (255, 236, 200)) }), x: cx - w / 2, y: top + 55, w: w, h: ui.numberFont.size))
             }
         }
         losses(side: winner, in: "Winner_Rings"); losses(side: loser, in: "Loser_Rings")

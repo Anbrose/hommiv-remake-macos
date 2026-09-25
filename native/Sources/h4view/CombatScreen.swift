@@ -83,17 +83,14 @@ final class CombatScreen {
     }
     var healthSheet: LayerFile? { labels("health") }
 
-    /// A land field for the terrain the hero stands on: open ground with obstacles of its kind.
-    func generatedField(terrain: UInt8, variant: UInt8, seed: Int) -> Battlefield {
-        var cands: [(name: String, w: Int, h: Int)] = []
-        for fam in CombatScreen.obstacleFamilies[terrain] ?? ["Rocks.Dirt"] {
-            let prefix = "combat_object.obstacles.\(fam.lowercased())."
-            for (lower, real) in lowerIndex where lower.hasPrefix(prefix) && lower.hasSuffix(".h4d") {
-                if let d = try? archive.payload(real), d.count > 4, d[d.startIndex] == 2 { cands.append((real, max(1, Int(d[d.startIndex + 2])), max(1, Int(d[d.startIndex + 3])))) }
-            }
-        }
-        cands.sort { $0.name < $1.name }   // a fixed order, so a seed always gives the same field
-        return Battlefield(terrain: terrain, variant: variant, obstacles: cands, seed: seed)
+    /// Obstacle kinds from combat_header (loaded once).
+    lazy var obstacleKinds: [Battlefield.ObstacleKind] = payload("combat_header_table_cache.combat_header.h4d").map(Battlefield.obstacleKinds) ?? []
+    static let terrainKeys: [UInt8: String] = [0: "water", 1: "grass", 2: "rough", 3: "swamp", 4: "volcanic", 5: "snow", 6: "sand", 7: "dirt", 8: "subterranean"]
+
+    /// A land field for the terrain the hero stands on, obstacles as the game's tables say.
+    func generatedField(terrain: UInt8, variant: UInt8, seed: Int, tables: RuleTables) -> Battlefield {
+        let key = CombatScreen.terrainKeys[terrain] ?? "grass"
+        return Battlefield(terrain: terrain, variant: variant, kinds: obstacleKinds, frequency: tables.obstacleFrequency[key] ?? [:], adjacency: tables.obstacleAdjacency, seed: seed)
     }
 
     /// Set up a battle between a hero's army and a wandering stack.
@@ -102,14 +99,17 @@ final class CombatScreen {
         hero = h; monsterIndex = i; placed = p
         let seed = g.day * 977 + h.x * 31 + h.y
         fieldName = "generated.\(terrain).\(variant).\(seed)"
-        field = generatedField(terrain: terrain, variant: variant, seed: seed)
+        field = generatedField(terrain: terrain, variant: variant, seed: seed, tables: t)
+        Combatant.abilityKeywords = t.abilityKeywords
         guard let f = field else { return }
         let classActor = "hero.\(h.alignment)_fighter_male"
         func fighter(_ cd: CreatureDef, _ n: Int) -> Battle.Fighter {
             Battle.Fighter(stats: Combatant(creature: cd, count: n), keyword: cd.keyword, actor: cd.name, size: actor(cd.name)?.size ?? 4, move: cd.move, shots: cd.shots)
         }
-        // a hero walks as far as the slowest normal foot soldier (Move 18) until hero movement is read from the game
-        var attackers = [Battle.Fighter(stats: Combatant(hero: h.name, level: h.level), keyword: h.keyword, actor: classActor, size: actor(classActor)?.size ?? 4, move: 18, shots: 0)]
+        // a hero moves 24 cells (heroes4.exe: 2400 movement, 100 a cell) at Speed 6 plus skill bonuses
+        var heroStats = Combatant(hero: h.name, level: h.level)
+        heroStats.speed = 6
+        var attackers = [Battle.Fighter(stats: heroStats, keyword: h.keyword, actor: classActor, size: actor(classActor)?.size ?? 4, move: 24, shots: 0)]
         for s in h.army { if let cd = t.creature(s.creature) { attackers.append(fighter(cd, s.count)) } }
         let defenders = [fighter(c, g.monsters[i].count)]
         battle = Battle(field: f, attackers: attackers, defenders: defenders, seed: seed)

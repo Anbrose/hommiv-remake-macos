@@ -94,36 +94,76 @@ public struct Battlefield {
         terrain = 0; variant = 0
     }
 
-    /// A land battlefield for a terrain type: obstacles of the candidates (sprite entry,
-    /// footprint in cells) scattered over the field.
-    public init(terrain: UInt8, variant: UInt8, obstacles candidates: [(name: String, w: Int, h: Int)], seed: Int) {
+    /// An obstacle kind from combat_header (heroes4.h4r): its combat_object sprite, footprint,
+    /// whether it blocks movement and shots, and its group in table.combat_obstacles.
+    public struct ObstacleKind {
+        public let name: String, group: String
+        public let w: Int, h: Int
+        public let blocks: Bool
+        public init(name: String, group: String, w: Int, h: Int, blocks: Bool) { self.name = name; self.group = group; self.w = w; self.h = h; self.blocks = blocks }
+    }
+    /// combat_header_table_cache.combat_header.h4d: u32 3, u32 1, u32 2002, u32 10, u32 45,
+    /// u32 count, then per obstacle: u32 len + name, 14 header bytes (as combat_object's:
+    /// byte 2, 3 footprint, byte 7 blocks), u16 len + group name.
+    public static func obstacleKinds(_ d: Data) -> [ObstacleKind] {
+        let r = ByteReader(d)
+        guard d.count > 24 else { return [] }
+        let count = Int(r.peekU32(at: 20))
+        var p = 24, out: [ObstacleKind] = []
+        for _ in 0..<count {
+            guard p + 4 < d.count else { break }
+            let n = Int(r.peekU32(at: p))
+            guard n > 0, n < 100, p + 4 + n + 16 <= d.count else { break }
+            let name = String(bytes: d[(d.startIndex + p + 4)..<(d.startIndex + p + 4 + n)], encoding: .isoLatin1) ?? ""
+            let q = p + 4 + n
+            let w = Int(r.byte(at: q + 2)), h = Int(r.byte(at: q + 3)), blocks = r.byte(at: q + 7) != 0
+            let gl = Int(r.peekU16(at: q + 14))
+            let group = String(bytes: d[(d.startIndex + q + 16)..<(d.startIndex + q + 16 + gl)], encoding: .isoLatin1) ?? ""
+            out.append(ObstacleKind(name: "combat_object.\(name).h4d", group: group, w: max(1, w), h: max(1, h), blocks: blocks))
+            p = q + 16 + gl
+        }
+        return out
+    }
+
+    /// A land battlefield: obstacles chosen by table.combat_obstacles for the terrain (groups
+    /// weighted usually/common/seldom/rare), often clustered with the groups the Adjacent part
+    /// of the table pairs them with; ground cover (non-blocking obstacles) blocks nothing.
+    public init(terrain: UInt8, variant: UInt8, kinds: [ObstacleKind], frequency: [String: String], adjacency: [String: [String: String]], seed: Int) {
         backdrop = nil
         self.terrain = terrain; self.variant = variant
         var rng = GameRandom(seed: seed)
-        var list: [Obstacle] = []
+        let weight: [String: Int] = ["usually": 16, "common": 8, "seldom": 4, "rare": 1]
+        let byGroup = Dictionary(grouping: kinds, by: { $0.group })
+        func pick(_ weights: [String: String]) -> String? {
+            let items = weights.compactMap { g, f -> (String, Int)? in
+                guard let w = weight[f], w > 0, byGroup[g] != nil else { return nil }; return (g, w) }.sorted { $0.0 < $1.0 }
+            let total = items.reduce(0) { $0 + $1.1 }
+            guard total > 0 else { return nil }
+            var r = rng.next() % total
+            for (g, w) in items { if r < w { return g }; r -= w }
+            return nil
+        }
         let n = Battlefield.size
-        if !candidates.isEmpty {
-            let count = 18 + rng.next() % 10
-            var tries = 0
-            while list.count < count, tries < 400 {
-                tries += 1
-                let cand = candidates[rng.next() % candidates.count]
-                let x = rng.next() % n, y = rng.next() % n
-                // away from the deployment corners (screen bottom-left = high x, top-right = low x)
-                let (sx, sy) = Battlefield.screen(Float(x), Float(y))
-                if sx < 380 && sy > 560 { continue }
-                if sx > 800 && sy < 460 { continue }
-                var ok = true
-                for i in -1...cand.w { for j in -1...cand.h {
-                    let cx = x + i, cy = y + j
-                    let inside = i >= 0 && i < cand.w && j >= 0 && j < cand.h
-                    if inside, !Battlefield.onField(cx, cy) { ok = false }
-                    if cx >= 0, cy >= 0, cx < n, cy < n, blocked[cx * n + cy] { ok = false }   // a gap around
-                } }
-                guard ok else { continue }
-                for i in 0..<cand.w { for j in 0..<cand.h { blocked[(x + i) * n + y + j] = true } }
-                list.append(Obstacle(name: cand.name, x: x, y: y, w: cand.w, h: cand.h))
-            }
+        var list: [Obstacle] = []
+        var last: Obstacle? = nil, lastGroup = ""
+        let count = 22 + rng.next() % 14
+        var tries = 0
+        while list.count < count, tries < 600 {
+            tries += 1
+            let cluster = last != nil && rng.next() % 2 == 0
+            guard let group = (cluster ? pick(adjacency[lastGroup] ?? [:]) : nil) ?? pick(frequency), let options = byGroup[group] else { break }
+            let kind = options[rng.next() % options.count]
+            var x = rng.next() % n, y = rng.next() % n
+            if cluster, let l = last { x = l.x + rng.next() % (l.w + kind.w + 2) - kind.w - 1; y = l.y + rng.next() % (l.h + kind.h + 2) - kind.h - 1 }
+            let (sx, sy) = Battlefield.screen(Float(x), Float(y))
+            if sx < 380 && sy > 560 { continue }     // the deployment corners stay clear
+            if sx > 800 && sy < 460 { continue }
+            var ok = true
+            for i in 0..<kind.w { for j in 0..<kind.h where !Battlefield.onField(x + i, y + j) || (kind.blocks && blocked[(x + i) * n + y + j]) { ok = false } }
+            guard ok else { continue }
+            if kind.blocks { for i in 0..<kind.w { for j in 0..<kind.h { blocked[(x + i) * n + y + j] = true } } }
+            let o = Obstacle(name: kind.name, x: x, y: y, w: kind.w, h: kind.h)
+            list.append(o); last = o; lastGroup = group
         }
         obstacles = list
     }

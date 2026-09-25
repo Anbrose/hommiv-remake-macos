@@ -68,6 +68,13 @@ public final class RuleTables {
     public let objectNames: [String: (String, String)]
     public struct ArtifactDef { public let keyword: String, name: String, article: String, slot: String, level: String, help: String }
     public let artifacts: [String: ArtifactDef]   // by keyword
+    /// Creature ability display names ("Normal Melee", "No Obstacle Penalty") -> the game's
+    /// keywords ("normal_melee", "siege_machine"), from table.creature_abilities.
+    public let abilityKeywords: [String: String]
+    /// table.combat_obstacles: how often an obstacle group appears on a terrain, and how often
+    /// a group is placed next to another; frequencies usually/common/seldom/rare/never.
+    public let obstacleFrequency: [String: [String: String]]   // terrain -> group -> frequency
+    public let obstacleAdjacency: [String: [String: String]]   // group -> group -> frequency
     /// The general string table (strings.Text.h4d): key -> text, e.g. "grass_1" -> "Grass, Dry",
     /// "grass_1.description" -> "Dry Grass terrain has a movement cost of 1 per tile...".
     public let strings: [String: String]
@@ -159,6 +166,28 @@ public final class RuleTables {
             }
         }
         artifacts = arts
+        var ak: [String: String] = [:]
+        if let d = try? archive.payload("table.creature_abilities.h4d") {
+            for row in RuleTable(data: d).rows where row.count >= 2 && !row[0].isEmpty { ak[row[1].lowercased()] = row[0] }
+        }
+        abilityKeywords = ak
+        var freq: [String: [String: String]] = [:], adj: [String: [String: String]] = [:]
+        if let d = try? archive.payload("table.combat_obstacles.h4d") {
+            let rows = RuleTable(data: d).rows
+            if let head = rows.first {
+                let groups = Array(head.dropFirst(2))
+                var section = ""
+                for row in rows.dropFirst() where row.count > 2 {
+                    if !row[0].isEmpty { section = row[0] }
+                    let key = row[1]
+                    guard !key.isEmpty else { continue }
+                    var m: [String: String] = [:]
+                    for (i, g) in groups.enumerated() where i + 2 < row.count && !g.isEmpty { m[g] = row[i + 2].lowercased() }
+                    if section == "Terrain" { freq[key] = m } else if section == "Adjacent" { adj[key] = m }
+                }
+            }
+        }
+        obstacleFrequency = freq; obstacleAdjacency = adj
         var st: [String: String] = [:]
         if let d = try? archive.payload("strings.Text.h4d") {   // u32 rows, rows of u16 n + string16s (key, text, comment)
             var r = ByteReader(d)

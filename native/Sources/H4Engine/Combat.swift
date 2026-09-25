@@ -21,13 +21,18 @@ public struct Combatant {
     public var alive: Bool { count > 0 }
     public var totalHealth: Int { count * hitPoints - wounds }
 
+    /// Ability keywords of the game (normal_melee, siege_machine, ...), from the display names.
+    public static var abilityKeywords: [String: String] = [:]
+
     public init(creature c: CreatureDef, count: Int) {
         name = c.name; self.count = count; hitPoints = c.hitPoints; damageLow = c.damageLow; damageHigh = c.damageHigh
         attack = c.attack; defense = c.defense; speed = c.speed; experience = c.experience
         shooter = c.shots > 0; noMeleePenalty = c.shortHelp.lowercased().contains("no melee penalty")
-        abilities = Set(c.shortHelp.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces).lowercased() }.filter { !$0.isEmpty })
+        let names = c.shortHelp.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces).lowercased() }.filter { !$0.isEmpty }
+        // both the display name and the game's keyword, so either can be asked for
+        abilities = Set(names + names.compactMap { Combatant.abilityKeywords[$0]?.lowercased() })
         // the table's wordings of the game's normal_melee ability
-        if abilities.contains("normal melee") { noMeleePenalty = true }
+        if abilities.contains("normal_melee") || abilities.contains("normal melee") { noMeleePenalty = true }
     }
 
     /// A hero of the given level fights as one strong unit.

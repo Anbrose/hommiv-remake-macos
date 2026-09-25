@@ -93,11 +93,21 @@ public final class Battle {
     func startRound() {
         round += 1
         for u in units { u.acted = false; u.waited = false; u.defended = false; u.stats.defending = false; u.retaliated = false }
-        order = units.filter { $0.alive }.sorted { ($0.stats.speed, -$0.side, -$0.id) > ($1.stats.speed, -$1.side, -$1.id) }.map { $0.id }
+        order = Battle.turnOrder(units.filter { $0.alive })
         events.append(.newRound(round))
     }
 
-    static let steps: [(dx: Int, dy: Int, cost: Float)] = [(1, 0, 1), (-1, 0, 1), (0, 1, 1), (0, -1, 1), (1, 1, 1.4), (-1, -1, 1.4), (1, -1, 1.4), (-1, 1, 1.4)]
+    /// A straight step costs 100 movement, a diagonal one 150 (heroes4.exe combat path finder 0x60d610).
+    /// The game's turn key (0x5f3110): Speed, +1000 for a unit that has not waited, so units
+    /// that wait act after everyone else, still by Speed; ties go to the attacking side.
+    static func turnOrder(_ list: [Unit]) -> [Int] {
+        list.sorted { a, b in
+            let ka = a.stats.speed + (a.waited ? 0 : 1000), kb = b.stats.speed + (b.waited ? 0 : 1000)
+            return ka != kb ? ka > kb : (a.side != b.side ? a.side < b.side : a.id < b.id)
+        }.map { $0.id }
+    }
+
+    static let steps: [(dx: Int, dy: Int, cost: Float)] = [(1, 0, 1), (-1, 0, 1), (0, 1, 1), (0, -1, 1), (1, 1, 1.5), (-1, -1, 1.5), (1, -1, 1.5), (-1, 1, 1.5)]
     static func key(_ x: Int, _ y: Int) -> Int { x * Battlefield.size + y }
 
     /// Footprint positions the unit can reach, with the cost, within `budget` cells (its Move by default).
@@ -176,10 +186,10 @@ public final class Battle {
     public func rangeDivisor(_ a: Unit, _ b: Unit) -> Int {
         let d = Int(Battle.distance(a, b))
         var div: Int
-        if a.stats.has("no range penalty") { div = 1 }
-        else if a.stats.has("short range") { div = d >= 40 ? 4 : d >= 20 ? 2 : 1 }
+        if a.stats.has("long_range") { div = 1 }
+        else if a.stats.has("short_range") { div = d >= 40 ? 4 : d >= 20 ? 2 : 1 }
         else { div = d >= 40 ? 2 : 1 }
-        if field.obstructed(a.centre, b.centre), !a.stats.has("no obstacle penalty") { div *= 2 }
+        if field.obstructed(a.centre, b.centre), !a.stats.has("siege_machine") { div *= 2 }
         return div
     }
 
@@ -244,10 +254,10 @@ public final class Battle {
     }
 
     func canRetaliate(_ t: Unit, against a: Unit) -> Bool {
-        t.alive && !a.stats.has("no retaliation") && (!t.retaliated || t.stats.has("unlimited retaliation"))
+        t.alive && !a.stats.has("no_retaliation") && (!t.retaliated || t.stats.has("unlimited_retaliation"))
     }
     func strikesFirst(_ x: Unit, over y: Unit) -> Bool {
-        x.stats.has("first strike") && !y.stats.has("negate first strike") && !y.stats.has("first strike")
+        x.stats.has("first_strike") && !y.stats.has("first_strike_immunity") && !y.stats.has("first_strike")
     }
     /// The attacker strikes, then the target strikes back; a target with First Strike strikes
     /// back before the blow; Two Attacks strike again after the retaliation.
@@ -261,7 +271,7 @@ public final class Battle {
             hit(u, t, ranged: false)
             if retaliates, t.alive { t.retaliated = true; hit(t, u, ranged: false) }
         }
-        if u.alive, t.alive, u.stats.has("two attacks") { hit(u, t, ranged: false) }
+        if u.alive, t.alive, u.stats.has("strikes_twice") || u.stats.has("two attacks") { hit(u, t, ranged: false) }
     }
 
     /// Can the unit shoot now (it has shots and no enemy touches it)?
@@ -270,10 +280,18 @@ public final class Battle {
     public func shoot(_ targetId: Int) -> Bool {
         guard finished == nil, let u = current, let t = units.first(where: { $0.id == targetId }), t.alive, t.side != u.side else { return false }
         guard canShoot(u) else { return attack(targetId) }
-        u.shots -= 1
         Battle.face(u, towards: t)
-        hit(u, t, ranged: true)
-        if t.alive, u.stats.has("shoots twice"), u.shots > 0 { u.shots -= 1; hit(u, t, ranged: true) }
+        // a shooter that is shot at shoots back (once per round, like melee retaliation);
+        // Ranged First Strike shoots first; Shoots Twice fires again after the retaliation
+        let shootsBack = canRetaliate(t, against: u) && canShoot(t)
+        if shootsBack, t.stats.has("ranged_first_strike"), !u.stats.has("ranged_first_strike") {
+            t.retaliated = true; t.shots -= 1; Battle.face(t, towards: u); hit(t, u, ranged: true)
+            if u.alive { u.shots -= 1; hit(u, t, ranged: true) }
+        } else {
+            u.shots -= 1; hit(u, t, ranged: true)
+            if shootsBack, t.alive { t.retaliated = true; t.shots -= 1; Battle.face(t, towards: u); hit(t, u, ranged: true) }
+        }
+        if u.alive, t.alive, u.stats.has("shoots_twice"), u.shots > 0 { u.shots -= 1; hit(u, t, ranged: true) }
         endAction(u)
         return true
     }
@@ -290,8 +308,7 @@ public final class Battle {
         guard finished == nil, let u = current, !u.waited else { defend(); return }
         u.waited = true
         events.append(.wait(unit: u.id))
-        order.removeFirst()
-        order.append(u.id)
+        order = Battle.turnOrder(order.map { unit($0) })
     }
 
     /// A simple opponent: shooters shoot the most dangerous enemy, others attack what they can

@@ -102,6 +102,14 @@ let objNames = Set(archive.names(prefix: "adv_object.").map { String($0.dropFirs
 let map = try MapFile(data: Data(contentsOf: URL(fileURLWithPath: args[2])), objectNames: objNames)
 let masks = try TransitionMasks(data: archive.payload("transition.Transitions.h4d"))
 lap("loaded '\(map.name)'")
+// the rule tables first: random monsters are drawn from the creature table
+let textURL = URL(fileURLWithPath: args[1]).deletingLastPathComponent().appendingPathComponent("text.h4r")
+let ruleTables = (try? H4Archive(url: textURL)).flatMap { try? RuleTables(archive: $0) }
+if let t = ruleTables {
+    let expansion = max(0, min(2, map.version - 27))
+    let sea: Set<String> = ["mermaid", "sea monster", "pirate"]
+    RandomResolver.creaturePool = (1...4).map { lv in t.creatures.filter { $0.level == lv && $0.expansion <= expansion && !sea.contains($0.keyword) }.map { $0.keyword } }
+}
 let scene = try MapScene(map: map, level: min(level, map.levels - 1), archive: archive, masks: masks)
 lap("scene built: \(scene.chunks.count) terrain chunks, \(scene.placed.count) objects")
 let device = MTLCreateSystemDefaultDevice()!
@@ -110,11 +118,10 @@ let device = MTLCreateSystemDefaultDevice()!
 // leftmost town) standing at its gate.
 let resolver = RandomResolver(archive: archive)
 let game = GameState(map: map, level: scene.level, scene: scene)
-let textURL = URL(fileURLWithPath: args[1]).deletingLastPathComponent().appendingPathComponent("text.h4r")
-if let text = try? H4Archive(url: textURL), let tables = try? RuleTables(archive: text) { game.tables = tables; lap("rules: \(tables.creatures.count) creatures, \(tables.heroes.count) heroes") }
+if let tables = ruleTables { game.tables = tables; lap("rules: \(tables.creatures.count) creatures, \(tables.heroes.count) heroes") }
 let alignments = ["haven": "life", "academy": "order", "asylum": "chaos", "necropolis": "death", "preserve": "nature", "stronghold": "might"]
 func faction(of name: String) -> String { alignments.first { name.lowercased().contains($0.key) }?.value ?? "life" }
-game.registerObjects(townFactions: Dictionary(uniqueKeysWithValues: scene.placed.filter { $0.category == "castle" }.map { ($0.name, faction(of: $0.name)) }))
+game.registerObjects(townFactions: Dictionary(scene.placed.filter { $0.category == "castle" }.map { ($0.name, faction(of: $0.name)) }, uniquingKeysWith: { a, _ in a }))
 let ownedByFirst = map.objects.first { ($0.type == "town" || $0.type == "random_town") && $0.owner == 0 && $0.level == scene.level }
 if let town = scene.placed.first(where: { p in ownedByFirst.map { p.category == "castle" && p.cellX == $0.x && p.cellY == $0.y } ?? false })
     ?? scene.placed.filter({ $0.category == "castle" }).min(by: { ($0.cellY - $0.cellX) < ($1.cellY - $1.cellX) }) {

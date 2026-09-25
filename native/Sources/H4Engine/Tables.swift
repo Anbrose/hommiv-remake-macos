@@ -36,6 +36,8 @@ public struct CreatureDef {
     public let keyword: String, name: String, plural: String, level: Int, alignment: String
     public let hitPoints: Int, damageLow: Int, damageHigh: Int, attack: Int, defense: Int, move: Int, speed: Int, growth: Int, gold: Int
     public let experience: Int
+    /// 0 for the original creatures, 1 and 2 below the table's "Expansion N Creatures below" rows.
+    public var expansion = 0
     public let shots: Int, spellPoints: Int
     public let shortHelp: String, longHelp: String   // "Flying, Spellcaster" and the paragraph about it
 }
@@ -46,7 +48,7 @@ public struct HeroDef {
 
 /// The game's rule tables: creatures, heroes, random town names, mine incomes.
 public final class RuleTables {
-    public let creatures: [CreatureDef]
+    public private(set) var creatures: [CreatureDef]
     public let heroes: [HeroDef]
     /// "Life_Town" -> ["Angel Point", ...]
     public let names: [String: [String]]
@@ -127,6 +129,12 @@ public final class RuleTables {
     public init(archive: H4Archive) throws {
         let cr = RuleTable(data: try archive.payload("table.creatures.h4d"))
         func int(_ s: String) -> Int { Int(s.trimmingCharacters(in: .whitespaces)) ?? 0 }
+        var exp = 0, expansionOf: [String: Int] = [:]
+        for row in cr.rows {
+            let k = cr.value(row, "Keyword")
+            if k.hasPrefix("Expansion "), let n = Int(k.split(separator: " ")[1]) { exp = n }
+            if !cr.value(row, "Level").isEmpty { expansionOf[k] = exp }
+        }
         creatures = cr.rows.filter { !cr.value($0, "Level").isEmpty }.map {
             CreatureDef(keyword: cr.value($0, "Keyword"), name: cr.value($0, "Name"), plural: cr.value($0, "Plural Name"), level: int(cr.value($0, "Level")),
                         alignment: cr.value($0, "Alignment").lowercased(), hitPoints: int(cr.value($0, "Hit Points")), damageLow: int(cr.value($0, "Low")),
@@ -135,6 +143,7 @@ public final class RuleTables {
                         experience: int(cr.value($0, "Experience")), shots: int(cr.value($0, "Shots")), spellPoints: int(cr.value($0, "Spell Points")),
                         shortHelp: cr.value($0, "Short Help Text"), longHelp: cr.value($0, "Long Help Text"))
         }
+        for i in creatures.indices { creatures[i].expansion = expansionOf[creatures[i].keyword] ?? 0 }
         let he = RuleTable(data: try archive.payload("table.heroes.h4d"))
         heroes = he.rows.filter { $0.count > 3 && !$0[0].isEmpty }.map { HeroDef(keyword: $0[0], name: $0[1], sex: $0[2].lowercased(), heroClass: $0[3].lowercased()) }
         let rn = RuleTable(data: try archive.payload("table.random_names.h4d"))
@@ -218,6 +227,47 @@ public final class RuleTables {
             sections[section, default: []].append(BuildingDef(keyword: row[0].lowercased(), name: row[1], help: row[9], cost: cost, creature: creature))
         }
         buildings = sections
+    }
+
+    /// heroes4.exe's creature ids (the keyword table next to 0x9856ec), as map files store them.
+    public static let creatureIds = ["air elemental", "archangel", "ballista", "bandit", "behemoth", "beholder", "black dragon", "bone dragon",
+        "centaur", "cerberus", "champion", "crossbowman", "crusader", "cyclops", "venom spawn", "archdevil", "dragon golem", "dwarf",
+        "earth elemental", "efreet", "elf", "faerie dragon", "fire elemental", "gargoyle", "genie", "ghost", "berserker", "gold golem",
+        "griffin", "halfling", "harpy", "hydra", "ice demon", "imp", "leprechaun", "mage", "mantis", "medusa", "mermaid", "minotaur",
+        "monk", "mummy", "naga", "nightmare", "nomad", "ogre mage", "orc", "peasant", "phoenix", "pikeman", "pirate", "satyr",
+        "sea monster", "skeleton", "squire", "sprite", "thunderbird", "titan", "troglodyte", "troll", "unicorn", "vampire",
+        "water elemental", "white tiger", "wolf", "zombie", "waspwort", "goblin knight", "evil sorceress", "gargantuan",
+        "dark champion", "catapult", "frenzied gnasher", "mega dragon"]
+
+    /// Town building ids of map files (0...42) per town alignment, from campaign_editor.exe's
+    /// {id, keyword} table at 0x72273c: 0-11 shared, 12-19 the dwellings, 20-24 the mage guilds,
+    /// 25-26 the two libraries, the rest the town's own.
+    public static let buildingIds: [String: [Int: String]] = {
+        let shared = [0: "village hall", 1: "town hall", 2: "city hall", 3: "fort", 4: "citadel", 5: "castle", 6: "shipyard",
+                      7: "caravan", 8: "prison", 9: "tavern", 10: "blacksmith", 11: "grail"]
+        let guilds = [20: "mage guild 1", 21: "mage guild 2", 22: "mage guild 3", 23: "mage guild 4", 24: "mage guild 5"]
+        func town(_ own: [Int: String], guild: Bool = true) -> [Int: String] {
+            shared.merging(guild ? guilds : [:]) { a, _ in a }.merging(own) { a, _ in a }
+        }
+        return [
+            "life": town([25: "nature library", 26: "order library", 27: "seminary", 28: "stables", 29: "abbey", 12: "squire guild",
+                          13: "archery range", 14: "guardhouse", 15: "ballista works", 16: "barracks", 17: "monastary", 18: "knight chapter", 19: "altar of light"]),
+            "order": town([25: "life library", 26: "death library", 30: "university", 31: "treasury", 12: "dwarven mines", 13: "halfling burrow",
+                           14: "golem factory", 15: "mage tower", 16: "golden pavilion", 17: "altar of wishes", 18: "dragon factory", 19: "cloud castle"]),
+            "death": town([25: "order library", 26: "chaos library", 32: "skeleton transformer", 33: "necromancy amplifier", 12: "cemetery",
+                           13: "torture chamber", 14: "barrow mound", 15: "kennels", 16: "mansion", 17: "spawn pit", 18: "dragon graveyard", 19: "temple of the damned"]),
+            "chaos": town([25: "death library", 26: "nature library", 34: "academy", 35: "training grounds", 36: "mana vortex", 12: "bandit gen",
+                           13: "orc camp", 14: "statuary garden", 15: "labyrinth", 16: "nightmare", 17: "lava tube", 18: "hydra pond", 19: "dragon cave"]),
+            "nature": town([25: "chaos library", 26: "life library", 37: "creature portal", 38: "rainbow", 39: "grove", 12: "wolf den",
+                            13: "fae trees", 14: "tiger den", 15: "homestead", 16: "griffin cliffs", 17: "unicorn glade", 18: "funeral pyre", 19: "magic forest"]),
+            "might": town([40: "breeding pit", 41: "magic dampener", 42: "arena", 35: "training grounds", 12: "berserker", 13: "centaur stables",
+                           14: "nomad camp", 15: "harpy nest", 16: "ogre fort", 17: "cyclops cave", 18: "cliff nest", 19: "behemoth crag"], guild: false),
+        ]
+    }()
+    /// The building keywords of a bit set of map building ids.
+    public static func buildings(_ bits: UInt64, alignment: String) -> Set<String> {
+        guard let ids = buildingIds[alignment] else { return [] }
+        return Set(ids.filter { bits & (1 << UInt64($0.key)) != 0 }.map { $0.value })
     }
 
     /// The buildings of a town alignment ("life" -> the "Life Town" section).

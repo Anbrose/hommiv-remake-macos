@@ -41,6 +41,10 @@ public struct RandomResolver {
         ["Crusader", "Monk", "Genie", "Naga", "Efreet", "Nightmare", "Vampire", "Venom Spawn", "Griffin", "Unicorn", "Cyclops", "Ogre Mage"],
         ["archangel", "Champion", "Dragon Golem", "Titan", "black dragon", "Hydra", "bone dragon", "archdevil", "Faerie Dragon", "Phoenix", "behemoth", "Thunderbird"],
     ]
+    /// Creatures a random monster can be, by level (1...4). heroes4.exe (0x7f3380) picks uniformly
+    /// among the creatures of the level that are not sea creatures and whose expansion the map
+    /// allows; set from the creature table before the scene is built.
+    public static var creaturePool: [[String]]? = nil
     static let directions = ["s", "sw", "se", "w", "e"]
     static let resources = ["Wood", "Ore", "Wood", "Ore", "Mercury", "Sulfur", "Crystal", "Gem", "Gold"]
     static let schools = ["Life", "Order", "Death", "Chaos", "Nature"]
@@ -75,10 +79,16 @@ public struct RandomResolver {
         case "random_town":
             let f = RandomResolver.factions[townOrdinal % RandomResolver.factions.count]
             let r = o.subtype == "right" ? " R" : ""
-            // a few Village files are 2-image editor dummies; the caller falls through to the next level
-            return ["Village", "Fort", "Citadel", "Castle"].compactMap { index["adv_object.castle.\(f).\($0)\(r).h4d".lowercased()] }
+            // the walls the map gives it (its built buildings: 3 fort, 4 citadel, 5 castle); a few
+            // Village files are 2-image editor dummies, so the caller falls through to the next level
+            let levels = ["Village", "Fort", "Citadel", "Castle"]
+            var start = o.town?.hasFort == true ? 1 : 0
+            if let b = o.town?.built { start = b & 32 != 0 ? 3 : b & 16 != 0 ? 2 : b & 8 != 0 ? 1 : 0 }
+            return levels[start...].compactMap { index["adv_object.castle.\(f).\($0)\(r).h4d".lowercased()] }
         case "random_monster":
-            let c = RandomResolver.pick(RandomResolver.creatures[RandomResolver.level(o.subtype) - 1], o)
+            let lv = RandomResolver.level(o.subtype) - 1
+            let pool = RandomResolver.creaturePool.flatMap { lv < $0.count && !$0[lv].isEmpty ? $0[lv] : nil } ?? RandomResolver.creatures[lv]
+            let c = RandomResolver.pick(pool, o)
             return creatureEntry(c, facing: RandomResolver.pick(RandomResolver.directions, o, 1)).map { [$0] } ?? []
         case "random_material_pile":
             name = "adv_object.Resources.\(RandomResolver.pick(RandomResolver.resources, o)).h4d"

@@ -251,13 +251,61 @@ public final class GameState {
         public let alignment: String
         public var owned: Bool
         public var buildings: Set<String> = []          // building keywords, as in the buildings table
+        /// Buildings the map allows (the editor's town settings); nil = all.
+        public var allowed: Set<String>? = nil
         public var available: [String: Int] = [:]      // creature keyword -> recruits waiting
         public var builtToday = false
         public var terrain: UInt8 = 1
     }
     public struct Mine { public let x: Int, y: Int, name: String, resource: String, amount: Int; public var owned: Bool }
     public struct Dwelling { public let x: Int, y: Int, name: String, creature: String; public var available: Int }
-    public struct Monster { public let x: Int, y: Int, name: String, creature: String; public var count: Int }
+    public struct Monster {
+        public let x: Int, y: Int, name: String, creature: String; public var count: Int
+        /// The lower-level stack spending what is left of the monster's value (heroes4.exe 0x7f32b0).
+        public var escort: (creature: String, count: Int)? = nil
+        public init(x: Int, y: Int, name: String, creature: String, count: Int, escort: (creature: String, count: Int)? = nil) {
+            self.x = x; self.y = y; self.name = name; self.creature = creature; self.count = count; self.escort = escort
+        }
+    }
+
+    /// Wandering monster value per level (heroes4.exe 0x7f4530: 155 x 2, 310 x 2.5, 620 x 3, 1240 x 4)
+    /// and the map difficulty factor (0x7f4520: easy 2/3 ... impossible x3).
+    public static let monsterBudget = [0, 310, 775, 1860, 4960]
+    public static let difficultyFactor = [0.6667, 1.0, 1.5, 2.0, 3.0]
+    static let seaCreatures: Set<String> = ["mermaid", "sea monster", "pirate"]
+
+    /// A wandering monster's army (heroes4.exe 0x7f3910): a value between 0.8 and 1.2 times the
+    /// level's budget (or the editor's range in peasants), times the difficulty factor; about two
+    /// thirds of it buys the creature ((2V + 3E - 1) / 3E, E its experience; sea monsters and
+    /// mermaids spend it all), and the rest a stack of a cheaper creature of the same alignment.
+    public func monsterArmy(_ c: CreatureDef, level: Int, range: (min: Int, max: Int)?, rng: inout GameRandom) -> (count: Int, escort: (creature: String, count: Int)?) {
+        guard let t = tables else { return (1, nil) }
+        let lo: Int, hi: Int
+        if let r = range, let peasant = t.creature("peasant") {
+            lo = r.min * peasant.experience; hi = r.max * peasant.experience
+        } else {
+            let base = Double(GameState.monsterBudget[min(4, max(1, level))])
+            lo = Int(base * 0.8); hi = Int(base * 1.2)
+        }
+        let raw = hi > lo ? rng.next() % (hi - lo + 1) + lo : lo
+        let value = Int(Double(raw) * GameState.difficultyFactor[min(4, max(0, map.difficulty))])
+        let e = max(1, c.experience)
+        let sea = c.keyword == "sea monster" || c.keyword == "mermaid"
+        let count = max(1, sea ? value / e : (2 * value + 3 * e - 1) / (3 * e))
+        let left = value - count * e
+        guard left > 0, !sea else { return (count, nil) }
+        // the picker (0x7f3380): uniform over the creatures that fit -- same alignment, one level
+        // down to the same level, no dearer than the rest or the main creature, not the main one
+        let cap = min(e, left), expansion = max(0, min(2, map.version - 27))
+        var pick: CreatureDef? = nil, seen = 0
+        for d in t.creatures where d.keyword != c.keyword && d.alignment == c.alignment && d.experience <= cap
+            && (c.level - 1)...c.level ~= d.level && d.expansion <= expansion && !GameState.seaCreatures.contains(d.keyword) {
+            seen += 1
+            if rng.next() % seen == 0 { pick = d }
+        }
+        guard let p = pick, p.experience > 0, left / p.experience > 0 else { return (count, nil) }
+        return (count, (p.keyword, left / p.experience))
+    }
     public var towns: [Town] = []
     public var mines: [Mine] = []
     public var dwellings: [Dwelling] = []
@@ -441,6 +489,7 @@ public final class GameState {
     /// Can the town build this now? One building per day; halls and walls in order; mage guilds in order.
     public func canBuild(_ b: RuleTables.BuildingDef, in t: Town) -> Bool {
         guard !t.buildings.contains(b.keyword), !t.builtToday, !b.cost.isEmpty || b.keyword == "prison" else { return false }
+        if let a = t.allowed, !a.contains(b.keyword) { return false }   // the map's town settings
         for (r, v) in b.cost where resources[r, default: 0] < v { return false }
         let chain: [String: String] = ["town hall": "village hall", "city hall": "town hall", "citadel": "fort", "castle": "citadel",
                                        "mage guild 2": "mage guild 1", "mage guild 3": "mage guild 2", "mage guild 4": "mage guild 3", "mage guild 5": "mage guild 4"]
@@ -542,14 +591,35 @@ public final class GameState {
                 let custom = map.objects.first { ($0.type == "town" || $0.type == "random_town") && $0.x == p.cellX && $0.y == p.cellY && $0.level == level }?.customName
                 let name = custom ?? (list.isEmpty ? "Town" : list[(p.cellX * 7 + p.cellY * 13 + townIndex) % list.count])
                 var town = Town(x: p.cellX, y: p.cellY, name: name, alignment: faction, owned: false)
-                // a new town: village hall, walls matching the sprite, and the first dwelling
-                town.buildings = ["village hall"]
-                // the walls from the sprite's last name component ("castle.Haven.Citadel R" -> citadel)
-                let last = GameState.shortName(p.name).lowercased()
-                for wall in ["fort", "citadel", "castle"] where last == wall { town.buildings.insert(wall) }
-                if let t = tables, let first = t.buildings(for: faction).first(where: { $0.creature != nil }) {
-                    town.buildings.insert(first.keyword)
-                    if let c = first.creature, let def = t.creature(c) { town.available[c] = def.growth }
+                let record = map.objects.first { ($0.type == "town" || $0.type == "random_town") && $0.x == p.cellX && $0.y == p.cellY && $0.level == level }
+                let settings = record?.town
+                let ids = RuleTables.buildingIds[faction] ?? [:]
+                if let built = settings?.built {
+                    town.buildings = RuleTables.buildings(built, alignment: faction)
+                } else {
+                    // heroes4.exe 0x89a8bb: with a fort the first two dwellings (and mage guild 1 in an owned
+                    // town that has guilds), without one a single dwelling; an owned town has a tavern
+                    let owned = settings?.owner != nil
+                    let last = GameState.shortName(p.name).lowercased()
+                    let fort = settings?.hasFort ?? ["fort", "citadel", "castle"].contains(last)
+                    var b: Set<Int> = []
+                    if fort { b.formUnion([3, 12, 13]); if owned && faction != "might" { b.insert(20) } }
+                    else { b.insert(12 + (p.cellX + p.cellY) % 2) }
+                    if owned { b.insert(9) }
+                    town.buildings = Set(b.compactMap { ids[$0] })
+                    // walls beyond the fort follow the sprite ("castle.Haven.Citadel R" -> citadel)
+                    if last == "citadel" || last == "castle" { town.buildings.formUnion(["fort", "citadel"]) }
+                    if last == "castle" { town.buildings.insert("castle") }
+                }
+                town.buildings.formUnion(["village hall", "prison"])   // always (0x89a97b)
+                town.allowed = settings?.allowed.map { RuleTables.buildings($0, alignment: faction) }
+                if let t = tables {
+                    for b in t.buildings(for: faction) where town.buildings.contains(b.keyword) {
+                        if let c = b.creature, let def = t.creature(c) { town.available[c] = def.growth }
+                    }
+                }
+                if ProcessInfo.processInfo.environment["H4DEBUG"] != nil {
+                    print("town \(name) (\(faction)) owner \(settings?.owner.map(String.init) ?? "none"): \(town.buildings.sorted()) allowed \(town.allowed.map { "\($0.count)" } ?? "all")")
                 }
                 // the town screen's landscape follows the terrain most of the footprint stands on
                 var counts: [UInt8: Int] = [:]
@@ -568,10 +638,11 @@ public final class GameState {
                 // "actor_sequence.<creature>.wait.<facing>.h4d" -> the creature; the stack size follows its level
                 let parts = p.name.dropFirst("actor_sequence.".count).split(separator: ".")
                 if let kw = parts.first, let c = t.creature(String(kw)) {
-                    let sizes = [0, 16, 7, 3, 1]   // typical guard stacks by creature level
-                    let base = sizes[min(4, max(1, c.level))]
-                    let count = base + (p.cellX * 3 + p.cellY * 5) % max(1, base / 2 + 1)
-                    monsters.append(Monster(x: p.cellX, y: p.cellY, name: p.name, creature: c.keyword, count: count))
+                    let record = map.objects.first { $0.type == "random_monster" && $0.x == p.cellX && $0.y == p.cellY && $0.level == level }
+                    var rng = GameRandom(seed: p.cellX * 7919 + p.cellY * 104729 + level * 1299709)
+                    let army = monsterArmy(c, level: RandomResolver.level(p.subtype), range: record?.monsterRange, rng: &rng)
+                    monsters.append(Monster(x: p.cellX, y: p.cellY, name: p.name, creature: c.keyword, count: army.count, escort: army.escort))
+                    let count = army.count
                     passability.block(p.cellX, p.cellY)
                     if ProcessInfo.processInfo.environment["H4DEBUG"] != nil { print("monster: \(count) \(c.plural) at (\(p.cellX),\(p.cellY))") }
                 }

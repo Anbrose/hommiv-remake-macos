@@ -12,26 +12,64 @@ public struct MapObject {
     public var owner: Int? = nil
     /// A town's name set in the editor ("none" = pick a random one).
     public var customName: String? = nil
+    /// A town's editor settings (garrison, built and allowed buildings).
+    public var town: TownSettings? = nil
+    /// A random monster's size range in peasants (min, max), when the editor set one.
+    public var monsterRange: (min: Int, max: Int)? = nil
 
-    /// The town body after the three category strings: a random town is `u32 7, string16
-    /// name, u16 8, u32 owner ...`; a placed one `u16 4, u16 2, 24 bytes (built buildings),
-    /// u8, 19 bytes (allowed buildings), u8, u16 8, u32 owner ...`. Then come four "seq"
-    /// event scripts and the garrison.
-    static func parseTownBody(_ rd: inout ByteReader, random: Bool) -> (owner: Int?, name: String?) {
-        var name: String? = nil
+    /// The town part of a town record as heroes4.exe reads it (0x417990, versions 6...8):
+    /// u16 version, u8 owner (6 = none), string16 name, u8 custom garrison + creature array,
+    /// u8 custom buildings + 6 bytes built + 6 bytes allowed (43-bit sets, 0x417c10) or u8 fort.
+    /// Four event lists follow. A placed town (0x89a710) puts u16 version and, from version
+    /// 4, two versioned 188-bit spell sets in front; a random town a u32 and a string16.
+    static func parseTownBody(_ rd: inout ByteReader, random: Bool) -> TownSettings? {
         if random {
-            guard rd.remaining >= 6 else { return (nil, nil) }
-            _ = rd.u32()
-            let n = rd.string16()
-            if n.lowercased() != "none", !n.isEmpty { name = n }
+            guard rd.remaining >= 6 else { return nil }
+            _ = rd.u32(); _ = rd.string16()
         } else {
-            guard rd.remaining >= 50 else { return (nil, nil) }
-            rd.pos += 2 + 2 + 24 + 1 + 19 + 1
+            guard rd.remaining >= 2 else { return nil }
+            let v = rd.u16()
+            if v >= 4 {
+                for _ in 0..<2 {
+                    guard rd.remaining >= 25 else { return nil }
+                    let bv = rd.u8(); rd.pos += bv == 0 ? 23 : 24
+                }
+            }
         }
-        guard rd.remaining >= 6, rd.u16() == 8 else { return (nil, name) }
-        let o = rd.u32()
-        return (o == 0xffff_ffff ? nil : Int(o), name)
+        guard rd.remaining >= 4 else { return nil }
+        let ver = Int(rd.u16())
+        guard (6...8).contains(ver) else { return nil }
+        var t = TownSettings()
+        let o = Int(rd.u8())
+        t.owner = o < 6 ? o : nil
+        let n = rd.string16()
+        if !n.isEmpty, n.lowercased() != "none" { t.name = n }
+        guard rd.remaining >= 1 else { return t }
+        if rd.u8() != 0 {
+            guard let g = MapFile.parseCreatureArray(&rd) else { return t }
+            t.garrison = g
+        }
+        guard rd.remaining >= 1 else { return t }
+        if rd.u8() != 0 {
+            guard rd.remaining >= 12 else { return t }
+            func bits(_ d: Data) -> UInt64 { d.enumerated().reduce(0) { $0 | UInt64($1.element) << (8 * UInt64($1.offset)) } }
+            t.built = bits(rd.bytes(6)); t.allowed = bits(rd.bytes(6))
+        } else if rd.remaining >= 1 {
+            t.hasFort = rd.u8() != 0
+        }
+        return t
     }
+}
+
+/// Editor settings of a town.
+public struct TownSettings {
+    public var owner: Int? = nil
+    public var name: String? = nil
+    /// (creature id in heroes4.exe's order, count; 0 = a random count) per slot, nil when empty.
+    public var garrison: [(creature: Int, count: Int)?]? = nil
+    /// Building ids (0...42, per town type: see RuleTables.buildingIds) as bit sets.
+    public var built: UInt64? = nil, allowed: UInt64? = nil
+    public var hasFort = false
 }
 
 public struct Overlay {
@@ -60,6 +98,8 @@ public struct MapFile {
     public let players: [UInt8]
     public let name: String
     public let description: String
+    /// Map difficulty (0 easy ... 4 impossible), the byte after the name.
+    public let difficulty: Int
     public let objects: [MapObject]
     /// cells[level][x * size + y]; nil outside the playable diamond
     public let cells: [[Cell?]]
@@ -88,7 +128,7 @@ public struct MapFile {
         for _ in 0..<np { pl.append(r.u8()); r.pos += 4 }
         players = pl
         name = r.string16()
-        _ = r.u8()
+        difficulty = Int(r.u8())
         description = r.string16()
         let headerEnd = r.pos
 
@@ -146,6 +186,23 @@ public struct MapFile {
         return nil
     }
 
+    /// A creature array (0x640d00): u16 version 0, 7 slots of u8 kind (0xff empty, 0 creature:
+    /// u16 version, i16 id, i16 count, version 1: u16 extra count). Heroes and extras are not read.
+    static func parseCreatureArray(_ rd: inout ByteReader) -> [(creature: Int, count: Int)?]? {
+        guard rd.remaining >= 2, rd.u16() == 0 else { return nil }
+        var out: [(creature: Int, count: Int)?] = []
+        for _ in 0..<7 {
+            guard rd.remaining >= 1 else { return nil }
+            let kind = rd.u8()
+            if kind == 0xff { out.append(nil); continue }
+            guard kind == 0, rd.remaining >= 6 else { return nil }
+            let v = rd.u16(), id = Int(Int16(bitPattern: rd.u16())), n = Int(Int16(bitPattern: rd.u16()))
+            if v >= 1 { guard rd.remaining >= 2, rd.u16() == 0 else { return nil } }
+            out.append(id >= 0 ? (id, n) : nil)
+        }
+        return out
+    }
+
     static func parseObjects(_ d: Data, end: Int, names: Set<String>) -> [MapObject] {
         let r = ByteReader(d)
         var starts: [Int] = []
@@ -174,7 +231,16 @@ public struct MapFile {
             var o = MapObject(name: name, type: cats[0], subtype: cats[1], terrain: cats[2], x: x, y: y, level: Int(r.byte(at: p - 5)))
             if cats[0] == "town" || cats[0] == "random_town" {
                 let t = MapObject.parseTownBody(&rd, random: cats[0] == "random_town")
-                o.owner = t.owner; o.customName = t.name
+                o.town = t; o.owner = t?.owner; o.customName = t?.name
+            }
+            if cats[0] == "random_monster", let next = starts.first(where: { $0 > p }) {
+                // version 4 records end with i32 min, i32 max (0x7f3710), just before the next
+                // record's 13-byte header; 0, 0 = the level's default size
+                let end = next - 13
+                if end - 8 > rd.pos {
+                    let lo = Int(Int32(bitPattern: r.peekU32(at: end - 8))), hi = Int(Int32(bitPattern: r.peekU32(at: end - 4)))
+                    if lo > 0, hi >= lo, hi < 1_000_000 { o.monsterRange = (lo, hi) }
+                }
             }
             objs.append(o)
         }

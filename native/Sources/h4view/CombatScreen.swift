@@ -121,7 +121,8 @@ final class CombatScreen {
         let classActor = "hero.\(h.alignment)_fighter_male"
         // morale from each army's alignments (heroes4.exe 0x640310)
         let heroArmy: [(alignment: String, undead: Bool)] = [(h.alignment, false)] + h.army.compactMap { st in t.creature(st.creature).map { ($0.alignment, Combatant(creature: $0, count: 1).has("undead")) } }
-        let monsterArmy: [(alignment: String, undead: Bool)] = [(c.alignment, Combatant(creature: c, count: 1).has("undead"))]
+        var monsterArmy: [(alignment: String, undead: Bool)] = [(c.alignment, Combatant(creature: c, count: 1).has("undead"))]
+        if let e = g.monsters[i].escort, let ed = t.creature(e.creature) { monsterArmy.append((ed.alignment, Combatant(creature: ed, count: 1).has("undead"))) }
         func fighter(_ cd: CreatureDef, _ n: Int, army: [(alignment: String, undead: Bool)]) -> Battle.Fighter {
             var st = Combatant(creature: cd, count: n)
             st.morale = Battle.armyMorale(own: cd.alignment, army: army)
@@ -135,10 +136,14 @@ final class CombatScreen {
         var attackers = [Battle.Fighter(stats: heroStats, keyword: h.keyword, actor: classActor, size: actor(classActor)?.size ?? 4, move: 24, shots: 0, slot: 0)]
         for (k, s) in h.army.enumerated() { if let cd = t.creature(s.creature) { var f = fighter(cd, s.count, army: heroArmy); f.slot = k + 1; attackers.append(f) } }
         // a wandering stack has no hero: it splits against the attacker's stacks (0x62da90)
-        let backRow = c.shots > 0 || Combatant(creature: c, count: 1).has("ranged")
-        let split = Battle.splitArmy([Battle.ArmySlot(creature: c.keyword, count: g.monsters[i].count, backRow: backRow)], enemyStacks: attackers.count)
+        func backRow(_ d: CreatureDef) -> Bool { d.shots > 0 || Combatant(creature: d, count: 1).has("ranged") }
+        var stacks = [Battle.ArmySlot(creature: c.keyword, count: g.monsters[i].count, backRow: backRow(c))]
+        if let e = g.monsters[i].escort, let ed = t.creature(e.creature) { stacks.append(Battle.ArmySlot(creature: ed.keyword, count: e.count, backRow: backRow(ed))) }
+        let split = Battle.splitArmy(stacks, enemyStacks: attackers.count)
         var defenders: [Battle.Fighter] = []
-        for (k, st) in split.enumerated() { if let st = st { var f = fighter(c, st.count, army: monsterArmy); f.slot = k; defenders.append(f) } }
+        for (k, st) in split.enumerated() {
+            if let st = st, let d = t.creature(st.creature) { var f = fighter(d, st.count, army: monsterArmy); f.slot = k; defenders.append(f) }
+        }
         battle = Battle(field: f, attackers: attackers, defenders: defenders, seed: seed)
         queue = []; playing = nil; unitPos = [:]; unitState = [:]; dead = []; result = nil; showResults = false; floaters = []; effects = []
         pump()

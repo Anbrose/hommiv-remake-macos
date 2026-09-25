@@ -85,7 +85,7 @@ extension Renderer {
                 let tl = s.timeline
                 var frame = s.frames.first, shadow = frame.flatMap { s.shadow(for: $0) }
                 if !tl.isEmpty {
-                    let period = tl[0].frame.speed > 0 ? Double(tl[0].frame.speed) / 60.0 : 0.1
+                    let period = cs.framePeriod(u.actor, state)
                     var index: Int
                     if let st = st, st.once {
                         index = min(tl.count - 1, Int(now.timeIntervalSince(st.since) / period))

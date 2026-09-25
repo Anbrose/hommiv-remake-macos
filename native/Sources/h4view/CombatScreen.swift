@@ -174,7 +174,7 @@ final class CombatScreen {
             if now.timeIntervalSince(p.started) >= p.duration {
                 finish(p.event)
                 playing = nil
-            } else if case .move(let id, let path, let start, _) = p.event, !path.isEmpty, let m = moves[id] {
+            } else if case .move(let id, let path, let start, let flying) = p.event, !path.isEmpty, let m = moves[id] {
                 // prewalk (a flyer's take-off), whole loops of walk, postwalk, each covering its
                 // share of the path's length (0x7dec80)
                 let elapsed = now.timeIntervalSince(p.started)
@@ -186,7 +186,8 @@ final class CombatScreen {
                 } else {
                     state = "postwalk"; d = (m.length - m.postDist) + m.postDist * Float(min(1, (elapsed - m.preTime - m.walkTime) / max(0.001, m.postTime)))
                 }
-                let pts = [start] + path
+                // a flight is one straight line from where it took off to where it lands
+                let pts = flying ? [start, path[path.count - 1]] : [start] + path
                 var geo: Float = 0
                 for k in 1..<pts.count { let dx = Float(pts[k].0 - pts[k - 1].0), dy = Float(pts[k].1 - pts[k - 1].1); geo += (dx * dx + dy * dy).squareRoot() }
                 let (pos, dir) = CombatScreen.along(pts, m.length > 0 ? d / m.length * geo : geo)
@@ -216,7 +217,7 @@ final class CombatScreen {
         case .move(let id, let path, let start, let flying):
             // flyers take off first (0x7dd400: prewalk, walk, postwalk); walkers walk and stop (0x7de960: walk, postwalk)
             let u = b.unit(id)
-            let pts = [start] + path
+            let pts = flying ? [start] + (path.last.map { [$0] } ?? []) : [start] + path
             let face = pts.count > 1 ? Battle.facing(dx: Float(pts[1].0 - pts[0].0), dy: Float(pts[1].1 - pts[0].1)) : u.facing
             // the path's length in world units: 16 a straight step, 24 a diagonal one (0x7dec80); a flight is a straight line
             var length: Float = 0
@@ -238,20 +239,24 @@ final class CombatScreen {
             playing = Anim(event: e, started: now, duration: preTime + walkTime + postTime)
         case .melee(let id, let target, let dmg, let killed):
             unitState[id] = ("melee", now, true)
-            playing = Anim(event: e, started: now, duration: 0.6)
+            let mu = b.unit(id)
+            playing = Anim(event: e, started: now, duration: max(0.2, stateDuration(mu.actor, "melee", mu.facing)))
             let t = b.unit(target)
             floaters.append(("-\(dmg)" + (killed > 0 ? " (\(killed) killed)" : ""), t.centre.0, t.centre.1, now.addingTimeInterval(0.3)))
         case .shoot(let id, let target, let dmg, let killed):
             unitState[id] = ("ranged", now, true)
-            playing = Anim(event: e, started: now, duration: 0.6)
+            let su = b.unit(id)
+            playing = Anim(event: e, started: now, duration: max(0.2, stateDuration(su.actor, "ranged", su.facing)))
             let t = b.unit(target)
             floaters.append(("-\(dmg)" + (killed > 0 ? " (\(killed) killed)" : ""), t.centre.0, t.centre.1, now.addingTimeInterval(0.3)))
         case .die(let id):
             unitState[id] = ("die", now, true)
-            playing = Anim(event: e, started: now, duration: 0.9)
+            let du = b.unit(id)
+            playing = Anim(event: e, started: now, duration: max(0.2, stateDuration(du.actor, "die", du.facing)))
         case .defend(let id):
             unitState[id] = ("block", now, true)
-            playing = Anim(event: e, started: now, duration: 0.3)
+            let bu = b.unit(id)
+            playing = Anim(event: e, started: now, duration: max(0.1, stateDuration(bu.actor, "block", bu.facing)))
         case .morale(let id, let good):
             // bad morale plays the sorrow effect, good morale spiritual fervor (0x5f3710 -> 0x575a70 with 0x91 / 0x94)
             let name = good ? "spiritual fervor" : "sorrow"
@@ -304,6 +309,14 @@ final class CombatScreen {
         return (p, (0, 0))
     }
     var stateDurations: [String: Double] = [:]
+    /// The combat "Animation Speed" option, percent (heroes4.exe keeps it at 0xa7564c, 150 by default).
+    var animationSpeed = 150
+    /// Seconds a frame of an actor's state shows: 100000 / (the state's frames per second x the
+    /// animation speed) ms (the state's speed byte in combat_actor; 0x5d5660 x 0x7c8ea0).
+    func framePeriod(_ actorName: String, _ state: String) -> Double {
+        let fps = max(1, actor(actorName)?.state(state)?.speed ?? 9)
+        return 100.0 / Double(fps * animationSpeed)
+    }
     /// How long an actor's one-off state runs (its frames at their own speed, as the renderer plays them).
     func stateDuration(_ actorName: String, _ state: String, _ facing: String) -> Double {
         let key = "\(actorName)|\(state)|\(facing)"
@@ -311,7 +324,7 @@ final class CombatScreen {
         var d = 0.0
         if let a = actor(actorName), let entry = a.sequenceEntry(state: state, facing: facing), let data = payload(entry), let s = try? Sprite(data: data) {
             let tl = s.timeline
-            if !tl.isEmpty { d = Double(tl.count) * (tl[0].frame.speed > 0 ? Double(tl[0].frame.speed) / 60 : 0.1) }
+            if !tl.isEmpty { d = Double(tl.count) * framePeriod(actorName, state) }
         }
         stateDurations[key] = d
         return d

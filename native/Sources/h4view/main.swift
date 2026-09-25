@@ -396,6 +396,11 @@ final class MapView: MTKView {
             if renderer.townOpen != nil { renderer.townClick(x: cx, y: cy); return }
             if cx >= Float(AdventureUI.mapViewportWidth) {
                 if ui.hit("end_turn", x: cx, y: cy) { g.endTurn() }
+                else if ui.hit("mini_map", x: cx, y: cy), let mm = ui.hotspot("mini_map") {   // the minimap: bring the view there
+                    let n = Float(g.map.size)
+                    let col = (cx - Float(mm.x)) / Float(mm.width) * n - n / 2, row = (cy - Float(mm.y)) / Float(mm.height) * n + n / 2
+                    renderer.centre(onCell: (Int(((row - col) / 2).rounded()), Int(((row + col) / 2).rounded())))
+                }
                 else if ui.hit("Town_list", x: cx, y: cy), let list = ui.hotspot("Town_list") {
                     // a town card: one click brings the map to the town, a double click opens it
                     let owned = g.towns.indices.filter { g.towns[$0].owned }

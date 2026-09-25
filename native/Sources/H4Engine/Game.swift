@@ -279,11 +279,34 @@ public final class GameState {
     public static let difficultyFactor = [0.6667, 1.0, 1.5, 2.0, 3.0]
     static let seaCreatures: Set<String> = ["mermaid", "sea monster", "pirate"]
 
+    /// The creature picker (heroes4.exe 0x7f3380): walks the creatures in the exe's id order and
+    /// draws one uniformly among those of the alignment (nil: any), between the levels, allowed
+    /// by the map's expansion, costing at most `cap` experience, living on water exactly when the
+    /// stack stands on water (mermaid, sea monster, pirate); when `exclude` is given, the other
+    /// creatures costing exactly `cap` are left out (the excluded one itself stays in).
+    func pickCreature(alignment: String?, water: Bool, cap: Int, exclude: String?, levels: ClosedRange<Int>, rng: inout GameRandom) -> CreatureDef? {
+        guard let t = tables else { return nil }
+        let expansion = max(0, min(2, map.version - 27))
+        var pick: CreatureDef? = nil, seen = 0
+        for id in RuleTables.creatureIds {
+            guard let d = t.creature(id), d.expansion <= expansion, d.experience <= cap else { continue }
+            if let ex = exclude, d.keyword.lowercased() != ex.lowercased(), d.experience == cap { continue }
+            guard GameState.seaCreatures.contains(d.keyword.lowercased()) == water, levels ~= d.level else { continue }
+            if let a = alignment, d.alignment != a { continue }
+            seen += 1
+            if rng.next() % seen == 0 { pick = d }
+        }
+        return pick
+    }
+
     /// A wandering monster's army (heroes4.exe 0x7f3910): a value between 0.8 and 1.2 times the
     /// level's budget (or the editor's range in peasants), times the difficulty factor; about two
     /// thirds of it buys the creature ((2V + 3E - 1) / 3E, E its experience; sea monsters and
-    /// mermaids spend it all), and the rest a stack of a cheaper creature of the same alignment.
-    public func monsterArmy(_ c: CreatureDef, level: Int, range: (min: Int, max: Int)?, rng: inout GameRandom) -> (count: Int, escort: (creature: String, count: Int)?) {
+    /// mermaids spend it all). What is left goes to 0x7f32b0: the picker draws among the same
+    /// alignment's creatures a level down to the same level costing at most min(E, left) --
+    /// the creature itself included -- and buys left / cost of it; drawing the creature itself
+    /// only adds to its own stack, so not every stack has an escort.
+    public func monsterArmy(_ c: CreatureDef, level: Int, range: (min: Int, max: Int)?, water: Bool = false, rng: inout GameRandom) -> (count: Int, escort: (creature: String, count: Int)?) {
         guard let t = tables else { return (1, nil) }
         let lo: Int, hi: Int
         if let r = range, let peasant = t.creature("peasant") {
@@ -295,20 +318,13 @@ public final class GameState {
         let raw = hi > lo ? rng.next() % (hi - lo + 1) + lo : lo
         let value = Int(Double(raw) * GameState.difficultyFactor[min(4, max(0, map.difficulty))])
         let e = max(1, c.experience)
-        let sea = c.keyword == "sea monster" || c.keyword == "mermaid"
-        let count = max(1, sea ? value / e : (2 * value + 3 * e - 1) / (3 * e))
+        let sea = c.keyword.lowercased() == "sea monster" || c.keyword.lowercased() == "mermaid"
+        var count = max(1, sea ? value / e : (2 * value + 3 * e - 1) / (3 * e))
         let left = value - count * e
         guard left > 0, !sea else { return (count, nil) }
-        // the picker (0x7f3380): uniform over the creatures that fit -- same alignment, one level
-        // down to the same level, no dearer than the rest or the main creature, not the main one
-        let cap = min(e, left), expansion = max(0, min(2, map.version - 27))
-        var pick: CreatureDef? = nil, seen = 0
-        for d in t.creatures where d.keyword != c.keyword && d.alignment == c.alignment && d.experience <= cap
-            && (c.level - 1)...c.level ~= d.level && d.expansion <= expansion && !GameState.seaCreatures.contains(d.keyword) {
-            seen += 1
-            if rng.next() % seen == 0 { pick = d }
-        }
-        guard let p = pick, p.experience > 0, left / p.experience > 0 else { return (count, nil) }
+        guard let p = pickCreature(alignment: c.alignment, water: water, cap: min(e, left), exclude: c.keyword,
+                                   levels: (c.level - 1)...c.level, rng: &rng), p.experience > 0, left / p.experience > 0 else { return (count, nil) }
+        if p.keyword.lowercased() == c.keyword.lowercased() { count += left / p.experience; return (count, nil) }   // merged into its own stack
         return (count, (p.keyword, left / p.experience))
     }
     public var towns: [Town] = []
@@ -675,11 +691,12 @@ public final class GameState {
                 if let kw = parts.first, let c = t.creature(String(kw)) {
                     let record = map.objects.first { $0.type == "random_monster" && $0.x == p.cellX && $0.y == p.cellY && $0.level == level }
                     var rng = GameRandom(seed: p.cellX * 7919 + p.cellY * 104729 + level * 1299709)
-                    let army = monsterArmy(c, level: RandomResolver.level(p.subtype), range: record?.monsterRange, rng: &rng)
+                    let water = map.cells[level][p.cellX * map.size + p.cellY]?.type == 0
+                    let army = monsterArmy(c, level: RandomResolver.level(p.subtype), range: record?.monsterRange, water: water, rng: &rng)
                     monsters.append(Monster(x: p.cellX, y: p.cellY, name: p.name, creature: c.keyword, count: army.count, extra: army.escort.map { [$0] } ?? []))
                     let count = army.count
                     passability.block(p.cellX, p.cellY)
-                    if ProcessInfo.processInfo.environment["H4DEBUG"] != nil { print("monster: \(count) \(c.plural) at (\(p.cellX),\(p.cellY))") }
+                    if ProcessInfo.processInfo.environment["H4DEBUG"] != nil { print("monster: \(count) \(c.plural) at (\(p.cellX),\(p.cellY)) escort: \(army.escort.map { "\($0.count) \($0.creature)" } ?? "none")") }
                 }
             } else if p.type == "army", let t = tables,
                       let record = map.objects.first(where: { $0.type == "army" && $0.x == p.cellX && $0.y == p.cellY && $0.level == level }) {

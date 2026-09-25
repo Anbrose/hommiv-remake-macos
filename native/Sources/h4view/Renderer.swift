@@ -412,9 +412,9 @@ final class Renderer: NSObject, MTKViewDelegate {
             if minimapTexture == nil || minimapStamp != stamp { minimapTexture = makeTexture(AdventureUI.minimap(game: g, size: mm.width)); minimapStamp = stamp }
             out.append(Quad(texture: minimapTexture!, x: mm.x, y: mm.y, w: mm.width, h: mm.height))
             let n = Float(scene.map.size)
-            // the playable rectangle on the map canvas: columns -n/2..n/2, rows n/2..3n/2
-            let mapW = n * 64, mapH = n * 16
-            let originX: Float = 32, originY: Float = n * 8 + 32
+            // the playable rectangle on the map canvas: columns -n/2..n/2 (x 16n+32...48n+32), rows n/2..3n/2
+            let mapW = n * 32, mapH = n * 16
+            let originX: Float = n * 16 + 32, originY: Float = n * 8 + 32
             let vx0 = (pan.x - originX) / mapW, vy0 = (pan.y - originY) / mapH
             let vx1 = vx0 + Float(AdventureUI.mapViewportWidth) * uiScale / zoom / mapW, vy1 = vy0 + viewSize.y / zoom / mapH
             let rx0 = mm.x + Int(max(0, min(1, vx0)) * Float(mm.width)), rx1 = mm.x + Int(max(0, min(1, vx1)) * Float(mm.width))
@@ -953,7 +953,20 @@ final class Renderer: NSObject, MTKViewDelegate {
         encode(rpd: rpd, present: drawable, time: now.timeIntervalSince(start))
     }
 
+    /// Keep the map view on the map: the playable diamond of cells (y - x within n/2, x + y
+    /// within n/2 of n) is, on the canvas, the rectangle of cell centres x 16n+32...48n+32,
+    /// y 8n+32...24n+32; the view stays half a tile inside it so nothing beyond the edge shows.
+    func clampPan() {
+        guard ui != nil else { return }
+        let n = Float(scene.map.size)
+        let x0 = 16 * n + 64, x1 = 48 * n, y0 = 8 * n + 48, y1 = 24 * n + 16
+        let vw = Float(AdventureUI.mapViewportWidth) * uiScale / zoom, vh = viewSize.y / zoom
+        pan.x = vw >= x1 - x0 ? (x0 + x1 - vw) / 2 : min(max(pan.x, x0), x1 - vw)
+        pan.y = vh >= y1 - y0 ? (y0 + y1 - vh) / 2 : min(max(pan.y, y0), y1 - vh)
+    }
+
     func encode(rpd: MTLRenderPassDescriptor, present: MTLDrawable?, time: Double) {
+        if !inCombat, townOpen == nil { clampPan() }
         if let g = game, let t = g.enteredTown { townOpen = t; g.enteredTown = nil }
         if let g = game, let cs = combat, let pb = g.pendingBattle, cs.battle == nil {
             let cell = g.map.cells[g.level][pb.hero.x * g.map.size + pb.hero.y]

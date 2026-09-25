@@ -156,7 +156,7 @@ final class CombatScreen {
             if let st = st, let d = t.creature(st.creature) { var f = fighter(d, st.count, army: monsterArmy); f.slot = k; defenders.append(f) }
         }
         battle = Battle(field: f, attackers: attackers, defenders: defenders, seed: seed)
-        queue = []; playing = nil; unitPos = [:]; unitState = [:]; dead = []; dying = []; shownPos = [:]; shownCount = [:]; result = nil; showResults = false; floaters = []; effects = []
+        queue = []; playing = nil; unitPos = [:]; unitState = [:]; dead = []; dying = []; pendingDeaths = []; shownPos = [:]; shownCount = [:]; result = nil; showResults = false; floaters = []; effects = []
         pump()
     }
 
@@ -171,6 +171,7 @@ final class CombatScreen {
     func take(_ events: [Battle.Event]) {
         for e in events {
             if case .move(let id, _, let from, _) = e, unitPos[id] == nil, shownPos[id] == nil { shownPos[id] = (Float(from.0), Float(from.1)) }
+            if case .die(let id) = e { pendingDeaths.insert(id) }
         }
         queue += events
     }
@@ -258,6 +259,7 @@ final class CombatScreen {
             shownCount[target] = left
             floaters.append(("-\(dmg)" + (killed > 0 ? " (\(killed) killed)" : ""), tc.0, tc.1, now.addingTimeInterval(0.3)))
         case .die(let id):
+            pendingDeaths.remove(id)
             dying.insert(id)
             unitState[id] = ("die", now, true)
             let du = b.unit(id)
@@ -307,7 +309,9 @@ final class CombatScreen {
     var shownPos: [Int: (Float, Float)] = [:]
     var shownCount: [Int: Int] = [:]
     var dying: Set<Int> = []
-    func shownAlive(_ u: Battle.Unit) -> Bool { !dying.contains(u.id) && !dead.contains(u.id) && (u.alive || busy) }
+    /// Deaths queued but not played yet: those units still stand.
+    var pendingDeaths: Set<Int> = []
+    func shownAlive(_ u: Battle.Unit) -> Bool { !dying.contains(u.id) && !dead.contains(u.id) && (u.alive || pendingDeaths.contains(u.id)) }
     func shownCentre(_ u: Battle.Unit) -> (Float, Float) {
         let p = unitPos[u.id] ?? shownPos[u.id] ?? (Float(u.x), Float(u.y))
         return (p.0 + Float(u.size) / 2, p.1 + Float(u.size) / 2)

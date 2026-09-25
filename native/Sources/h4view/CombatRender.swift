@@ -71,7 +71,9 @@ extension Renderer {
             q.append(Quad(texture: texture(for: fr, of: o.name), x: Int(px + Float(s.origin.x + Int32(fr.box.left)) * sc), y: Int(py + Float(s.origin.y + Int32(fr.box.top)) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc)))
             drawn.append((py - 1, q))
         }
-        for u in b.units where u.alive || !cs.dead.contains(u.id) {
+        // every unit, the dead too: a dead stack stays on the field as the last frame of its
+        // die sequence (the combat actor has no other corpse state), under the living
+        for u in b.units {
             let pos = cs.unitPos[u.id] ?? cs.shownPos[u.id] ?? (Float(u.x), Float(u.y))
             let shownAlive = cs.shownAlive(u)
             // the actor's origin is the footprint's centre
@@ -98,7 +100,7 @@ extension Renderer {
                     }
                     let e = tl[index]; frame = e.frame; shadow = e.shadow
                 }
-                if !shownAlive, cs.dead.contains(u.id), let last = tl.last { frame = last.frame; shadow = last.shadow }
+                if !shownAlive, cs.dead.contains(u.id) || st == nil, let last = tl.last { frame = last.frame; shadow = last.shadow }
                 let ox = px + Float(s.origin.x) * sc, oy = py + Float(s.origin.y) * sc
                 if let sh = shadow { q.append(Quad(texture: texture(for: sh, of: entry), x: Int(ox + Float(sh.box.left) * sc), y: Int(oy + Float(sh.box.top) * sc), w: Int(Float(sh.bitmap.width) * sc), h: Int(Float(sh.bitmap.height) * sc))) }
                 if let fr = frame { q.append(Quad(texture: texture(for: fr, of: entry), x: Int(ox + Float(fr.box.left) * sc), y: Int(oy + Float(fr.box.top) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc))) }

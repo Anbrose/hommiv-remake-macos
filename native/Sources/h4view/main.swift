@@ -182,7 +182,9 @@ if let out = snapshot {
     if let target = battleAt, let hero = game.heroes.first, let cs = combatScreen,
        let p = scene.placed.first(where: { $0.cellX == target.0 && $0.cellY == target.1 }), let mi = game.monster(for: p) {
         cs.start(game: game, hero: hero, monsterAt: mi, p, terrain: 1)
-        if let b = cs.battle { for _ in 0..<battleSteps { b.autoAct() }; _ = b.takeEvents(); cs.pump(); if b.finished != nil { cs.result = (b.finished!, b.round); cs.showResults = battleResults }
+        if let b = cs.battle { for _ in 0..<battleSteps { b.autoAct() }
+            if ProcessInfo.processInfo.environment["H4DEBUG"] != nil { print("battle: round \(b.round) finished \(String(describing: b.finished)) units \(b.units.map { "\($0.keyword):\($0.stats.count)@\($0.x),\($0.y)" })") }
+            _ = b.takeEvents(); cs.pump(); if b.finished != nil { cs.result = (b.finished!, b.round); cs.showResults = battleResults }
             if let n = ProcessInfo.processInfo.environment["H4INFO"].flatMap({ Int($0) }), b.units.indices.contains(n) { cs.info = b.units[n].id }
             if ProcessInfo.processInfo.environment["H4RETREAT"] != nil { renderer.askRetreat() } }   // snapshot: the retreat question   // snapshot: open a unit's creature window
         print("battle: round \(cs.battle?.round ?? 0), units \(cs.battle?.units.map { "\($0.stats.name)x\($0.stats.count) morale \($0.stats.morale)@(\($0.x),\($0.y))" }.joined(separator: " ") ?? "")")

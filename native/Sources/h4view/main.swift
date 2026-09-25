@@ -11,6 +11,7 @@ guard args.count >= 3 else {
 }
 var level = 0
 var snapshot: String?
+var loadFile: String?     // --load <file.h4s>: start from a saved game
 var center: (Int, Int)?   // --center x,y: map cell to put in the middle of the view
 var zoom: Float = 1       // --zoom z: initial scale
 var walk: (Int, Int)?     // --walk x,y (with --snapshot): send the hero there and render 1.5 s later
@@ -52,6 +53,7 @@ while i < args.count {
         i += 2
     }
     else if args[i] == "--snapshot", i + 1 < args.count { snapshot = args[i + 1]; i += 2 }
+    else if args[i] == "--load", i + 1 < args.count { loadFile = args[i + 1]; i += 2 }
     else if args[i] == "--center", i + 1 < args.count {
         let p = args[i + 1].split(separator: ",").compactMap { Int($0) }
         if p.count == 2 { center = (p[0], p[1]) }
@@ -155,7 +157,12 @@ if let town = scene.placed.first(where: { p in ownedByFirst.map { p.category == 
 }
 // the map's scripts: loaded, then day 1's events (the opening story, ...)
 game.loadScripts()
-game.runDayEvents()
+// a saved game: its state over the freshly started scenario (day events already ran then)
+if let f = loadFile, let save = try? SaveGame.read(URL(fileURLWithPath: f)) {
+    game.restore(save); lap("loaded \(f)")
+    if let h = game.heroes.first { print("loaded: day \(game.day), hero at (\(h.x),\(h.y)), movement \(h.movement), gold \(game.resources["Gold"] ?? 0), monsters \(game.monsters.count), objects \(scene.placed.count)") }
+}
+else { game.runDayEvents() }
 for m in game.scripts.messages { print("script text: \(m.prefix(100))") }
 
 // The adventure screen chrome (frame, panel, fonts); the map alone if the UI files are missing.
@@ -185,6 +192,7 @@ if let out = snapshot {
     renderer.town = townScreen
     renderer.combat = combatScreen
     renderer.movies = movies
+    if let m = ProcessInfo.processInfo.environment["H4SAVEDIALOG"] { renderer.openSaveDialog(m == "load" ? .load : .save) }   // snapshot the save / load dialog
     if walk != nil { game.quickCombatOnly = true }   // --walk snapshots resolve fights at once
     if let target = battleAt, let hero = game.heroes.first, let cs = combatScreen,
        let p = scene.placed.first(where: { $0.cellX == target.0 && $0.cellY == target.1 }), let mi = game.monster(for: p) {
@@ -228,6 +236,7 @@ if let out = snapshot {
         for line in game.log { print(line) }
         game.log.removeAll()
         print("hero now at (\(hero.x),\(hero.y)) facing \(hero.facing), movement \(hero.movement), still walking: \(hero.isWalking), route left \(hero.plan.count) cells")
+        if let out = ProcessInfo.processInfo.environment["H4SAVETO"] { try? game.snapshot(mapPath: args[2]).write(to: URL(fileURLWithPath: out)); print("saved \(out)") }   // debugging aid
         let near = scene.placed.filter { game.isPickup($0) && abs($0.cellX - hero.x) <= 6 && abs($0.cellY - hero.y) <= 6 }
         print("pickups nearby: \(near.map { "\($0.name.dropFirst(11).dropLast(4))@(\($0.cellX),\($0.cellY))" }.joined(separator: ", "))")
     }
@@ -397,6 +406,7 @@ final class MapView: MTKView {
             renderer.combatClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale)
             return
         }
+        if renderer.saveDialogClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale, double: e.clickCount >= 2) { return }
         if renderer.messageBoxClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale) { return }   // a script message: only OK
         if renderer.popup != nil {   // an open right-click box: a left click outside it closes it, and does nothing else
             let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale
@@ -474,7 +484,13 @@ final class MapView: MTKView {
         renderer.zoom = z
     }
     override func keyDown(with e: NSEvent) {
+        if renderer.saveDialogKey(e) { return }
         let step: Float = 64 / renderer.zoom
+        // the original's hot keys on the map: S save, L load
+        if !renderer.inCombat, renderer.townOpen == nil, renderer.prompt == nil {
+            if e.keyCode == 1 { renderer.openSaveDialog(.save); return }
+            if e.keyCode == 37 { renderer.openSaveDialog(.load); return }
+        }
         switch e.keyCode {
         case 123, 124:   // arrows pan the map, or page the build list
             if case .buildList? = renderer.townDialog { renderer.buildPage = max(0, renderer.buildPage + (e.keyCode == 124 ? 1 : -1)) }
@@ -504,6 +520,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         view.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
         view.preferredFramesPerSecond = 60
         let renderer = try! Renderer(device: device, scene: scene, pixelFormat: .bgra8Unorm)
+        renderer.archivePath = args[1]; renderer.mapPath = args.count > 2 ? args[2] : nil
         renderer.game = game
         renderer.resolver = resolver
         renderer.showBlocked = showBlocked

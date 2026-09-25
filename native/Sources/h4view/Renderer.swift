@@ -65,6 +65,10 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// The game's movies (movies.h4r), decoded on demand.
     var movies: Movies?
     var sound: GameSound?
+    var saveDialog: SaveDialog?
+    /// The game's archive and scenario files (for saving and for starting again from a save).
+    var archivePath: String?, mapPath: String?
+    var lastAutosaveDay: Int?
     var buttonTextures: Set<ObjectIdentifier> = []
     var buttonRects: [(x: Int, y: Int, w: Int, h: Int)] = []
     /// A press on one of the buttons drawn last frame plays the game's click (sound.miscellaneous.button).
@@ -574,6 +578,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         out += creatureDialogQuads()
         out += adventureDialogQuads()
         out += messageBoxQuads()
+        out += saveDialogQuads()
         return out
     }
     var showBlocked = false   // debug: mark every cell a hero cannot enter
@@ -1005,6 +1010,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             for name in g.sounds { sound?.play(name) }
             g.sounds.removeAll()
             updateMusic()
+            if lastAutosaveDay != g.day, mapPath != nil { lastAutosaveDay = g.day; autosave() }   // each new day autosaves
             // the hero's ride: sound.hero horse.walk loops while a hero walks on the map
             if !inCombat, townOpen == nil, g.heroes.contains(where: { $0.isWalking }) { sound?.startLoop("hero horse.walk", key: "horse") }
             else { sound?.stopLoop("horse") }

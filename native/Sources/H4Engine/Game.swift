@@ -242,7 +242,7 @@ public final class GameState {
     public let map: MapFile
     public let level: Int
     public let scene: MapScene
-    public private(set) var passability: Passability
+    public internal(set) var passability: Passability
     public var heroes: [Hero] = []
     /// Things that happened this frame, for the UI (e.g. "picked up Resources.Gold").
     public var log: [String] = []

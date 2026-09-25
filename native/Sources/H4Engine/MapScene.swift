@@ -226,6 +226,14 @@ public final class MapScene {
     /// Take an object off the map (a pickup that was collected).
     public func remove(_ p: Placed) {
         placed.removeAll { $0.cellX == p.cellX && $0.cellY == p.cellY && $0.name == p.name && $0.depth == p.depth }
+        removed.append(SavedObject(x: p.cellX, y: p.cellY, name: p.name))
+    }
+    /// Objects taken off the map (picked up, beaten), for saved games.
+    public struct SavedObject: Codable { public let x: Int, y: Int, name: String }
+    public private(set) var removed: [SavedObject] = []
+    /// Take saved objects off again (loading a game).
+    public func removeAll(_ list: [SavedObject]) {
+        for o in list { if let p = placed.first(where: { $0.cellX == o.x && $0.cellY == o.y && $0.name == o.name }) { remove(p) } }
     }
 
     static func mod(_ a: Int, _ m: Int) -> Int { ((a % m) + m) % m }

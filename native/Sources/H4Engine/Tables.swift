@@ -77,6 +77,11 @@ public final class RuleTables {
     public let skillWeights: [String: [String: Int]]
     /// table.skills: "<skill>_<basic|advanced|expert|master|grandmaster>" -> name and help.
     public let skillTexts: [String: (name: String, help: String)]
+    /// table.creature_banks: up to three guard creatures (initial count, growth per day), the
+    /// initial and added treasure split (gold..gems, artifacts, in percent) and artifact maximums
+    /// (parchments, scrolls, potions, items, treasures, minor, major, total).
+    public struct BankDef { public var guards: [(creature: String, initial: Int, perDay: Double)] = []; public var initial: [Int] = [], added: [Int] = [], maxima: [Int] = [] }
+    public let banks: [String: BankDef]
     public static let skillLevelNames = ["basic", "advanced", "expert", "master", "grandmaster"]
     /// Creature ability display names ("Normal Melee", "No Obstacle Penalty") -> the game's
     /// keywords ("normal_melee", "siege_machine"), from table.creature_abilities.
@@ -205,6 +210,19 @@ public final class RuleTables {
             for row in RuleTable(data: d).rows where row.count >= 3 && !row[0].isEmpty { sn[row[0].lowercased()] = (row[1], row[2]) }
         }
         skillTexts = sn
+        var bk: [String: BankDef] = [:]
+        if let d = try? archive.payload("table.creature_banks.h4d") {
+            for row in RuleTable(data: d).rows where row.count >= 34 && !row[0].isEmpty && row[0] != "keyword" {
+                var b = BankDef()
+                for g in 0..<3 {
+                    let c = row[3 + 3 * g]
+                    if !c.isEmpty { b.guards.append((c, Int(row[1 + 3 * g]) ?? 0, Double(row[2 + 3 * g]) ?? 0)) }
+                }
+                b.initial = (10...17).map { Int(row[$0]) ?? 0 }; b.added = (18...25).map { Int(row[$0]) ?? 0 }; b.maxima = (26...33).map { Int(row[$0]) ?? 0 }
+                bk[row[0].lowercased()] = b
+            }
+        }
+        banks = bk
         var ak: [String: String] = [:], info: [String: (name: String, help: String)] = [:]
         if let d = try? archive.payload("table.creature_abilities.h4d") {
             for row in RuleTable(data: d).rows where row.count >= 2 && !row[0].isEmpty {

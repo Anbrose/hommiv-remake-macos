@@ -340,6 +340,8 @@ public final class GameState {
     public struct Monster {
         public var x: Int, y: Int
         public var z = 0   // map level
+        /// The guards of a creature bank being fought (its object key), not a wandering stack.
+        public var bank: String? = nil
         public let name: String, creature: String; public var count: Int
         /// The lower-level stack spending what is left of the monster's value (heroes4.exe 0x7f32b0).
         /// The army's other stacks: a random monster's escort, or a placed army's further stacks.
@@ -434,7 +436,7 @@ public final class GameState {
     public var dangerCells: Set<Int> {
         if let d = dangerCache { return d }
         var out = Set<Int>()
-        for i in monsters.indices where monsters[i].z == level { out.formUnion(zone(of: i)) }
+        for i in monsters.indices where monsters[i].z == level && monsters[i].bank == nil { out.formUnion(zone(of: i)) }
         dangerCache = out
         return out
     }
@@ -457,7 +459,7 @@ public final class GameState {
     /// the cell and that notices him there.
     public func threat(to h: Hero, at x: Int, _ y: Int) -> Int? {
         guard isDangerous(x, y) else { return nil }
-        return monsters.indices.first { i in monsters[i].z == level && zone(of: i).contains(x * map.size + y) && notices(monsters[i], h, at: x, y) }
+        return monsters.indices.first { i in monsters[i].z == level && monsters[i].bank == nil && zone(of: i).contains(x * map.size + y) && notices(monsters[i], h, at: x, y) }
     }
 
     /// The movement an army gets per day: the slowest of the hero and its creatures.
@@ -523,7 +525,7 @@ public final class GameState {
     }
 
     public func monster(for p: MapScene.Placed) -> Int? {
-        monsters.firstIndex { $0.x == p.cellX && $0.y == p.cellY && $0.name == p.name && $0.z == level }
+        monsters.firstIndex { $0.x == p.cellX && $0.y == p.cellY && $0.name == p.name && $0.z == level && $0.bank == nil }
     }
     public func town(for p: MapScene.Placed) -> Int? {
         p.category == "castle" ? towns.firstIndex { $0.x == p.cellX && $0.y == p.cellY && $0.z == level } : nil
@@ -755,7 +757,14 @@ public final class GameState {
         clearBattleEffects(hero)
         hero.army = army
         refreshMovement(hero)
-        if won {
+        if let key = monsters[i].bank {   // a creature bank: the object stays
+            if won { giveExperience(experience, to: hero); bankDefeated(hero, p, key: key) }
+            else {
+                objectStates[key]?.guardCounts[0] = max(1, monstersLeft)
+                hero.x = hero.home.x; hero.y = hero.home.y; hero.movement = 0; hero.path = []; hero.plan = []
+            }
+            monsters.remove(at: i)
+        } else if won {
             giveExperience(experience, to: hero)
             scene.remove(p)
             passability.free(p.cellX, p.cellY)
@@ -785,7 +794,8 @@ public final class GameState {
     /// at the gate of the town; the monsters keep what they lost.
     public func retreat(hero: Hero, monsterAt i: Int, monstersLeft: Int, to town: Int) {
         hero.army = []
-        if i < monsters.count { monsters[i].count = max(1, monstersLeft) }
+        if i < monsters.count, let key = monsters[i].bank { objectStates[key]?.guardCounts[0] = max(1, monstersLeft); monsters.remove(at: i) }
+        else if i < monsters.count { monsters[i].count = max(1, monstersLeft) }
         if let p = scene.placed.first(where: { self.town(for: $0) == town }) {
             let gate = gateCells(p).first { passability.isFree($0.0, $0.1) } ?? gateCells(p)[0]
             hero.x = gate.0; hero.y = gate.1

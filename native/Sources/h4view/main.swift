@@ -217,6 +217,7 @@ if ProcessInfo.processInfo.environment["H4VISITALL"] != nil, let h = game.heroes
         let diff = game.resources.filter { $0.value != before[$0.key] }.map { "\($0.key) \($0.value - (before[$0.key] ?? 0))" }
         print("== \(p.type).\(p.subtype) at (\(p.cellX),\(p.cellY)): \(diff) floaters \(game.floaters.map { $0.text }) level \(lv)->\(h.level) q \(game.question?.text.prefix(60) ?? "-") chest \(game.chestOffer.map { "\($0.gold)/\($0.experience)" } ?? "-")")
         for m in game.scripts.messages { print("   \(m.prefix(150))") }
+        if p.type == "creature_bank" { print("   bank: \(game.debugBank(p))") }
         if let c = game.choice { print("   choice: \(c.text.prefix(80)) -> \(c.options)") }
         game.question = nil; game.chestOffer = nil; game.choice = nil
     }

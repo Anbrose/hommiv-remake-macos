@@ -196,6 +196,8 @@ extension GameState {
             say(p, "Initial"); dialogueSound(26)
         case "obelisk":
             say(p, "initial"); dialogueSound(16)
+        case "creature_bank":
+            visitBank(hero, p, st)
         case "lighthouse":
             if st.owner == map.humanColour { say(p, "empty") } else { st.owner = map.humanColour; st.countdown = -1; say(p, "initial") }
         default:
@@ -225,5 +227,98 @@ extension GameState {
         sounds.append("miscellaneous.teleport_in")
         say(from, "Initial")
         jumped = true
+    }
+
+    // MARK: creature banks (heroes4.exe 0x648980, table.creature_banks)
+
+    /// Guards at their initial counts, the treasure worth 3 x their gold cost, then as many
+    /// days' growth as rng() % 36 (0x649710).
+    func setupBank(_ p: MapScene.Placed, _ st: inout ObjectState) {
+        guard let t = tables, let b = t.banks[p.subtype] else { return }
+        st.guardCreatures = b.guards.map { $0.creature }
+        st.guardCounts = b.guards.map { $0.initial }
+        st.guardFractions = b.guards.map { _ in 0 }
+        let v = b.guards.reduce(0.0) { $0 + Double($1.initial * (t.creature($1.creature)?.gold ?? 0)) }
+        st.initialWorth = Int((3 * v + 0.5).rounded(.down)); st.worth = st.initialWorth
+        growBank(&st, days: rng(36))
+    }
+    /// Growth (0x64ae30): each guard type gains Per Day x days (in 1/256), whole creatures join
+    /// and add 3 x their cost to the treasure.
+    func growBank(_ st: inout ObjectState, days: Int) {
+        guard days > 0, let t = tables else { return }
+        let key = st.guardCreatures.joined(separator: ",")
+        guard let b = t.banks.values.first(where: { $0.guards.map { $0.creature }.joined(separator: ",") == key }) else { return }
+        for (i, g) in b.guards.enumerated() where i < st.guardCounts.count {
+            st.guardFractions[i] += Int((g.perDay * 256 * Double(days)).rounded())
+            let n = st.guardFractions[i] >> 8
+            if n > 0 { st.guardCounts[i] += n; st.guardFractions[i] &= 0xff; st.worth += n * (t.creature(g.creature)?.gold ?? 0) * 3 }
+        }
+    }
+    /// The treasure: the initial part split by the Initial percentages, what growth added by the
+    /// Added ones, each material bought at its value (gold rounded down to 250s); the artifact share
+    /// buys artifacts within the maximums (0x64af80).
+    func bankTreasure(_ p: MapScene.Placed, _ st: ObjectState) -> (materials: [Int], artifacts: [Int]) {
+        guard let t = tables, let b = t.banks[p.subtype] else { return ([Int](repeating: 0, count: 7), []) }
+        let initialPart = Double(st.initialWorth), addedPart = Double(max(0, st.worth - st.initialWorth))
+        let si = Double(max(1, b.initial.reduce(0, +))), sa = Double(max(1, b.added.reduce(0, +)))
+        var mats = [Int](repeating: 0, count: 7)
+        var carry = 0.0
+        for m in (0..<7).reversed() {
+            let worth = Double(b.initial[m]) * initialPart / si + Double(b.added[m]) * addedPart / sa + carry
+            let amount = Int(worth) / GameState.materialValue[m]
+            carry = worth - Double(amount * GameState.materialValue[m])
+            mats[m] = amount
+        }
+        mats[0] = mats[0] / 250 * 250
+        var artWorth = Double(b.initial[7]) * initialPart / si + Double(b.added[7]) * addedPart / sa
+        var arts: [Int] = []
+        let levels = [("treasure", b.maxima[4]), ("minor", b.maxima[5]), ("major", b.maxima[6])]
+        var left = levels.map { $0.1 }
+        while arts.count < max(0, b.maxima[7]) {
+            let options = levels.indices.filter { left[$0] > 0 }
+            guard let li = options.first(where: { i in artifactPool(level: levels[i].0).contains { (t.artifacts[RuleTables.artifactIds[$0]]?.cost ?? 0) <= Int(artWorth) } }) else { break }
+            let pool = artifactPool(level: levels[li].0).filter { (t.artifacts[RuleTables.artifactIds[$0]]?.cost ?? 0) <= Int(artWorth) }
+            let a = pool[rng(pool.count)]
+            arts.append(a); left[li] -= 1; artWorth -= Double(t.artifacts[RuleTables.artifactIds[a]]?.cost ?? 0)
+        }
+        return (mats, arts)
+    }
+    func visitBank(_ hero: Hero, _ p: MapScene.Placed, _ st: ObjectState) {
+        dialogueSound(2)
+        guard st.guardCounts.contains(where: { $0 > 0 }) else { say(p, "empty"); return }
+        let names = zip(st.guardCreatures, st.guardCounts).filter { $0.1 > 0 }.map { c, n -> String in
+            let d = tables?.creature(c); return "\(n) \(n == 1 ? d?.name ?? c : d?.plural ?? c)" }
+        let list = names.count <= 1 ? names.first ?? "" : names.dropLast().joined(separator: ", ") + " and " + names.last!
+        let text = objectText(p, "Initial", ["%the_creatures": list, "%creatures": list, "%Creatures": list]) ?? "Fight them?"
+        question = (text, { [weak self] in
+            guard let self = self else { return }
+            // the guards as one army to fight: the first stack leads, the rest follow it
+            let stacks = zip(st.guardCreatures, st.guardCounts).filter { $0.1 > 0 }
+            guard let lead = stacks.first else { return }
+            var m = Monster(x: p.cellX, y: p.cellY, name: p.name, creature: lead.0, count: lead.1, extra: stacks.dropFirst().map { ($0.0, $0.1) })
+            m.z = self.level; m.bank = self.objectKey(p)
+            self.monsters.append(m)
+            self.fight(hero: hero, monsterAt: self.monsters.count - 1, p)
+        })
+    }
+    /// The bank's guards beaten: the treasure is the winner's, the bank empty for 28 days.
+    func bankDefeated(_ hero: Hero, _ p: MapScene.Placed, key: String) {
+        guard var st = objectStates[key] else { return }
+        let loot = bankTreasure(p, st)
+        for (m, n) in loot.materials.enumerated() where n > 0 { gain(m, n, at: hero) }
+        for a in loot.artifacts { give(artifact: a, to: hero) }
+        var items = (0..<7).filter { loot.materials[$0] > 0 }.map { materialList([($0, loot.materials[$0])]) }
+        items += loot.artifacts.map { artifactName($0, article: true) }
+        say(p, "defeat", ["%reward_list": items.joined(separator: ", ")])
+        st.guardCounts = st.guardCounts.map { _ in 0 }; st.guardFractions = st.guardFractions.map { _ in 0 }
+        st.worth = 0; st.initialWorth = 0; st.countdown = 28
+        objectStates[key] = st
+    }
+
+    /// Debugging: a bank's guards and what it would give now.
+    public func debugBank(_ p: MapScene.Placed) -> String {
+        guard let st = objectStates[objectKey(p)] else { return "-" }
+        let t = bankTreasure(p, st)
+        return "guards \(zip(st.guardCreatures, st.guardCounts).map { "\($0.1) \($0.0)" }) worth \(st.worth) treasure \(t.materials) artifacts \(t.artifacts.map { artifactName($0) })"
     }
 }

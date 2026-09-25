@@ -19,6 +19,10 @@ public struct ObjectState: Codable {
     public var skills: [Int] = []
     public var spell: Int? = nil
     public var partner: String? = nil
+    /// A creature bank: its guards (creature, count, growth in 1/256 creatures), its worth in gold
+    /// (V0 the initial part), and the days before it grows again after being cleared.
+    public var guardCreatures: [String] = [], guardCounts: [Int] = [], guardFractions: [Int] = []
+    public var worth = 0, initialWorth = 0
 }
 
 extension GameState {
@@ -65,7 +69,8 @@ extension GameState {
     func artifactPool(level: String, slot: String? = nil) -> [Int] {
         guard let t = tables else { return [] }
         return RuleTables.artifactIds.indices.filter { i in
-            guard let a = t.artifacts[RuleTables.artifactIds[i]] else { return false }
+            // never the spell parchment and scroll (0x7c, 0xa6: they carry a spell)
+            guard i != 0x7c, i != 0xa6, let a = t.artifacts[RuleTables.artifactIds[i]] else { return false }
             return a.level.lowercased() == level && a.allowedByDefault && (slot == nil || a.slot.lowercased() == slot)
         }
     }
@@ -151,6 +156,8 @@ extension GameState {
             st.price = random.next() & 1
         case "teacher", "random_teacher", "school", "shrine", "random_shrine":
             setupTeaching(p, &st)
+        case "creature_bank":
+            setupBank(p, &st)
         default:
             return
         }
@@ -168,6 +175,11 @@ extension GameState {
 
     /// The daily tick of owned objects (slot 31): generators pay every 7 days from their claim.
     func objectsNewDay() {
+        for (k, st) in objectStates where !st.guardCreatures.isEmpty || st.initialWorth > 0 {   // banks grow every day, or count down
+            var b = st
+            if b.countdown > 0 { b.countdown -= 1 } else { growBank(&b, days: 1) }
+            objectStates[k] = b
+        }
         for (k, var st) in objectStates where st.owner != nil {
             if st.countdown > 0 { st.countdown -= 1 }
             if st.countdown == 0 {
@@ -208,7 +220,7 @@ extension GameState {
                                           "pathfinder", "tree_of_knowledge", "temple", "random_temple", "trading_post",
                                           "teacher", "random_teacher", "school", "shrine", "random_shrine", "subterranean_gate", "gateway",
                                           "teleporter_entrance", "teleporter_exit", "whirlpool", "keymaster_tent", "border_gate", "border_guard",
-                                          "tower", "cartographer", "obelisk", "lighthouse"]
+                                          "tower", "cartographer", "obelisk", "lighthouse", "creature_bank"]
     public func hasVisit(_ p: MapScene.Placed) -> Bool { GameState.visitTypes.contains(p.type) }
 
     func remove(_ p: MapScene.Placed) {
@@ -338,7 +350,8 @@ extension GameState {
         case "trading_post":
             marketOpen = 2; dialogueSound(9)
         case "teacher", "random_teacher", "school", "shrine", "random_shrine", "subterranean_gate", "gateway", "teleporter_entrance",
-             "teleporter_exit", "whirlpool", "keymaster_tent", "border_gate", "border_guard", "tower", "cartographer", "obelisk", "lighthouse":
+             "teleporter_exit", "whirlpool", "keymaster_tent", "border_gate", "border_guard", "tower", "cartographer", "obelisk", "lighthouse",
+             "creature_bank":
             return visitMore(hero, p, &st)
         default:
             return false

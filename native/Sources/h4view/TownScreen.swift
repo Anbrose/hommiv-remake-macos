@@ -28,6 +28,16 @@ final class TownScreen {
         if views[key] == nil, let d = try? archive.payload("layers.town.\(key).h4d") ?? archive.payload("layers.town.\(alignment).grass.h4d") { views[key] = try? LayerFile(data: d) }
         return views[key]
     }
+    /// A building's animation (animation.town.<alignment>.<building>.h4d): a "base" image the
+    /// size of the building's layer and frames placed on it; nil when the building has none.
+    var animations: [String: Sprite?] = [:]
+    func animation(_ alignment: String, _ building: String) -> Sprite? {
+        let key = "\(alignment).\(building.lowercased())"
+        if animations[key] == nil {
+            animations[key] = .some((try? archive.payload("animation.town.\(key).h4d")).flatMap { try? Sprite(data: $0) })
+        }
+        return animations[key] ?? nil
+    }
     func layout(_ alignment: String) -> LayerFile? {
         if layouts[alignment] == nil, let d = try? archive.payload("layers.town.\(alignment).layout.h4d") { layouts[alignment] = try? LayerFile(data: d) }
         return layouts[alignment]

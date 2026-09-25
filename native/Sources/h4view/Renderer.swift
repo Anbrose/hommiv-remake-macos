@@ -112,8 +112,41 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
     }
     var uiTextures: [String: MTLTexture] = [:]
+    /// The town building under the pointer (its layout layer name).
+    var townHover: String?
 
     /// Quads of the town screen (replaces the map and the adventure chrome).
+    /// The built building under a canvas point: the front-most whose picture is opaque there.
+    func townBuilding(at x: Float, _ y: Float) -> UILayer? {
+        guard let ts = town, let g = game, let i = townOpen, i < g.towns.count, y < 546 else { return nil }
+        let t = g.towns[i]
+        guard let lay = ts.layout(t.alignment) else { return nil }
+        let hits = lay.layers.filter { l in
+            guard t.buildings.contains(l.name.lowercased()), l.width > 0 else { return false }
+            let r = TownScreen.place(l)
+            guard x >= Float(r.x), x < Float(r.x + r.w), y >= Float(r.y), y < Float(r.y + r.h) else { return false }
+            let px = Int((x - Float(r.x)) * Float(l.width) / Float(r.w)), py = Int((y - Float(r.y)) * Float(l.height) / Float(r.h))
+            return l.bitmap.pixels[(py * l.bitmap.width + px) * 4 + 3] > 40
+        }
+        return hits.max { $0.y + $0.height < $1.y + $1.height }
+    }
+    /// A building's glow: its opaque pixels brightened and a warm 2 px rim along its edge.
+    static func glow(_ b: Bitmap) -> Bitmap {
+        var out = Bitmap(width: b.width, height: b.height)
+        let w = b.width, h = b.height
+        func a(_ x: Int, _ y: Int) -> UInt8 { x < 0 || y < 0 || x >= w || y >= h ? 0 : b.pixels[(y * w + x) * 4 + 3] }
+        for y in 0..<h { for x in 0..<w {
+            let i = (y * w + x) * 4
+            if a(x, y) > 40 {
+                var edge = false
+                for dy in -2...2 { for dx in -2...2 where abs(dx) + abs(dy) <= 2 && a(x + dx, y + dy) <= 40 { edge = true } }
+                if edge { out.pixels[i] = 255; out.pixels[i + 1] = 226; out.pixels[i + 2] = 120; out.pixels[i + 3] = 255 }
+                else { for k in 0..<3 { out.pixels[i + k] = UInt8(min(255, Int(b.pixels[i + k]) + 36)) }; out.pixels[i + 3] = b.pixels[i + 3] }
+            }
+        } }
+        return out
+    }
+
     func townQuads() -> [Quad] {
         guard let ts = town, let g = game, let i = townOpen, i < g.towns.count, let ui = ui else { return [] }
         let t = g.towns[i]
@@ -130,6 +163,23 @@ final class Renderer: NSObject, MTKViewDelegate {
                         let r = TownScreen.place(sh); out.append(Quad(texture: uiTexture("town|\(t.alignment)|\(sh.name)", { sh.bitmap }), x: r.x, y: r.y, w: r.w, h: r.h))
                     }
                     let r = TownScreen.place(b); out.append(Quad(texture: uiTexture("town|\(t.alignment)|\(b.name)", { b.bitmap }), x: r.x, y: r.y, w: r.w, h: r.h))
+                    // its animation: the frames over the building, looping (frame time = speed / 60 s)
+                    if let anim = ts.animation(t.alignment, b.name) {
+                        let frames = anim.images.filter { $0.name.hasPrefix("frame") }
+                        if !frames.isEmpty {
+                            let period = frames[0].speed > 0 ? Double(frames[0].speed) / 60.0 : 0.125
+                            let f = frames[Int(Date().timeIntervalSince1970 / period) % frames.count]
+                            if f.bitmap.width > 1 {
+                                let l = UILayer(name: f.name, kind: 4, x: b.x + f.box.left, y: b.y + f.box.top, width: f.bitmap.width, height: f.bitmap.height, bitmap: f.bitmap)
+                                let fr = TownScreen.place(l)
+                                out.append(Quad(texture: texture(for: f, of: "townanim.\(t.alignment).\(b.name)"), x: fr.x, y: fr.y, w: fr.w, h: fr.h))
+                            }
+                        }
+                    }
+                    // the building under the pointer glows (an outline along its edge, brightened)
+                    if townHover == b.name {
+                        out.append(Quad(texture: uiTexture("townglow|\(t.alignment)|\(b.name)", { Renderer.glow(b.bitmap) }), x: r.x, y: r.y, w: r.w, h: r.h))
+                    }
                 }
             }
             for f in v.layers where f.name.hasPrefix("foreground") {
@@ -237,9 +287,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             }
             // a built building in the view: a dwelling recruits, the hall (or anything else) builds
             if y < 546, let lay = ts.layout(t.alignment) {
-                let hits = lay.layers.filter { l in t.buildings.contains(l.name.lowercased()) && l.width > 0 && {
-                    let r = TownScreen.place(l); return x >= Float(r.x) && x < Float(r.x + r.w) && y >= Float(r.y) && y < Float(r.y + r.h) }() }
-                if let top = hits.max(by: { $0.y + $0.height < $1.y + $1.height }) {
+                if let top = townBuilding(at: x, y) {
                     if let b = tables.buildings(for: t.alignment).first(where: { $0.keyword == top.name.lowercased() }), let c = b.creature, let def = tables.creature(c) {
                         let most = min(t.available[c] ?? 0, def.gold > 0 ? g.resources["Gold", default: 0] / def.gold : 99)
                         townDialog = .recruit(creature: c, count: most)

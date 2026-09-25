@@ -189,6 +189,7 @@ if let out = snapshot {
     if openChest, let h = game.heroes.first { game.chestOffer = (h, 1500, 1000); renderer.adventureDialog = .chest; renderer.chestChoice = true }
     if openTown {
         renderer.townOpen = game.towns.firstIndex { $0.owned }
+        renderer.townHover = ProcessInfo.processInfo.environment["H4HOVER"]   // --town snapshot: pretend the pointer is over this building
         if openBuildList { renderer.townDialog = .buildList }
         if openRecruit, let i = renderer.townOpen, let slot = townScreen?.hotspot("dwelling_1") { _ = i; renderer.townClick(x: Float(slot.x + 5), y: Float(slot.y + 5)) }
     }
@@ -327,6 +328,7 @@ final class MapView: MTKView {
         else if renderer.townOpen == nil, renderer.popup == nil, renderer.creatureDialog == nil, renderer.adventureDialog == nil, renderer.ui == nil || cx < Float(AdventureUI.mapViewportWidth) {
             name = renderer.cursorKind(mapPoint: renderer.pan + mouse / renderer.zoom)
         }
+        renderer.townHover = renderer.townOpen != nil && renderer.townDialog == nil ? renderer.townBuilding(at: cx, mouse.y / renderer.uiScale)?.name : nil
         if name != cursorName { cursorName = name; cursorFrame = 0; cursors?.set(name)?.frames.first?.set() }
         // the status line appears once the pointer rests on the map for a moment
         renderer.hover = nil

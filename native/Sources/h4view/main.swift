@@ -141,13 +141,32 @@ if let town = scene.placed.first(where: { p in ownedByFirst.map { p.category == 
     if let i = game.towns.firstIndex(where: { $0.x == town.cellX && $0.y == town.cellY }) { game.towns[i].owned = true; game.towns[i].owner = map.humanColour }
     // the gate is in the middle of the lower-right wall of right-facing (" R") towns, lower-left otherwise
     let right = town.name.lowercased().hasSuffix(" r.h4d")
-    if let cell = heroAt ?? game.freeCell(near: town.cellX + (right ? 3 : 6), town.cellY + (right ? 6 : 3)) {
+    // the heroes the map places for the player (armies with heroes: "Beyond the Lake" starts a
+    // level 15 and a level 10 hero together); a hero at the town gate when it has none
+    let placed = map.objects.filter { $0.type == "hero_army" && $0.owner == map.humanColour && $0.level == scene.level && !$0.heroes.isEmpty }
+    for o in placed {
+        var all = o.heroes.map { Hero.fromMap($0, alignment: align, x: o.x, y: o.y, tables: game.tables, random: &game.random) }
+        let hero = all.removeFirst()
+        hero.companions = all
+        hero.home = (o.x, o.y)
+        hero.army = (o.army ?? []).compactMap { $0 }.compactMap { s in
+            s.creature < RuleTables.creatureIds.count ? Hero.Stack(creature: RuleTables.creatureIds[s.creature], count: s.count) : nil }
+        hero.maxMovement = game.armyMovement(hero); hero.movement = hero.maxMovement
+        if let m = movementLeft { hero.movement = m }
+        game.heroes.append(hero)
+        lap("\(hero.name) level \(hero.level) \(hero.classKeyword) at (\(o.x),\(o.y)) skills \(hero.skills) with \(all.map { "\($0.name) level \($0.level) \($0.classKeyword) \($0.skills)" })")
+    }
+    if placed.isEmpty, let cell = heroAt ?? game.freeCell(near: town.cellX + (right ? 3 : 6), town.cellY + (right ? 6 : 3)) {
         // a might hero of the town's alignment, picked from the heroes table (the male model exists for every class)
         let cls = RuleTables.classes[align]?.might ?? "knight"
         let candidates = game.tables?.heroes(ofClass: cls).filter { $0.sex == "male" } ?? []
         let def = candidates.isEmpty ? nil : candidates[(town.cellX + town.cellY) % candidates.count]
         let hero = Hero(actor: "hero.\(align)_might_male", x: cell.0, y: cell.1, movement: Hero.baseMovement)
         hero.name = def?.name ?? "Hero"; hero.keyword = def?.keyword ?? ""; hero.alignment = align
+        if let c = RuleTables.heroClasses.firstIndex(where: { $0.keyword == cls }) {
+            hero.heroClass = c
+            for s in RuleTables.heroClasses[c].skills { hero.learn(s, level: 0) }
+        }
         hero.home = (cell.0, cell.1)
         game.giveStartingArmy(hero)
         if let m = movementLeft { hero.movement = m }
@@ -226,6 +245,7 @@ if let out = snapshot {
         print("battle: round \(cs.battle?.round ?? 0), units \(cs.battle?.units.map { "\($0.stats.name)x\($0.stats.count) morale \($0.stats.morale)@(\($0.x),\($0.y))" }.joined(separator: " ") ?? "")")
     }
     if openHeroScreen { renderer.adventureDialog = .hero(0) }
+    if let k = ProcessInfo.processInfo.environment["H4ARMYPOPUP"].flatMap({ Int($0) }) { renderer.armyPopup = ArmyPopup(hero: 0, selected: k) }   // snapshot: the right-click window
     if openChest, let h = game.heroes.first { game.chestOffer = (h, 1500, 1000); renderer.adventureDialog = .chest; renderer.chestChoice = true }
     if openTown {
         renderer.townOpen = game.towns.firstIndex { $0.owned }
@@ -402,6 +422,12 @@ final class MapView: MTKView {
             }
             return
         }
+        if renderer.adventureDialog != nil || renderer.armyPopup != nil {   // skills and artifacts on the hero windows
+            if let tip = renderer.heroWindowTip(x: p.mouse.x / renderer.uiScale, y: p.mouse.y / renderer.uiScale) {
+                renderer.hover = (tip, Int(p.mouse.x / renderer.uiScale), Int(p.mouse.y / renderer.uiScale))
+            }
+            return
+        }
         if let text = renderer.statusText(mapPoint: renderer.pan + p.mouse / renderer.zoom) {
             renderer.hover = (text, Int(p.mouse.x / renderer.uiScale), Int(p.mouse.y / renderer.uiScale))
         }
@@ -430,6 +456,7 @@ final class MapView: MTKView {
         if renderer.menuClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale) { return }
         if renderer.saveDialogClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale, double: e.clickCount >= 2) { return }
         if renderer.messageBoxClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale) { return }   // a script message: only OK
+        if renderer.armyPopup != nil { renderer.armyPopupClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.popup != nil {   // an open right-click box: a left click outside it closes it, and does nothing else
             let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale
             if !renderer.onPopup(cx, cy) { renderer.popup = nil }
@@ -489,7 +516,17 @@ final class MapView: MTKView {
         let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale
         if renderer.inCombat { renderer.combatInspect(x: cx, y: cy); return }
         if renderer.onPopup(cx, cy) || renderer.onDialog(cx, cy).inside { return }
-        if renderer.ui != nil, cx >= Float(AdventureUI.mapViewportWidth) { renderer.popup = nil; renderer.creatureDialog = nil; return }
+        if renderer.armyPopup != nil { renderer.armyPopup = nil; return }
+        if renderer.ui != nil, cx >= Float(AdventureUI.mapViewportWidth) {
+            renderer.popup = nil; renderer.creatureDialog = nil
+            // a hero in the list: the army's right-click window
+            if let g = renderer.game, renderer.adventureDialog == nil {
+                for (i, (hx, hy)) in AdventureUI.heroSlots.enumerated() where i < g.heroes.count && abs(cx - Float(hx)) < 30 && abs(cy - Float(hy)) < 30 {
+                    renderer.armyPopup = ArmyPopup(hero: i)
+                }
+            }
+            return
+        }
         renderer.inspect(mapPoint: renderer.pan + mouse / renderer.zoom, canvas: (cx, cy))
     }
     override func scrollWheel(with e: NSEvent) {

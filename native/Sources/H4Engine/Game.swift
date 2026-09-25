@@ -184,7 +184,24 @@ public final class Hero {
     public var skills: [String: Int] = [:]
     public func skill(_ family: String) -> Int { skills[family] ?? 0 }
     public var experience = 0
-    public var level: Int { 1 + experience / 1000 }
+    /// The hero's level: raised a step at a time as experience allows (Hero.levelUp).
+    public var level = 1
+    /// The level at which Combat was last offered (heroes4.exe hero+0x69c).
+    public var lastCombatOffer = 0
+    /// Experience needed for a level: 0, 1000, 2000, then each step grows by 100 x trunc(the
+    /// previous step x 0.012) (heroes4.exe 0x72b4e0; levels up to 70).
+    public static let experienceTable: [Int] = {
+        var e = [0, 0, 1000, 2000]   // index = level
+        while e.count <= 70 { let n = e.count; e.append(e[n - 1] + 100 * Int(Double(e[n - 1] - e[n - 2]) * 0.012)) }
+        return e
+    }()
+    /// Worn artifacts by slot (RuleTables.equipSlots order; artifact ids of RuleTables.artifactIds), and the backpack.
+    public var equipped: [Int?] = Array(repeating: nil, count: 14)
+    public var backpack: [Int] = []
+    /// Other heroes travelling in this army (a map can put several heroes in one army).
+    public var companions: [Hero] = []
+    /// The hero's class (0...47, table.skill_weights order), -1 unknown.
+    public var heroClass = -1
     public var home: (x: Int, y: Int) = (0, 0)   // where a beaten hero regroups
     public var x: Int, y: Int         // current cell
     public var facing = "s"
@@ -575,9 +592,25 @@ public final class GameState {
         log.append("recruited \(n) \(n == 1 ? c.name : c.plural) for \(n * c.gold) gold")
     }
 
-    /// The hero's army as combatants, the hero first.
+    /// The game's random numbers for rules ported from the exe.
+    public var random = H4Random()
+    /// Experience for an army: each of its heroes gains it, learning a skill per level reached.
+    public func giveExperience(_ n: Int, to hero: Hero) {
+        for h in [hero] + hero.companions {
+            let before = h.level
+            let learned = h.gainExperience(n, tables: tables, random: &random)
+            if h.level > before {
+                let names = learned.map { s -> String in
+                    let k = RuleTables.skillIds[s], lv = RuleTables.skillLevelNames[max(0, h.skill(k) - 1)]
+                    return tables?.skillTexts["\(k)_\(lv)"]?.name ?? k }
+                log.append("\(h.name) reaches level \(h.level)" + (names.isEmpty ? "" : ": " + names.joined(separator: ", ")))
+            }
+        }
+    }
+
+    /// The hero's army as combatants, its heroes first.
     func combatants(of hero: Hero) -> [Combatant] {
-        var out = [Combatant(hero: hero.name, level: hero.level)]
+        var out = ([hero] + hero.companions).map { Combatant(hero: $0.name, level: $0.level) }
         for s in hero.army { if let c = tables?.creature(s.creature) { out.append(Combatant(creature: c, count: s.count)) } }
         return out
     }
@@ -607,7 +640,7 @@ public final class GameState {
         hero.army = army
         refreshMovement(hero)
         if won {
-            hero.experience += experience
+            giveExperience(experience, to: hero)
             scene.remove(p)
             passability.free(p.cellX, p.cellY)
             monsters.remove(at: i)
@@ -904,7 +937,7 @@ public final class GameState {
     public func resolveChest(gold: Bool) {
         guard let c = chestOffer else { return }
         if gold { resources["Gold", default: 0] += c.gold; floaters.append(("+\(c.gold) gold", c.hero.x, c.hero.y)) }
-        else { c.hero.experience += c.experience; floaters.append(("+\(c.experience) experience", c.hero.x, c.hero.y)) }
+        else { giveExperience(c.experience, to: c.hero); floaters.append(("+\(c.experience) experience", c.hero.x, c.hero.y)) }
         chestOffer = nil
     }
 

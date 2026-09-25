@@ -99,6 +99,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     var showReach = false      // the game's "Show Movement Shadow" option (off by default, as in the original)
     var inCombat: Bool { combat?.battle != nil }
     var chestChoice: Bool? = nil          // true = gold, false = experience
+    var armyPopup: ArmyPopup? = nil        // the right-click window of an army
+    var heroShown = 0                     // which of the army's heroes the hero screen shows
     var floaters: [(text: String, x: Int, y: Int, since: Date)] = []
     var buildPage = 0
     var buildCells: [(rect: (Int, Int, Int, Int), building: RuleTables.BuildingDef)] = []
@@ -505,7 +507,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
         // the selected hero's army: the hero, then his stacks; the labels last, over the next row
         if let h = g.heroes.first {
-            var slots: [(UILayer?, String?)] = [(ui.portrait(keyword: h.keyword, alignment: h.alignment), nil)]
+            let heroes = [h] + h.companions
+            var slots: [(UILayer?, String?)] = heroes.map { (ui.portrait(keyword: $0.keyword, alignment: $0.alignment), nil) }
             slots += h.army.map { (ui.creatureIcon($0.creature), String($0.count)) }
             let shown = Array(slots.prefix(AdventureUI.armySlots.count).enumerated())
             for (i, (icon, _)) in shown {
@@ -516,7 +519,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             }
             for (i, (_, count)) in shown {
                 let (cx, cy) = AdventureUI.armySlots[i]
-                ringLabel(&out, ui: ui, cx: cx, cy: cy, count: count, hero: i == 0)
+                ringLabel(&out, ui: ui, cx: cx, cy: cy, count: count, hero: i < heroes.count)
             }
         }
         // the town list: each owned town as its card (terrain, walls, three bars) and a piece of the minimap around it
@@ -578,6 +581,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         out += popupQuads()
         out += creatureDialogQuads()
         out += adventureDialogQuads()
+        out += armyPopupQuads()
         out += messageBoxQuads()
         out += saveDialogQuads()
         out += menuQuads()
@@ -800,7 +804,9 @@ final class Renderer: NSObject, MTKViewDelegate {
         guard let g = game, let ui = ui else { return }
         let c = cell(at: m)
         var text: (title: String, body: [String])?
-        if let h = g.heroes.first(where: { Int($0.position.x.rounded()) == c.0 && Int($0.position.y.rounded()) == c.1 }) { text = g.describe(hero: h) }
+        if let i = g.heroes.firstIndex(where: { Int($0.position.x.rounded()) == c.0 && Int($0.position.y.rounded()) == c.1 }) {
+            armyPopup = ArmyPopup(hero: i); return   // an own army: its right-click window
+        }
         else if let p = scene.placed.last(where: { underCursor($0, m) || onFootprint($0, c) }) {
             if let i = g.monster(for: p), let def = g.tables?.creature(g.monsters[i].creature) {   // a wandering stack gets the creature dialog
                 creatureDialog = (def, g.monsters[i].count, g.monsters[i].extra.compactMap { e in g.tables?.creature(e.creature).map { ($0, e.count) } })

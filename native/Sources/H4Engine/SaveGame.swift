@@ -34,6 +34,10 @@ public struct SaveGame: Codable {
         public var movement, maxMovement: Float
         public var plan: [Cell]
         public var target: Cell?, targetName: String?
+        // (added with the hero system; absent in older saves)
+        public var level: Int?, heroClass: Int?, lastCombatOffer: Int?
+        public var equipped: [Int?]?, backpack: [Int]?
+        public var companions: [HeroState]?
     }
     public struct TownState: Codable {
         public var x, y: Int
@@ -72,12 +76,7 @@ extension GameState {
     public func snapshot(mapPath: String) -> SaveGame {
         SaveGame(mapPath: mapPath, day: day, resources: resources,
                  heroes: heroes.map { h in
-                     SaveGame.HeroState(actor: h.actor, name: h.name, keyword: h.keyword, alignment: h.alignment,
-                                        army: h.army.map { .init(creature: $0.creature, count: $0.count) }, skills: h.skills,
-                                        experience: h.experience, home: .init(x: h.home.x, y: h.home.y), x: h.x, y: h.y, facing: h.facing,
-                                        movement: h.movement, maxMovement: h.maxMovement,
-                                        plan: (h.path.isEmpty ? h.plan : h.path).map { .init(x: $0.x, y: $0.y) },
-                                        target: h.target.map { .init(x: $0.x, y: $0.y) }, targetName: h.target?.name)
+                     SaveGame.state(of: h)
                  },
                  towns: towns.map { .init(x: $0.x, y: $0.y, name: $0.name, owned: $0.owned, owner: $0.owner, buildings: Array($0.buildings).sorted(),
                                           available: $0.available, builtToday: $0.builtToday) },
@@ -105,16 +104,7 @@ extension GameState {
         }
         scene.removeAll(s.removed)
         for o in s.removed { passability.free(o.x, o.y) }
-        heroes = s.heroes.map { st in
-            let h = Hero(actor: st.actor, x: st.x, y: st.y, movement: st.maxMovement)
-            h.name = st.name; h.keyword = st.keyword; h.alignment = st.alignment
-            h.army = st.army.map { Hero.Stack(creature: $0.creature, count: $0.count) }
-            h.skills = st.skills; h.experience = st.experience; h.home = (st.home.x, st.home.y)
-            h.facing = st.facing; h.movement = st.movement; h.maxMovement = st.maxMovement
-            h.plan = st.plan.map { ($0.x, $0.y) }
-            if let t = st.target, let n = st.targetName { h.target = (t.x, t.y, n) }
-            return h
-        }
+        heroes = s.heroes.map { SaveGame.hero(from: $0) }
         for t in s.towns {
             guard let i = towns.firstIndex(where: { $0.x == t.x && $0.y == t.y }) else { continue }
             towns[i].name = t.name; towns[i].owned = t.owned; towns[i].owner = t.owner
@@ -135,5 +125,35 @@ extension GameState {
             scripts.townEvents[t] = evs
         }
         outcome = s.outcome; victoryDays = s.victoryDays
+    }
+}
+
+extension SaveGame {
+    static func state(of h: Hero) -> HeroState {
+        var st = HeroState(actor: h.actor, name: h.name, keyword: h.keyword, alignment: h.alignment,
+                           army: h.army.map { .init(creature: $0.creature, count: $0.count) }, skills: h.skills,
+                           experience: h.experience, home: .init(x: h.home.x, y: h.home.y), x: h.x, y: h.y, facing: h.facing,
+                           movement: h.movement, maxMovement: h.maxMovement,
+                           plan: (h.path.isEmpty ? h.plan : h.path).map { .init(x: $0.x, y: $0.y) },
+                           target: h.target.map { .init(x: $0.x, y: $0.y) }, targetName: h.target?.name)
+        st.level = h.level; st.heroClass = h.heroClass; st.lastCombatOffer = h.lastCombatOffer
+        st.equipped = h.equipped; st.backpack = h.backpack
+        st.companions = h.companions.map { state(of: $0) }
+        return st
+    }
+    static func hero(from st: HeroState) -> Hero {
+        let h = Hero(actor: st.actor, x: st.x, y: st.y, movement: st.maxMovement)
+        h.name = st.name; h.keyword = st.keyword; h.alignment = st.alignment
+        h.army = st.army.map { Hero.Stack(creature: $0.creature, count: $0.count) }
+        h.skills = st.skills; h.experience = st.experience; h.home = (st.home.x, st.home.y)
+        h.level = st.level ?? Hero.level(for: st.experience)
+        h.heroClass = st.heroClass ?? -1; h.lastCombatOffer = st.lastCombatOffer ?? 0
+        if let e = st.equipped { h.equipped = e }
+        h.backpack = st.backpack ?? []
+        h.companions = (st.companions ?? []).map { hero(from: $0) }
+        h.facing = st.facing; h.movement = st.movement; h.maxMovement = st.maxMovement
+        h.plan = st.plan.map { ($0.x, $0.y) }
+        if let t = st.target, let n = st.targetName { h.target = (t.x, t.y, n) }
+        return h
     }
 }

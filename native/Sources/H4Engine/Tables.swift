@@ -70,6 +70,11 @@ public final class RuleTables {
     public let objectNames: [String: (String, String)]
     public struct ArtifactDef { public let keyword: String, name: String, article: String, slot: String, level: String, help: String }
     public let artifacts: [String: ArtifactDef]   // by keyword
+    /// table.skill_weights: class keyword -> skill keyword -> how likely a level-up offers it.
+    public let skillWeights: [String: [String: Int]]
+    /// table.skills: "<skill>_<basic|advanced|expert|master|grandmaster>" -> name and help.
+    public let skillTexts: [String: (name: String, help: String)]
+    public static let skillLevelNames = ["basic", "advanced", "expert", "master", "grandmaster"]
     /// Creature ability display names ("Normal Melee", "No Obstacle Penalty") -> the game's
     /// keywords ("normal_melee", "siege_machine"), from table.creature_abilities.
     public let abilityKeywords: [String: String]
@@ -177,6 +182,23 @@ public final class RuleTables {
             }
         }
         artifacts = arts
+        var sw: [String: [String: Int]] = [:]
+        if let d = try? archive.payload("table.skill_weights.h4d") {
+            let rows = RuleTable(data: d).rows
+            if let head = rows.first(where: { $0.first == "Class" }) {
+                for row in rows where row.first != "Class" && row.count == head.count {
+                    var m: [String: Int] = [:]
+                    for (i, k) in head.enumerated().dropFirst() { m[k] = Int(row[i]) ?? 0 }
+                    sw[row[0].lowercased()] = m
+                }
+            }
+        }
+        skillWeights = sw
+        var sn: [String: (name: String, help: String)] = [:]
+        if let d = try? archive.payload("table.skills.h4d") {
+            for row in RuleTable(data: d).rows where row.count >= 3 && !row[0].isEmpty { sn[row[0].lowercased()] = (row[1], row[2]) }
+        }
+        skillTexts = sn
         var ak: [String: String] = [:], info: [String: (name: String, help: String)] = [:]
         if let d = try? archive.payload("table.creature_abilities.h4d") {
             for row in RuleTable(data: d).rows where row.count >= 2 && !row[0].isEmpty {
@@ -279,6 +301,112 @@ public final class RuleTables {
         "gargantuan": ["ranged", "shoots_twice", "area_effect", "normal_melee"], "dark champion": ["charging", "undead", "terror", "regeneration"],
         "catapult": ["ranged", "mechanical", "no_ranged_penalties", "large_area_effect"], "frenzied gnasher": ["magic_immunity", "berserk"],
         "mega dragon": ["arc_breath_attack", "magic_resistance"]
+    ]
+
+    /// Artifact keywords by id (heroes4.exe's {id, keyword} table at 0x97bd30, 248 artifacts;
+    /// 0x7c parchment and 0xa6 scroll carry a spell).
+    public static let artifactIds: [String] = [
+        "adamantine_armor", "adamantine_shield", "amulet_of_fear", "amulet_of_the_undertaker", "ankh_of_life", "apprentices_handbook",
+        "archmages_spellbook", "armor_of_chaos", "armor_of_darkness", "armor_of_light", "armor_of_order", "arms_of_legion", "arrow_of_slaying",
+        "arrow_of_stunning", "axe", "axe_of_legends", "badge_of_courage", "bag_of_gold", "binding", "binding_liquid", "blank_shield",
+        "barbarian_throwing_club", "book_of_enchantment", "boots_of_levitation", "boots_of_speed", "bow_of_the_white_stag", "brazier_of_sulfur",
+        "breastplate_of_regeneration", "brimstone_breastplate", "caduceus", "cap_of_knowledge", "cape_of_protection", "cart_of_lumber",
+        "cart_of_ore", "centaurs_spear", "chain", "chainmail", "chapter_four", "chapter_one", "chapter_three", "chapter_two", "circlet_of_wisdom",
+        "cloak_of_confusion", "cloud_of_despair", "compass", "cowl_of_resistance", "crest_of_valor", "crossbow", "crown", "crown_of_dragon_teeth",
+        "crown_of_the_mind", "crystal_of_light", "crystal_of_memory", "cube_of_crystals", "dark_ruby", "davids_sling", "demon_slayer", "demonary",
+        "dragon_scale_armor", "dragon_scale_shield", "druids_chain", "dwarven_hammer", "dwarven_shield", "ebony_key", "elven_chainmail",
+        "emerald_longbow", "equestrians_gloves", "fire_snake", "fireproof_boots", "fizbin_of_misfortune", "flaming_arrow", "flaming_sword",
+        "flask_of_mercury", "four_leaf_clover", "gamblers_deck", "giant_slayer", "gias_gems", "golden_plate_mail", "greater_ring_of_vulnerability",
+        "greatsword", "gryphonhearts_plate_mail", "guildmasters_compendium", "halberd_of_speed", "hawkins_bow_of_speed", "head_of_legion",
+        "helm_of_command", "helm_of_power", "helm_of_vision", "hideous_mask", "holy_crown", "holy_water", "horseshoe", "infant_dragon_wings",
+        "ivory_key", "journeymans_notebook", "kreegan_fire", "leather_armor", "left_elephant_tusk", "left_onyx", "legs_of_legion",
+        "leprechauns_ring", "lesser_ring_of_vulnerability", "lions_shield_of_courage", "logbook_of_the_master_sailor", "longbow", "longsword",
+        "mages_robe", "mages_staff", "magic_amplifier", "mahogany_key", "mantle_of_spell_turning", "marantheas_mug", "masters_journal",
+        "medal_of_honor", "mind_shield", "minotaurs_battleax", "mirror_of_spell_turning", "monks_mace", "mullichs_helm_of_leadership",
+        "necklace_of_charm", "neeners_invulnerable_cloak", "ogs_sandals", "orb_of_summoning", "breeze_the_falcon", "parchment", "nomad_blackbow",
+        "plate_mail", "poison_arrow", "poison_ring", "potion_of_cold", "potion_of_endurance", "potion_of_fire_resistance", "potion_of_healing",
+        "potion_of_health", "potion_of_luck", "potion_of_mana", "potion_of_mirth", "potion_of_precognition", "potion_of_quickness",
+        "potion_of_resistance", "potion_of_restoration", "potion_of_speed", "potion_of_strength", "purse_of_gold", "purse_of_pennypinching",
+        "rams_horn", "deadwood_staff", "rhino_horn", "right_elephant_tusk", "right_onyx", "ring_of_elementals", "ring_of_health",
+        "ring_of_permanency", "ring_of_protection", "ring_of_regeneration", "ring_of_speed", "ring_of_strength", "rising_sun",
+        "robe_of_the_guardian", "rod_of_chaos", "ruby", "sack_of_gold", "sandalwood_key", "sandwalker_sandals", "sapphire", "scale_mail_of_strength",
+        "scroll", "seamans_hat", "setting", "shackles_of_war", "shield", "shield_of_chaos", "shield_of_darkness", "shield_of_light",
+        "shield_of_order", "shield_of_resistance", "snipers_crossbow", "snowshoes", "soul_stealer", "spiders_silk_arrow",
+        "staads_scarab_of_summoning", "staff_of_death", "staff_of_enchantment", "staff_of_power", "staff_of_summoning", "staff_of_the_witch_king",
+        "statesmans_medal", "statue_of_legion", "steadfast_shield", "supreme_crown_of_the_magi", "surefooted_boots", "swamp_boots",
+        "sword_of_swiftness", "sword_of_the_gods", "tavins_sling", "telescope", "throwing_spear", "thunder_hammer", "tome_of_chaos", "tome_of_death",
+        "tome_of_life", "tome_of_nature", "tome_of_order", "torso_of_legion", "tynans_dagger_of_despair", "unnatural_armor", "unnatural_shield",
+        "valders_bow_of_sloth", "vampiric_amulet", "vial_of_acid", "vial_of_blinding_smoke", "vial_of_choking_gas", "vial_of_poison",
+        "vial_of_sulfur", "victory_banner", "wand_of_animate_dead", "wand_of_bless", "wand_of_curse", "wand_of_fire", "wand_of_fireball",
+        "wand_of_haste", "wand_of_healing", "wand_of_ice", "wand_of_illusion", "wand_of_weakness", "warding_robe", "warlords_ring", "winged_sandals",
+        "wizards_ring", "true_gryphonheart_blade", "false_gryphonheart_blade", "grail", "cloak_of_darkness", "ring_of_light", "tiger_armor",
+        "tiger_helm", "frost_hammer", "harmonic_chainmail", "necklace_of_muses", "aiffes_mandolin", "necklace_of_balance", "flame_of_chaos",
+        "ice_scales", "archmages_hat", "staff_of_disruption", "wayfaring_boots", "ring_of_flares", "angelfeather_cloak"
+    ]
+    /// The 14 places a hero wears artifacts, in the save / map order (same table, after the levels).
+    public static let equipSlots = ["bow", "feet", "head", "left ring", "misc_1", "misc_2", "misc_3", "misc_4", "neck", "right ring",
+                                    "left hand", "shoulders", "torso", "right hand"]
+    /// Skill keywords by id (heroes4.exe {id, keyword} at 0x994504): the nine primaries, then the secondaries.
+    /// Named by table.skills' keywords (whose "toughness" is Combat and "combat" Melee, "black" Occultism, "mind" Wizardry).
+    public static let skillIds = ["tactics", "toughness", "scouting", "nobility", "life", "order", "death", "chaos", "nature",
+                                  "offense", "defense", "leadership", "combat", "archery", "resistance", "pathfinding", "seamanship", "stealth",
+                                  "estates", "mining", "diplomacy", "healing", "spirit", "resurrection", "enchantment", "mind", "charm",
+                                  "black", "demonology", "necromancy", "conjuration", "pyromancy", "sorcery", "herbalism", "meditation", "summoning"]
+
+    /// A secondary skill's primary (skill ids 9... go three to each primary 0...8 in turn).
+    public static func primary(of skill: Int) -> Int { skill < 9 ? skill : (skill - 9) / 3 }
+    /// The hero classes by id (heroes4.exe's class table at 0x989440): keyword, alignment and the
+    /// skills it starts with (the ten base classes and barbarian) or needs (the promoted classes;
+    /// archmage wants magic).
+    public static let heroClasses: [(keyword: String, alignment: String, skills: [Int])] = [
+        ("knight", "life", [0, 10]),
+        ("priest", "life", [4, 21]),
+        ("lord", "order", [3, 18]),
+        ("mage", "order", [5, 24]),
+        ("death_knight", "death", [0, 9]),
+        ("necromancer", "death", [6, 27]),
+        ("thief", "chaos", [2, 17]),
+        ("sorcerer", "chaos", [7, 30]),
+        ("archer", "nature", [1, 13]),
+        ("druid", "nature", [8, 33]),
+        ("barbarian", "might", [1, 12, 14]),
+        ("crusader", "life", [0, 4]),
+        ("paladin", "life", [1, 4]),
+        ("prophet", "life", [2, 4]),
+        ("cardinal", "life", [3, 4]),
+        ("monk", "life", [4, 5]),
+        ("illusionist", "order", [0, 5]),
+        ("battle_mage", "order", [1, 5]),
+        ("seer", "order", [2, 5]),
+        ("wizard_king", "order", [3, 5]),
+        ("wizard", "order", [5, 7]),
+        ("enchanter", "order", [5, 8]),
+        ("reaver", "death", [0, 6]),
+        ("assassin", "death", [1, 6]),
+        ("ninja", "death", [2, 6]),
+        ("dark_lord", "death", [3, 6]),
+        ("dark_priest", "death", [4, 6]),
+        ("shadow_mage", "death", [5, 6]),
+        ("demonologist", "death", [6, 8]),
+        ("pyromancer", "chaos", [0, 7]),
+        ("fireguard", "chaos", [1, 7]),
+        ("fire_diviner", "chaos", [2, 7]),
+        ("witch_king", "chaos", [3, 7]),
+        ("heretic", "chaos", [4, 7]),
+        ("lich", "chaos", [6, 7]),
+        ("warlock", "chaos", [7, 8]),
+        ("warden", "nature", [0, 8]),
+        ("green_knight", "nature", [1, 8]),
+        ("bard", "nature", [2, 8]),
+        ("beast_lord", "nature", [3, 8]),
+        ("summoner", "nature", [4, 8]),
+        ("guildmaster", "none", [2, 3]),
+        ("general", "none", [0, 1]),
+        ("lord_commander", "none", [0, 3]),
+        ("warlord", "none", [1, 3]),
+        ("ranger", "none", [1, 2]),
+        ("field_marshal", "none", [0, 2]),
+        ("archmage", "none", [4, 5, 6, 7, 8]),
     ]
 
     /// Town building ids of map files (0...42) per town alignment, from campaign_editor.exe's

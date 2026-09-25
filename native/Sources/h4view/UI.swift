@@ -26,7 +26,14 @@ final class AdventureUI {
         if portraitSheets[key] == nil, let d = try? archive.payload("layers.icons.hero.\(alignment).\(size).h4d"), let f = try? LayerFile(data: d) {
             portraitSheets[key] = f
         }
-        return portraitSheets[key]?[keyword.lowercased()]
+        if let l = portraitSheets[key]?[keyword.lowercased()] { return l }
+        // a hero of another alignment's sheet (a promoted class, or a map's chosen portrait)
+        for a in ["life", "order", "death", "chaos", "nature", "might"] where a != alignment {
+            let k = "\(a).\(size)"
+            if portraitSheets[k] == nil, let d = try? archive.payload("layers.icons.hero.\(a).\(size).h4d"), let f = try? LayerFile(data: d) { portraitSheets[k] = f }
+            if let l = portraitSheets[k]?[keyword.lowercased()] { return l }
+        }
+        return nil
     }
 
     /// Where the hero list's round slots are on the panel (centres, top to bottom).

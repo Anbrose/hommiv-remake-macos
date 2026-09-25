@@ -150,7 +150,7 @@ extension GameState {
                 h.army[k].count -= n.int(2)
                 if h.army[k].count <= 0 { h.army.remove(at: k) }
             }
-        case "inc_exp": if let h = c.hero ?? heroes.first { h.experience += n.int(1) }
+        case "inc_exp": if let h = c.hero ?? heroes.first { giveExperience(n.int(1), to: h) }
         case "set_num": if let v = n.node(1) { scripts.numbers[n.text(0)] = number(v, c) }
         case "set_bool": if let v = n.node(1) { scripts.flags[n.text(0)] = truth(v, c) }
         case "rem_event", "rem_this": removed = true

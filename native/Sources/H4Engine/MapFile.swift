@@ -312,7 +312,7 @@ public struct MapFile {
         }
         for _ in 0..<14 {
             guard ok(1) else { return nil }
-            if r.u8() != 0 { guard let a = artifact() else { return nil }; h.equipped.append(a) }
+            if r.u8() != 0 { guard let a = artifact() else { return nil }; h.equipped.append(a) } else { h.equipped.append(nil) }
         }
         guard ok(2) else { return nil }
         let n = Int(r.u16())
@@ -409,6 +409,7 @@ public struct MapHero {
     /// 36 skill levels (-1 none, 0 basic ... 4 grandmaster), or nil: the class's own at random.
     public var skills: [Int]? = nil
     public var spells: [UInt8] = []
-    public var equipped: [Int] = [], backpack: [Int] = []
+    /// Worn artifacts by slot (RuleTables.equipSlots), and the backpack.
+    public var equipped: [Int?] = [], backpack: [Int] = []
     public var events: [MapEvent] = []
 }

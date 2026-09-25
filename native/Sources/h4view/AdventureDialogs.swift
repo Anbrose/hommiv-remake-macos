@@ -76,7 +76,8 @@ extension Renderer {
             }
         case .hero(let i):
             guard i < g.heroes.count, let d = ui.dialog("army.layout") else { return [] }
-            let h = g.heroes[i]
+            let leader = g.heroes[i], army = [leader] + leader.companions
+            let h = army[min(heroShown, army.count - 1)]
             let ox = (AdventureUI.width - 800) / 2, oy = (AdventureUI.height - 600) / 2
             // not drawn: text-area masks (name_text, creature_text: outlines only), the other states of
             // the buttons, the creature-only abilities frame, and the two-row ring backdrop (a hero
@@ -85,20 +86,17 @@ extension Renderer {
                                                                     "tight_Pressed", "tight_Disabled", "square_Pressed", "square_Disabled", "Up_Disabled", "name_text", "creature_text",
                                                                     "Double_Ring_Background", "Abilities_Frame", "Army_Up_Highlighted", "Army_Up_Pressed", "Army_Down_Highlighted",
                                                                     "Army_Down_Pressed", "SpellBook_Highlighted", "SpellBook_Pressed", "Ranged", "Ranged_Text"])
-            // the class picture with the equipment slots, inside the inventory area
-            if let inv = d["hero_inventory"], let cls = ui.dialog("army.\(h.alignment)_might_male"), let bg = cls["Background"] {
-                out.append(Quad(texture: uiTexture("dlg|army|\(h.alignment)|bg", { bg.bitmap }), x: ox + inv.x + (inv.width - bg.width) / 2, y: oy + inv.y + (inv.height - bg.height) / 2, w: bg.width, h: bg.height))
-            }
+            // skills, the class picture with the worn artifacts, the backpack
+            out += heroThingsQuads(h, d, ox, oy)
             if let slot = d["creature_portrait"], let p = ui.portrait(keyword: h.keyword, alignment: h.alignment, size: 82) {
                 out.append(Quad(texture: uiTexture("portrait82|\(h.alignment)|\(h.keyword)", { p.bitmap }), x: ox + slot.x + (slot.width - p.width) / 2, y: oy + slot.y + (slot.height - p.height) / 2, w: p.width, h: p.height))
             }
             out += centred(h.name, in: d["name_text"], at: ox, oy, font: ui.dateFont)
-            let cls = (RuleTables.classes[h.alignment]?.might ?? "knight").split(separator: "_").map { $0.capitalized }.joined(separator: " ")
-            out += centred("Level \(h.level) \(cls)", in: d["class_text"], at: ox, oy, font: ui.dateFont)
+            out += centred(classLine(h), in: d["class_text"], at: ox, oy, font: ui.dateFont)
             let s = g.heroStats(h)
             // the hero's morale from the army's alignments (heroes4.exe 0x640310)
-            let army: [(alignment: String, undead: Bool)] = [(h.alignment, false)] + h.army.compactMap { st in g.tables?.creature(st.creature).map { ($0.alignment, Combatant(creature: $0, count: 1).has("undead")) } }
-            let m = Battle.armyMorale(own: h.alignment, army: army)
+            let moraleArmy: [(alignment: String, undead: Bool)] = army.map { ($0.alignment, false) } + leader.army.compactMap { st in g.tables?.creature(st.creature).map { ($0.alignment, Combatant(creature: $0, count: 1).has("undead")) } }
+            let m = Battle.armyMorale(own: h.alignment, army: moraleArmy)
             let moraleText = m > 0 ? "+\(m)" : "\(m)"
             let values: [(String, String)] = [("Damage_Text", s.damage), ("Hit_Points_Text", "\(s.hitPoints)"), ("Melee_Attack_Text", "\(s.attack)"), ("Melee_Defense_Text", "\(s.defense)"),
                                               ("Ranged_Attack_Text", "\(s.attack)"), ("Ranged_Defense_Text", "\(s.defense)"), ("Speed_Text", "\(s.speed)"), ("Move_Text", "\(s.move)"),
@@ -107,8 +105,8 @@ extension Renderer {
             // the army: one row of creature_rings pieces (Left, Middle x5, Right) tiled by width in
             // Single_Ring_Background, as t_creature_array_window lays them out; labels last
             if let row = d["Single_Ring_Background"] {
-                var slots: [(UILayer?, String?)] = [(ui.portrait(keyword: h.keyword, alignment: h.alignment), nil)]
-                slots += h.army.map { (ui.creatureIcon($0.creature), String($0.count)) }
+                var slots: [(UILayer?, String?)] = army.map { (ui.portrait(keyword: $0.keyword, alignment: $0.alignment), nil) }
+                slots += leader.army.map { (ui.creatureIcon($0.creature), String($0.count)) }
                 var cursor = ox + row.x
                 var centres: [(Int, Int)] = []
                 for k in 0..<7 {
@@ -123,7 +121,7 @@ extension Renderer {
                     if let icon = icon { out.append(Quad(texture: uiTexture("icon|\(icon.name)", { icon.bitmap }), x: centres[k].0 - icon.width / 2, y: centres[k].1 - icon.height / 2, w: icon.width, h: icon.height)) }
                 }
                 for (k, (_, count)) in slots.prefix(centres.count).enumerated() {
-                    ringLabel(&out, ui: ui, cx: centres[k].0, cy: centres[k].1, count: count, hero: k == 0)
+                    ringLabel(&out, ui: ui, cx: centres[k].0, cy: centres[k].1, count: count, hero: k < army.count)
                 }
             }
             if let ok = d["ok_button"], let b = ui.button("ok") {
@@ -144,9 +142,20 @@ extension Renderer {
             else if inside(d["Experience_Released"], at: ox, oy, x, y) || inside(d["experience_icon"], at: ox, oy, x, y) { chestChoice = false }
             else if inside(d["ok_button"], at: ox, oy, x, y), let c = chestChoice { g.resolveChest(gold: c); chestChoice = nil; adventureDialog = nil }
             return true
-        case .hero:
+        case .hero(let i):
             let ox = (AdventureUI.width - 800) / 2, oy = (AdventureUI.height - 600) / 2
-            if let d = ui.dialog("army.layout"), inside(d["ok_button"], at: ox, oy, x, y) { adventureDialog = nil }
+            // a hero's ring shows that hero
+            if let d = ui.dialog("army.layout"), let row = d["Single_Ring_Background"], i < g.heroes.count {
+                let n = 1 + g.heroes[i].companions.count
+                var cursor = ox + row.x
+                for k in 0..<n {
+                    guard let piece = ui.creatureRing(k == 0 ? "Left" : "Middle") else { break }
+                    let cx = cursor - piece.x + 41, cy = oy + row.y - 1 + 41
+                    if abs(x - Float(cx)) < 38, abs(y - Float(cy)) < 38 { heroShown = k; return true }
+                    cursor += piece.width
+                }
+            }
+            if let d = ui.dialog("army.layout"), inside(d["ok_button"], at: ox, oy, x, y) { adventureDialog = nil; heroShown = 0 }
             else if x < Float(ox) || x >= Float(ox + 800) || y < Float(oy) || y >= Float(oy + 600) { adventureDialog = nil }
             return true
         }

@@ -28,7 +28,7 @@ final class CombatScreen {
     var dead: Set<Int> = []
     var result: (won: Bool, rounds: Int)?
     var showResults = false
-    var floaters: [(text: String, col: Float, row: Float, since: Date)] = []
+    var floaters: [(text: String, x: Float, y: Float, since: Date)] = []
 
     static let sceneScale: Float = 0.75
     /// Cells walked per second (the original crosses a diamond in about a fifth of a second).
@@ -92,6 +92,7 @@ final class CombatScreen {
                 if let d = try? archive.payload(real), d.count > 4, d[d.startIndex] == 2 { cands.append((real, max(1, Int(d[d.startIndex + 2])), max(1, Int(d[d.startIndex + 3])))) }
             }
         }
+        cands.sort { $0.name < $1.name }   // a fixed order, so a seed always gives the same field
         return Battlefield(terrain: terrain, variant: variant, obstacles: cands, seed: seed)
     }
 
@@ -104,9 +105,13 @@ final class CombatScreen {
         field = generatedField(terrain: terrain, variant: variant, seed: seed)
         guard let f = field else { return }
         let classActor = "hero.\(h.alignment)_fighter_male"
-        var attackers: [(Combatant, keyword: String, actor: String, shots: Int)] = [(Combatant(hero: h.name, level: h.level), h.keyword, classActor, 0)]
-        for s in h.army { if let cd = t.creature(s.creature) { attackers.append((Combatant(creature: cd, count: s.count), cd.keyword, cd.name, cd.shots)) } }
-        let defenders: [(Combatant, keyword: String, actor: String, shots: Int)] = [(Combatant(creature: c, count: g.monsters[i].count), c.keyword, c.name, c.shots)]
+        func fighter(_ cd: CreatureDef, _ n: Int) -> Battle.Fighter {
+            Battle.Fighter(stats: Combatant(creature: cd, count: n), keyword: cd.keyword, actor: cd.name, size: actor(cd.name)?.size ?? 4, move: cd.move, shots: cd.shots)
+        }
+        // a hero walks as far as the slowest normal foot soldier (Move 18) until hero movement is read from the game
+        var attackers = [Battle.Fighter(stats: Combatant(hero: h.name, level: h.level), keyword: h.keyword, actor: classActor, size: actor(classActor)?.size ?? 4, move: 18, shots: 0)]
+        for s in h.army { if let cd = t.creature(s.creature) { attackers.append(fighter(cd, s.count)) } }
+        let defenders = [fighter(c, g.monsters[i].count)]
         battle = Battle(field: f, attackers: attackers, defenders: defenders, seed: seed)
         queue = []; playing = nil; unitPos = [:]; unitState = [:]; dead = []; result = nil; showResults = false; floaters = []
         pump()
@@ -133,7 +138,7 @@ final class CombatScreen {
                 let to = (Float(path[k].0), Float(path[k].1))
                 unitPos[id] = (from.0 + (to.0 - from.0) * f, from.1 + (to.1 - from.1) * f)
                 unitState[id] = ("walk", p.started, false)
-                b.unit(id).facing = Battle.facing(dc: Int((to.0 - from.0).rounded()), dr: Int((to.1 - from.1).rounded()))
+                b.unit(id).facing = Battle.facing(dx: to.0 - from.0, dy: to.1 - from.1)
             }
             return
         }
@@ -151,19 +156,19 @@ final class CombatScreen {
         case .move(let id, let path):
             let u = b.unit(id)
             // the unit's logical position already moved; animate from where it was
-            let start = path.count > 0 ? (Float(u.col), Float(u.row)) : (Float(u.col), Float(u.row))
+            let start = (Float(u.x), Float(u.y))
             moveStart[id] = unitPos[id] ?? startOfPath(path, end: start)
             playing = Anim(event: e, started: now, duration: Double(path.count) / CombatScreen.cellsPerSecond)
         case .melee(let id, let target, let dmg, let killed):
             unitState[id] = ("melee", now, true)
             playing = Anim(event: e, started: now, duration: 0.6)
             let t = b.unit(target)
-            floaters.append(("-\(dmg)" + (killed > 0 ? " (\(killed) killed)" : ""), Float(t.col), Float(t.row), now.addingTimeInterval(0.3)))
+            floaters.append(("-\(dmg)" + (killed > 0 ? " (\(killed) killed)" : ""), t.centre.0, t.centre.1, now.addingTimeInterval(0.3)))
         case .shoot(let id, let target, let dmg, let killed):
             unitState[id] = ("ranged", now, true)
             playing = Anim(event: e, started: now, duration: 0.6)
             let t = b.unit(target)
-            floaters.append(("-\(dmg)" + (killed > 0 ? " (\(killed) killed)" : ""), Float(t.col), Float(t.row), now.addingTimeInterval(0.3)))
+            floaters.append(("-\(dmg)" + (killed > 0 ? " (\(killed) killed)" : ""), t.centre.0, t.centre.1, now.addingTimeInterval(0.3)))
         case .die(let id):
             unitState[id] = ("die", now, true)
             playing = Anim(event: e, started: now, duration: 0.9)
@@ -199,11 +204,14 @@ final class CombatScreen {
 
     // MARK: geometry
 
-    /// Lattice position (fractional col, row) -> canvas point of the diamond's centre.
-    static func point(_ col: Float, _ row: Float) -> (Float, Float) {
-        ((32 * col + 16) * sceneScale, (16 * row + 8) * sceneScale)
+    /// World point (cell units) -> canvas point.
+    static func point(_ x: Float, _ y: Float) -> (Float, Float) {
+        let (sx, sy) = Battlefield.screen(x, y)
+        return (sx * sceneScale, sy * sceneScale)
     }
+    /// The cell under a canvas point.
     static func cell(at canvasX: Float, _ canvasY: Float) -> (Int, Int) {
-        Battlefield.cell(at: canvasX / sceneScale, canvasY / sceneScale)
+        let (x, y) = Battlefield.world(canvasX / sceneScale, canvasY / sceneScale)
+        return (Int(x.rounded(.down)), Int(y.rounded(.down)))
     }
 }

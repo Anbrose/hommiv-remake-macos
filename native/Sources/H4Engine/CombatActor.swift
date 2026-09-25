@@ -15,10 +15,13 @@ public struct CombatActor {
         public let sequences: [String]
     }
     public let states: [State]
+    /// Footprint on the combat grid, size x size cells (byte 2: sprite 3, peasant 4, dragon 7).
+    public let size: Int
 
     public init(data d: Data) throws {
         var r = ByteReader(d)
         guard d.count > 108, r.u16() == 6 else { throw H4Error.corrupt("combat_actor: bad header") }
+        size = max(1, Int(r.byte(at: 2)))
         r.pos = 106
         let n = Int(r.u16())
         var list: [State] = []
@@ -43,107 +46,105 @@ public struct CombatActor {
     }
 }
 
-/// A battlefield: a 1180x1024 picture (drawn scaled 3/4 into the 885x768 battle scene of the
-/// 1024 layout) covered by an isometric lattice of 64x32 diamond cells like the adventure
-/// map's: cell (col, row) is centred at (32 col + 16, 16 row + 8) with col + row even, so
-/// edge-neighbours are (±1, ±1) and vertex-neighbours (±2, 0) / (0, ±2).
+/// A battlefield, as read from heroes4.exe and measured against the original: a square world
+/// grid of combat cells, each 16 world units (distances in the damage code are world
+/// coordinates >> 4) drawn as a 32x16 diamond, half an adventure tile; the 1180x1024 scene
+/// shows the cells whose centres fall inside it, scaled 3/4 into the 885x768 battle scene of
+/// the 1024 layout (the original's ground diamonds measure 24x12 there). Creatures occupy
+/// size x size cells (byte 2 of combat_actor: sprite 3, peasant 4, orc 5, titan 6, dragon 7),
+/// obstacles w x h cells (bytes 2, 3 of combat_object).
 ///
-/// A preset (battlefield_preset_map.<set>.<single|upper|lower>.h4d, the ship decks) carries a
-/// 75x64 byte map of 16-pixel squares (1 open, 255 blocked, 0 off the field, 2 raised) and a
-/// layers-style "backdrop" image; a land field is generated from the terrain: its tiles
-/// tiled diamond by diamond, alternate diamonds a shade darker, obstacles of the terrain's
-/// kind scattered outside the deployment corners.
+/// A world point (x, y) in cells is at scene ((y - x) * 16 + 590, (x + y) * 8 + 512 - 8 * 102). A land field is generated from the terrain: its tiles over the whole scene, a
+/// checker of darker cells, obstacles of the terrain's kind scattered away from the two
+/// deployment corners (bottom-left for the attacker, top-right for the defender).
 public struct Battlefield {
-    public static let columns = 37, rows = 64
+    /// World cells along each axis: 102, the value in the preset files' header, is exactly what
+    /// makes the 32x16 diamonds cover the whole 1180x1024 scene.
+    public static let size = 102
     public static let backdropWidth = 1180, backdropHeight = 1024
-    public static let cellWidth = 64, cellHeight = 32
 
     public let backdrop: UILayer?
     public let terrain: UInt8, variant: UInt8
-    public struct Obstacle { public let name: String; public let col: Int, row: Int; public let w: Int, h: Int }
+    public struct Obstacle { public let name: String; public let x: Int, y: Int; public let w: Int, h: Int }
     public private(set) var obstacles: [Obstacle] = []
-    var blocked: Set<Int> = []           // lattice cells an obstacle or the deck edge covers
-    var squares: [UInt8]? = nil          // a preset's 75x64 byte map
+    var blocked = [Bool](repeating: false, count: Battlefield.size * Battlefield.size)
 
-    public static func valid(_ col: Int, _ row: Int) -> Bool {
-        col >= 0 && col < columns && row >= 0 && row < rows && (col + row) % 2 == 0
+    /// Screen (scene) point of a world point in cell units: x runs down-left, y down-right,
+    /// the grid centre in the middle of the scene.
+    public static func screen(_ x: Float, _ y: Float) -> (Float, Float) {
+        ((y - x) * 16 + Float(backdropWidth) / 2, (x + y) * 8 + Float(backdropHeight) / 2 - Float(size) * 8)
     }
-    public static func centre(_ col: Int, _ row: Int) -> (Float, Float) { (Float(32 * col + 16), Float(16 * row + 8)) }
-    public static func key(_ col: Int, _ row: Int) -> Int { row * columns + col }
-
-    /// The lattice cell whose diamond contains a backdrop point.
-    public static func cell(at x: Float, _ y: Float) -> (Int, Int) {
-        let c0 = Int((x - 16) / 32), r0 = Int((y - 8) / 16)
-        var best = (0, 0), bestD = Float.infinity
-        for c in (c0 - 1)...(c0 + 1) { for r in (r0 - 1)...(r0 + 1) where (c + r) % 2 == 0 {
-            let (cx, cy) = centre(c, r)
-            let d = abs(x - cx) / 32 + abs(y - cy) / 16   // diamond metric
-            if d < bestD { bestD = d; best = (c, r) }
-        } }
-        return best
+    /// The world point (cell units) under a scene point.
+    public static func world(_ sx: Float, _ sy: Float) -> (Float, Float) {
+        let u = (sx - Float(backdropWidth) / 2) / 16          // y - x
+        let v = (sy - Float(backdropHeight) / 2 + Float(size) * 8) / 8   // x + y
+        return ((v - u) / 2, (v + u) / 2)
+    }
+    /// Is the cell on the field: inside the grid, its centre inside the scene with a margin.
+    public static func onField(_ x: Int, _ y: Int) -> Bool {
+        guard x >= 0, y >= 0, x < size, y < size else { return false }
+        let (sx, sy) = screen(Float(x) + 0.5, Float(y) + 0.5)
+        return sx > 24 && sx < Float(backdropWidth) - 24 && sy > 40 && sy < Float(backdropHeight) - 16
     }
 
     public init(data d: Data) throws {
-        guard d.count > 4864 else { throw H4Error.corrupt("battlefield: too short") }
-        let sq = Array(d[(d.startIndex + 64)..<(d.startIndex + 64 + 75 * 64)])
-        squares = sq
         var img = Data([1, 0])
         img.append(d[(d.startIndex + 4864)...])
         backdrop = (try? LayerFile(data: img))?.layers.first
         terrain = 0; variant = 0
-        var b = Set<Int>()
-        for row in 0..<Battlefield.rows { for col in 0..<Battlefield.columns where (col + row) % 2 == 0 {
-            // the diamond's centre square and the two beside it must be open deck
-            let sx = 2 * col + 1, sy = row
-            for dx in -1...1 {
-                let x = sx + dx
-                if x < 0 || x >= 75 || sy >= 64 { b.insert(Battlefield.key(col, row)); continue }
-                let v = sq[sy * 75 + x]
-                if v != 1 && v != 2 { b.insert(Battlefield.key(col, row)) }
-            }
-        } }
-        blocked = b
     }
 
-    /// A land battlefield for a terrain type: obstacles of the given candidates (sprite entry,
-    /// footprint in 16 px squares) scattered over the middle of the field.
+    /// A land battlefield for a terrain type: obstacles of the candidates (sprite entry,
+    /// footprint in cells) scattered over the field.
     public init(terrain: UInt8, variant: UInt8, obstacles candidates: [(name: String, w: Int, h: Int)], seed: Int) {
         backdrop = nil
         self.terrain = terrain; self.variant = variant
         var rng = GameRandom(seed: seed)
-        var b = Set<Int>()
         var list: [Obstacle] = []
+        let n = Battlefield.size
         if !candidates.isEmpty {
-            let count = 20 + rng.next() % 10
+            let count = 18 + rng.next() % 10
             var tries = 0
-            while list.count < count, tries < 300 {
+            while list.count < count, tries < 400 {
                 tries += 1
                 let cand = candidates[rng.next() % candidates.count]
-                let col = 4 + rng.next() % (Battlefield.columns - 8), row = 4 + rng.next() % (Battlefield.rows - 8)
-                guard Battlefield.valid(col, row) else { continue }
-                // keep the deployment corners free: bottom-left and top-right
-                if col < 12 && row > Battlefield.rows - 22 { continue }
-                if col > Battlefield.columns - 13 && row < 22 { continue }
-                let radius = max(0, (max(cand.w, cand.h) - 1) / 2)
-                var cells: [Int] = []
-                var free = true
-                for dc in -radius...radius { for dr in -radius...radius where (dc + dr) % 2 == 0 {
-                    let c = col + dc, r = row + dr
-                    if !Battlefield.valid(c, r) { free = false; continue }
-                    cells.append(Battlefield.key(c, r))
-                    // a one-cell gap between obstacles
-                    for (nc, nr) in [(c + 1, r + 1), (c - 1, r - 1), (c + 1, r - 1), (c - 1, r + 1)] where b.contains(Battlefield.key(nc, nr)) { free = false }
+                let x = rng.next() % n, y = rng.next() % n
+                // away from the deployment corners (screen bottom-left = high x, top-right = low x)
+                let (sx, sy) = Battlefield.screen(Float(x), Float(y))
+                if sx < 380 && sy > 560 { continue }
+                if sx > 800 && sy < 460 { continue }
+                var ok = true
+                for i in -1...cand.w { for j in -1...cand.h {
+                    let cx = x + i, cy = y + j
+                    let inside = i >= 0 && i < cand.w && j >= 0 && j < cand.h
+                    if inside, !Battlefield.onField(cx, cy) { ok = false }
+                    if cx >= 0, cy >= 0, cx < n, cy < n, blocked[cx * n + cy] { ok = false }   // a gap around
                 } }
-                guard free, !cells.contains(where: { b.contains($0) }) else { continue }
-                for c in cells { b.insert(c) }
-                list.append(Obstacle(name: cand.name, col: col, row: row, w: cand.w, h: cand.h))
+                guard ok else { continue }
+                for i in 0..<cand.w { for j in 0..<cand.h { blocked[(x + i) * n + y + j] = true } }
+                list.append(Obstacle(name: cand.name, x: x, y: y, w: cand.w, h: cand.h))
             }
         }
-        blocked = b
         obstacles = list
     }
 
-    public func isOpen(_ col: Int, _ row: Int) -> Bool {
-        Battlefield.valid(col, row) && !blocked.contains(Battlefield.key(col, row))
+    public func isOpen(_ x: Int, _ y: Int) -> Bool {
+        Battlefield.onField(x, y) && !blocked[x * Battlefield.size + y]
+    }
+    /// Is a size x size footprint with its top corner at (x, y) free of obstacles and on the field?
+    public func fits(_ x: Int, _ y: Int, size: Int) -> Bool {
+        for i in 0..<size { for j in 0..<size where !isOpen(x + i, y + j) { return false } }
+        return true
+    }
+    /// Does the straight line between two world points cross an obstacle cell?
+    public func obstructed(_ a: (Float, Float), _ b: (Float, Float)) -> Bool {
+        let d = max(abs(b.0 - a.0), abs(b.1 - a.1))
+        let steps = max(1, Int(d * 2))
+        for k in 1..<steps {
+            let t = Float(k) / Float(steps)
+            let x = Int((a.0 + (b.0 - a.0) * t).rounded(.down)), y = Int((a.1 + (b.1 - a.1) * t).rounded(.down))
+            if x >= 0, y >= 0, x < Battlefield.size, y < Battlefield.size, blocked[x * Battlefield.size + y] { return true }
+        }
+        return false
     }
 }

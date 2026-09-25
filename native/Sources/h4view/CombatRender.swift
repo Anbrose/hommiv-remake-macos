@@ -26,42 +26,51 @@ extension Renderer {
         if let bd = f.backdrop {
             out.append(Quad(texture: uiTexture("battlefield|\(cs.fieldName)", { bd.bitmap }), x: 0, y: 0, w: Int(Float(bd.width) * sc), h: Int(Float(bd.height) * sc)))
         } else if let patch = cs.groundPatch(terrain: f.terrain, variant: f.variant, alt: 1) {
-            for row in -1...Battlefield.rows { for col in -1...Battlefield.columns where (col + row) % 2 == 0 {
-                // the patch's positional tiles continue across neighbours when indexed by the
-                // screen row and the half-column, as the adventure map does
-                let halfCol = Int((Float(col) / 2).rounded(.down))
-                let ti = ((((row % 6) + 6) % 6) + 2) * 10 + ((((halfCol % 6) + 6) % 6) + 2)
-                let dark = ((col % 2) + 2) % 2 != 0
-                let tex = uiTexture("ground|\(f.terrain)|\(f.variant)|\(ti)|\(dark)", {
-                    var bm = patch.tiles[min(ti, patch.tiles.count - 1)]
-                    if dark { for i in stride(from: 0, to: bm.pixels.count, by: 4) { for k in 0..<3 { bm.pixels[i + k] = UInt8(Int(bm.pixels[i + k]) * 93 / 100) } } }
-                    return bm
-                })
-                let (px, py) = CombatScreen.point(Float(col), Float(row))
-                out.append(Quad(texture: tex, x: Int(px - 32 * sc), y: Int(py - 16 * sc), w: Int(64 * sc), h: Int(32 * sc)))
+            // the terrain's 64x32 tiles, each covering 2x2 combat cells, continuous as on the map
+            let n = Battlefield.size / 2 + 1
+            for ax in 0..<n { for ay in 0..<n {
+                let (px, py) = CombatScreen.point(Float(2 * ax + 1), Float(2 * ay + 1))
+                if px < -40 || py < -30 || px > 925 || py > 800 { continue }
+                let row = ax + ay, colI = (ay - ax - (((ax + ay) % 2) + 2) % 2) / 2
+                let ti = ((((row % 6) + 6) % 6) + 2) * 10 + ((((colI % 6) + 6) % 6) + 2)
+                let tex = uiTexture("ground|\(f.terrain)|\(f.variant)|\(ti)", { patch.tiles[min(ti, patch.tiles.count - 1)] })
+                out.append(Quad(texture: tex, x: Int(px - 32 * sc), y: Int(py - 16 * sc), w: Int(64 * sc) + 1, h: Int(32 * sc) + 1))
+            } }
+            // the checker: every other combat cell a shade darker
+            for x in 0..<Battlefield.size { for y in 0..<Battlefield.size where (x + y) % 2 == 1 && Battlefield.onField(x, y) {
+                let (px, py) = CombatScreen.point(Float(x) + 0.5, Float(y) + 0.5)
+                out.append(Quad(texture: cellDiamond("checker", 0, 0, 0, 38), x: Int(px - 16 * sc), y: Int(py - 8 * sc), w: Int(32 * sc), h: Int(16 * sc)))
             } }
         }
-        // the acting unit's reach as the game's purple-grey diamonds (the "movement shadow" option)
+        // the acting unit's reach as the game's purple-grey cells (the "movement shadow" option):
+        // every cell its footprint can cover
         if showReach, let cur = b.current, cur.side == 0, !cs.busy, cs.result == nil {
-            for (key, _) in b.reachable(cur) {
-                let col = key % Battlefield.columns, row = key / Battlefield.columns
-                let (px, py) = CombatScreen.point(Float(col), Float(row))
-                out.append(Quad(texture: reachDiamond, x: Int(px - 32 * sc), y: Int(py - 16 * sc), w: Int(64 * sc), h: Int(32 * sc)))
+            var cells = Set<Int>()
+            for (k, _) in b.reachable(cur) {
+                let x = k / Battlefield.size, y = k % Battlefield.size
+                for i in 0..<cur.size { for j in 0..<cur.size { cells.insert((x + i) * Battlefield.size + y + j) } }
+            }
+            for k in cells {
+                let x = k / Battlefield.size, y = k % Battlefield.size
+                let (px, py) = CombatScreen.point(Float(x) + 0.5, Float(y) + 0.5)
+                out.append(Quad(texture: cellDiamond("reach", 120, 110, 170, 120), x: Int(px - 16 * sc), y: Int(py - 8 * sc), w: Int(32 * sc), h: Int(16 * sc)))
             }
         }
         // obstacles and units, back to front
         var drawn: [(Float, [Quad])] = []
         for o in f.obstacles {
             guard let s = cs.obstacleSprite(o.name), let fr = s.frames.first else { continue }
-            let (px, py) = CombatScreen.point(Float(o.col), Float(o.row))
+            // the sprite's origin is the footprint's top vertex, as for adventure objects
+            let (px, py) = CombatScreen.point(Float(o.x), Float(o.y))
             var q: [Quad] = []
             if let sh = s.shadow(for: fr) { q.append(Quad(texture: texture(for: sh, of: o.name), x: Int(px + Float(s.origin.x + Int32(sh.box.left)) * sc), y: Int(py + Float(s.origin.y + Int32(sh.box.top)) * sc), w: Int(Float(sh.bitmap.width) * sc), h: Int(Float(sh.bitmap.height) * sc))) }
             q.append(Quad(texture: texture(for: fr, of: o.name), x: Int(px + Float(s.origin.x + Int32(fr.box.left)) * sc), y: Int(py + Float(s.origin.y + Int32(fr.box.top)) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc)))
             drawn.append((py - 1, q))
         }
         for u in b.units where u.alive || !cs.dead.contains(u.id) {
-            let pos = cs.unitPos[u.id] ?? (Float(u.col), Float(u.row))
-            let (px, py) = CombatScreen.point(pos.0, pos.1)
+            let pos = cs.unitPos[u.id] ?? (Float(u.x), Float(u.y))
+            // the actor's origin is the footprint's centre
+            let (px, py) = CombatScreen.point(pos.0 + Float(u.size) / 2, pos.1 + Float(u.size) / 2)
             var q: [Quad] = []
             if b.current?.id == u.id, cs.result == nil, let ring = arrowSprite("active_shadow.2", prefix: "combat_object"), let fr = ring.frames.first {
                 q.append(Quad(texture: texture(for: fr, of: "active_shadow"), x: Int(px + Float(ring.origin.x + Int32(fr.box.left)) * sc), y: Int(py + Float(ring.origin.y + Int32(fr.box.top)) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc)))
@@ -119,7 +128,7 @@ extension Renderer {
         // damage numbers
         for fl in cs.floaters {
             let age = Float(max(0, now.timeIntervalSince(fl.since)))
-            let (px, py) = CombatScreen.point(fl.col, fl.row)
+            let (px, py) = CombatScreen.point(fl.x, fl.y)
             let w = ui.dateFont.measure(fl.text)
             out.append(Quad(texture: uiTexture("date|\(fl.text)|red", { ui.dateFont.render(fl.text, colour: (255, 80, 60)) }), x: Int(px) - w / 2, y: Int(py - 70 - age * 25), w: w, h: ui.dateFont.size))
         }
@@ -149,26 +158,46 @@ extension Renderer {
                 out.append(Quad(texture: uiTexture("button|combat.\(name)|\(disabled)", { img.bitmap }), x: slot.x + (slot.width - img.width) / 2, y: slot.y + (slot.height - img.height) / 2, w: img.width, h: img.height))
             }
         }
+        if let wt = walkTurns, !cs.busy {   // the turns to reach the cell, small and blue beside the walking pointer
+            let text = "\(wt.turns)"
+            out.append(Quad(texture: uiTexture("turns|\(text)", { ui.numberFont.render(text, colour: (120, 190, 255)) }), x: wt.x + 12, y: wt.y + 8, w: ui.numberFont.measure(text), h: ui.numberFont.size))
+        }
         out += hoverQuads()
         if cs.showResults { out += combatResultQuads() }
         return out
     }
 
-    /// A 64x32 diamond in the original's movement-shadow tint.
-    var reachDiamond: MTLTexture {
-        uiTexture("reach|diamond", {
-            var bm = Bitmap(width: 64, height: 32)
-            for y in 0..<32 {
-                for x in 0..<64 {
-                    let dx: Float = abs(Float(x) - 31.5) / 32
-                    let dy: Float = abs(Float(y) - 15.5) / 16
+    /// A 32x16 diamond (one combat cell) in a colour.
+    func cellDiamond(_ key: String, _ r: UInt8, _ g: UInt8, _ bl: UInt8, _ a: UInt8) -> MTLTexture {
+        uiTexture("cell|\(key)", {
+            var bm = Bitmap(width: 32, height: 16)
+            for y in 0..<16 {
+                for x in 0..<32 {
+                    let dx: Float = abs(Float(x) - 15.5) / 16
+                    let dy: Float = abs(Float(y) - 7.5) / 8
                     if dx + dy > 1 { continue }
-                    let i = (y * 64 + x) * 4
-                    bm.pixels[i] = 120; bm.pixels[i + 1] = 110; bm.pixels[i + 2] = 170; bm.pixels[i + 3] = 110
+                    let i = (y * 32 + x) * 4
+                    bm.pixels[i] = r; bm.pixels[i + 1] = g; bm.pixels[i + 2] = bl; bm.pixels[i + 3] = a
                 }
             }
             return bm
         })
+    }
+
+    /// The enemy unit under a canvas point: its footprint, or its picture's upper body.
+    func enemyUnder(_ b: Battle, x: Float, y: Float) -> Battle.Unit? {
+        let (wx, wy) = Battlefield.world(x / CombatScreen.sceneScale, y / CombatScreen.sceneScale)
+        return b.units.first { u in
+            guard u.alive, u.side == 1 else { return false }
+            if wx >= Float(u.x), wx < Float(u.x + u.size), wy >= Float(u.y), wy < Float(u.y + u.size) { return true }
+            let (cx, cy) = CombatScreen.point(u.centre.0, u.centre.1)
+            return abs(x - cx) < 18 && y < cy && y > cy - 70
+        }
+    }
+    /// Where the current unit's footprint would stand for a click on a cell: centred on it.
+    func footprintAt(_ u: Battle.Unit, x: Float, y: Float) -> (Int, Int) {
+        let (wx, wy) = Battlefield.world(x / CombatScreen.sceneScale, y / CombatScreen.sceneScale)
+        return (Int((wx - Float(u.size) / 2).rounded()), Int((wy - Float(u.size) / 2).rounded()))
     }
 
     /// layers.dialog.Combat_results: victor and loser portraits, losses.
@@ -230,11 +259,11 @@ extension Renderer {
             cs.pump(); return
         }
         guard x < Float(cs.hotspot("battle_scene")?.width ?? 885) else { return }
-        let c = CombatScreen.cell(at: x, y)
-        if let target = b.units.first(where: { $0.alive && $0.side == 1 && $0.col == c.0 && $0.row == c.1 }) {
-            if cur.shots > 0, !combatMeleeMode { _ = b.shoot(target.id) } else { _ = b.attack(target.id) }
+        if let target = enemyUnder(b, x: x, y: y) {
+            if b.canShoot(cur), !combatMeleeMode { _ = b.shoot(target.id) } else { _ = b.attack(target.id) }
             combatMeleeMode = false
         } else {
+            let c = footprintAt(cur, x: x, y: y)
             _ = b.move(to: c.0, c.1)
         }
         cs.pump()
@@ -256,9 +285,8 @@ extension Renderer {
     /// attack.combat and text_damage_range texts), the range from the damage rules.
     func combatStatusText(x: Float, y: Float) -> String? {
         guard let cs = combat, let b = cs.battle, !cs.busy, cs.result == nil, let cur = b.current, cur.side == 0, x < 885, let t = game?.tables else { return nil }
-        let c = CombatScreen.cell(at: x, y)
-        guard let target = b.units.first(where: { $0.alive && $0.side == 1 && $0.col == c.0 && $0.row == c.1 }) else { return nil }
-        let ranged = cur.shots > 0 && !combatMeleeMode && !b.units.contains { $0.alive && $0.side == 1 && Battle.adjacent(cur, $0) }
+        guard let target = enemyUnder(b, x: x, y: y) else { return nil }
+        let ranged = b.canShoot(cur) && !combatMeleeMode
         let (lo, hi) = b.damageRange(cur, target, ranged: ranged)
         let range = lo == hi ? (t.strings["text_damage_range_1"] ?? "%damage damage").replacingOccurrences(of: "%damage", with: "\(lo)")
                              : (t.strings["text_damage_range_2"] ?? "%damage_low - %damage_high damage").replacingOccurrences(of: "%damage_low", with: "\(lo)").replacingOccurrences(of: "%damage_high", with: "\(hi)")
@@ -269,13 +297,17 @@ extension Renderer {
     /// Which combat cursor fits the cell under the pointer.
     func combatCursor(x: Float, y: Float) -> String {
         guard let cs = combat, let b = cs.battle, !cs.busy, cs.result == nil, let cur = b.current, cur.side == 0, x < 885 else { return "combat.normal" }
-        let c = CombatScreen.cell(at: x, y)
-        if let t = b.units.first(where: { $0.alive && $0.side == 1 && $0.col == c.0 && $0.row == c.1 }) {
-            if cur.shots > 0, !combatMeleeMode, !b.units.contains(where: { $0.alive && $0.side == 1 && Battle.adjacent(cur, $0) }) { return "combat.shoot" }
+        walkTurns = nil
+        if let t = enemyUnder(b, x: x, y: y) {
+            if b.canShoot(cur), !combatMeleeMode { return "combat.shoot" }
             let names = ["e": "east", "w": "west", "n": "north", "s": "south", "ne": "northeast", "nw": "northwest", "se": "southeast", "sw": "southwest"]
-            let dir = Battle.facing(dc: t.col - cur.col, dr: t.row - cur.row)
+            let dir = Battle.facing(dx: t.centre.0 - cur.centre.0, dy: t.centre.1 - cur.centre.1)
             return "combat.melee.\(names[dir] ?? "east")"
         }
-        return b.reachable(cur)[Battlefield.key(c.0, c.1)] != nil ? "combat.walk" : "combat.normal"
+        // walking: the number beside the pointer is the turns needed to get there
+        let c = footprintAt(cur, x: x, y: y)
+        guard let cost = b.cost(cur, to: c.0, c.1) else { return "combat.normal" }
+        walkTurns = (max(1, Int((cost / Float(max(1, cur.move))).rounded(.up))), Int(x), Int(y))
+        return "combat.walk"
     }
 }

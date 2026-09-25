@@ -63,6 +63,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     var adventureDialog: AdventureDialog? = nil
     var combat: CombatScreen?
     var combatMeleeMode = false
+    var walkTurns: (turns: Int, x: Int, y: Int)?
     var showReach = false      // the game's "Show Movement Shadow" option (off by default, as in the original)
     var inCombat: Bool { combat?.battle != nil }
     var chestChoice: Bool? = nil          // true = gold, false = experience

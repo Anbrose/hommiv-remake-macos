@@ -26,6 +26,8 @@ public struct Combatant {
         attack = c.attack; defense = c.defense; speed = c.speed; experience = c.experience
         shooter = c.shots > 0; noMeleePenalty = c.shortHelp.lowercased().contains("no melee penalty")
         abilities = Set(c.shortHelp.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces).lowercased() }.filter { !$0.isEmpty })
+        // the table's wordings of the game's normal_melee ability
+        if abilities.contains("normal melee") { noMeleePenalty = true }
     }
 
     /// A hero of the given level fights as one strong unit.

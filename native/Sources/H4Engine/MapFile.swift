@@ -61,6 +61,10 @@ public struct MapObject {
     }
 }
 
+/// A player slot of the map: its colour, whether a human may take it, and the alignments
+/// (bit 0 life, 1 order, 2 death, 3 chaos, 4 nature, 5 might) its random heroes and towns may have.
+public struct PlayerSpec { public let colour: Int, canBeHuman: Bool, alignments: UInt8 }
+
 /// Editor settings of a town.
 public struct TownSettings {
     public var owner: Int? = nil
@@ -96,6 +100,7 @@ public struct MapFile {
     public let size: Int
     public let levels: Int
     public let players: [UInt8]
+    public let playerSpecs: [PlayerSpec]
     public let name: String
     public let description: String
     /// Map difficulty (0 easy ... 4 impossible), the byte after the name.
@@ -123,10 +128,18 @@ public struct MapFile {
         size = Int(r.u16())
         levels = Int(r.u8())
         _ = r.u32()
+        // players (heroes4.exe 0x77a5f6): u8 colour, u8 can be human, u8 (unknown), then a
+        // versioned bit set of the alignments its random heroes and towns may take
         let np = Int(r.u8())
-        var pl: [UInt8] = []
-        for _ in 0..<np { pl.append(r.u8()); r.pos += 4 }
+        var pl: [UInt8] = [], specs: [PlayerSpec] = []
+        for _ in 0..<np {
+            let colour = r.u8(), human = r.u8() != 0
+            _ = r.u8(); _ = r.u8()
+            let mask = r.u8()
+            pl.append(colour); specs.append(PlayerSpec(colour: Int(colour), canBeHuman: human, alignments: mask))
+        }
         players = pl
+        playerSpecs = specs
         name = r.string16()
         difficulty = Int(r.u8())
         description = r.string16()

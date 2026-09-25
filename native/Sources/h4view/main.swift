@@ -110,6 +110,7 @@ if let t = ruleTables {
     let sea: Set<String> = ["mermaid", "sea monster", "pirate"]
     RandomResolver.creaturePool = (1...4).map { lv in t.creatures.filter { $0.level == lv && $0.expansion <= expansion && !sea.contains($0.keyword) }.map { $0.keyword } }
 }
+RandomResolver.playerAlignments = Dictionary(map.playerSpecs.enumerated().map { ($0.offset, $0.element.alignments) }, uniquingKeysWith: { a, _ in a })
 let scene = try MapScene(map: map, level: min(level, map.levels - 1), archive: archive, masks: masks)
 lap("scene built: \(scene.chunks.count) terrain chunks, \(scene.placed.count) objects")
 let device = MTLCreateSystemDefaultDevice()!

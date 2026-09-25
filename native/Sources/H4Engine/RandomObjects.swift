@@ -45,6 +45,10 @@ public struct RandomResolver {
     /// among the creatures of the level that are not sea creatures and whose expansion the map
     /// allows; set from the creature table before the scene is built.
     public static var creaturePool: [[String]]? = nil
+    /// The alignments each player may have (MapFile.playerSpecs), by player index.
+    public static var playerAlignments: [Int: UInt8] = [:]
+    /// Town factions in alignment bit order (life, order, death, chaos, nature, might).
+    static let factionByAlignment = ["Haven", "Academy", "Necropolis", "Asylum", "Preserve", "Stronghold"]
     static let directions = ["s", "sw", "se", "w", "e"]
     static let resources = ["Wood", "Ore", "Wood", "Ore", "Mercury", "Sulfur", "Crystal", "Gem", "Gold"]
     static let schools = ["Life", "Order", "Death", "Chaos", "Nature"]
@@ -77,7 +81,12 @@ public struct RandomResolver {
         var name: String?
         switch o.type {
         case "random_town":
-            let f = RandomResolver.factions[townOrdinal % RandomResolver.factions.count]
+            // an owned random town takes one of its player's alignments
+            var f = RandomResolver.factions[townOrdinal % RandomResolver.factions.count]
+            if let owner = o.town?.owner, let mask = RandomResolver.playerAlignments[owner], mask & 0x3f != 0 {
+                let allowed = (0..<6).filter { mask & (1 << $0) != 0 }
+                f = RandomResolver.factionByAlignment[allowed[RandomResolver.seed(o, 7) % allowed.count]]
+            }
             let r = o.subtype == "right" ? " R" : ""
             // the walls the map gives it (its built buildings: 3 fort, 4 citadel, 5 castle); a few
             // Village files are 2-image editor dummies, so the caller falls through to the next level

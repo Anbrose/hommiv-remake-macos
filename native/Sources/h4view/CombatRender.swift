@@ -163,9 +163,9 @@ extension Renderer {
             let icon = fl.icon.flatMap { iconSheet("combat_messages")[$0.lowercased()] }
             let w = messageFont.measure(fl.text), iw = icon?.width ?? 0
             let x0 = Int(px) - (w + iw) / 2, y0 = Int(py - 80 - age * 25) + fl.line * 30
-            let white = fl.icon != nil
+            let colour: (UInt8, UInt8, UInt8) = fl.red ? (230, 40, 30) : (255, 255, 255)
             out.append(Quad(texture: uiTexture("float|\(fl.text)|shadow", { messageFont.render(fl.text, colour: (0, 0, 0)) }), x: x0 + 1, y: y0 + 1, w: w, h: messageFont.size))
-            out.append(Quad(texture: uiTexture("float|\(fl.text)|\(white)", { messageFont.render(fl.text, colour: white ? (255, 255, 255) : (255, 80, 60)) }), x: x0, y: y0, w: w, h: messageFont.size))
+            out.append(Quad(texture: uiTexture("float|\(fl.text)|\(fl.red)", { messageFont.render(fl.text, colour: colour) }), x: x0, y: y0, w: w, h: messageFont.size))
             if let ic = icon { out.append(Quad(texture: uiTexture("msgicon|\(ic.name)", { ic.bitmap }), x: x0 + w + 2, y: y0 + (messageFont.size - ic.height) / 2, w: ic.width, h: ic.height)) }
         }
         // the frame and the panel

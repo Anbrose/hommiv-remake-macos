@@ -29,12 +29,13 @@ final class CombatScreen {
     var showResults = false
     /// Floating combat messages: text, where, since when, and the icon of layers.icons.combat_messages
     /// beside it ("damage" the broken heart, "Death" the skull; nil none), and the line (0 top).
-    var floaters: [(text: String, x: Float, y: Float, since: Date, icon: String?, line: Int)] = []
+    var floaters: [(text: String, x: Float, y: Float, since: Date, icon: String?, line: Int, red: Bool)] = []
     /// The message pair of a blow (heroes4.exe 0x5661f0): "-%i" with the broken heart for the damage
     /// and, when any die, "-%i" with the skull for the creatures killed.
-    func blowMessages(damage: Int, killed: Int, at c: (Float, Float), since: Date) {
-        if damage > 0 { floaters.append(("-\(damage)", c.0, c.1, since, "damage", 0)) }
-        if killed > 0 { floaters.append(("-\(killed)", c.0, c.1, since, "Death", 1)) }
+    /// The numbers take the colour of the struck army: red for the player's (red) side, white for the other.
+    func blowMessages(damage: Int, killed: Int, at c: (Float, Float), since: Date, side: Int) {
+        if damage > 0 { floaters.append(("-\(damage)", c.0, c.1, since, "damage", 0, side == 0)) }
+        if killed > 0 { floaters.append(("-\(killed)", c.0, c.1, since, "Death", 1, side == 0)) }
     }
     /// Spell-style effects playing over a unit (morale shows "sorrow" / "spiritual fervor").
     var effects: [(name: String, unit: Int, since: Date)] = []
@@ -258,24 +259,18 @@ final class CombatScreen {
             moves[id] = Move(length: length / 16, preDist: preDist / 16, postDist: postDist / 16, preTime: preTime, walkTime: walkTime, postTime: postTime)
             unitPos[id] = (Float(start.0), Float(start.1))   // from this frame on, not only from the next update
             playing = Anim(event: e, started: now, duration: preTime + walkTime + postTime)
-        case .melee(let id, let target, let dmg, let killed, let left), .shoot(let id, let target, let dmg, let killed, let left):
-            // the blow as it lands now: the striker turns to the target where both are shown
-            let ranged: Bool = { if case .shoot = e { return true }; return false }()
-            let a = b.unit(id), t = b.unit(target)
-            let ac = shownCentre(a), tc = shownCentre(t)
-            a.facing = Battle.facing(dx: tc.0 - ac.0, dy: tc.1 - ac.1)
-            let state = ranged ? "ranged" : "melee"
-            unitState[id] = (state, now, true)
-            // the blow lands on the attack's hit frame (combat_actor: the state's hit frame); the target
-            // flinches then (unless it dies of it: its die event follows) and the damage shows
-            let hitAt = Double(actor(a.actor)?.state(state)?.hitFrame ?? 0) * framePeriod(a.actor, state) + (ranged ? 0.25 : 0)
-            let attackTime = max(0.2, stateDuration(a.actor, state, a.facing))
-            t.facing = Battle.facing(dx: ac.0 - tc.0, dy: ac.1 - tc.1)
-            let flinchTime = left > 0 ? stateDuration(t.actor, "flinch", t.facing) : 0
-            hits.append((target: target, at: now.addingTimeInterval(hitAt), left: left))
-            playing = Anim(event: e, started: now, duration: max(attackTime, hitAt + flinchTime))
-            blowMessages(damage: dmg, killed: killed, at: tc, since: now.addingTimeInterval(hitAt))
-            pendingCount.append((target, left, now.addingTimeInterval(hitAt)))
+        case .melee, .shoot:
+            var duration = startBlow(e, now: now)
+            // a simultaneous exchange: the answering blow starts at the same moment
+            while case .together? = queue.first {
+                queue.removeFirst()
+                guard let next = queue.first else { break }
+                queue.removeFirst()
+                duration = max(duration, startBlow(next, now: now))
+            }
+            playing = Anim(event: e, started: now, duration: duration)
+        case .together:
+            break
         case .die(let id):
             pendingDeaths.remove(id)
             dying.insert(id)
@@ -291,13 +286,13 @@ final class CombatScreen {
             let name = good ? "spiritual fervor" : "sorrow"
             effects.append((name, id, now))
             let u = b.unit(id)
-            floaters.append((strings[good ? "combat_action.good_morale" : "combat_action.bad_morale"] ?? (good ? "Good Morale" : "Bad Morale"), u.centre.0, u.centre.1, now, nil, 0))
+            floaters.append((strings[good ? "combat_action.good_morale" : "combat_action.bad_morale"] ?? (good ? "Good Morale" : "Bad Morale"), u.centre.0, u.centre.1, now, nil, 0, false))
             playing = Anim(event: e, started: now, duration: effectDuration(name))
         case .effect(let id, let name, let dmg, let killed, let left):
             if effectSprite(name) != nil { effects.append((name, id, now)) }
             let c = shownCentre(b.unit(id))
             shownCount[id] = left
-            blowMessages(damage: dmg, killed: killed, at: c, since: now)
+            blowMessages(damage: dmg, killed: killed, at: c, since: now, side: b.unit(id).side)
             playing = Anim(event: e, started: now, duration: min(1.2, effectSprite(name) != nil ? effectDuration(name) : 0.4))
         case .wait, .newRound:
             break
@@ -322,12 +317,39 @@ final class CombatScreen {
 
     var busy: Bool { playing != nil || !queue.isEmpty }
 
+    /// Start a blow's animation; returns how long it lasts. The blow lands on the attack state's hit
+    /// frame (combat_actor): the target turns to the attacker and flinches then (unless it dies of
+    /// it), its count and the damage show then.
+    func startBlow(_ e: Battle.Event, now: Date) -> Double {
+        guard let b = battle else { return 0 }
+        let id: Int, target: Int, dmg: Int, killed: Int, left: Int, ranged: Bool
+        switch e {
+        case .melee(let i, let t, let d, let k, let l): (id, target, dmg, killed, left, ranged) = (i, t, d, k, l, false)
+        case .shoot(let i, let t, let d, let k, let l): (id, target, dmg, killed, left, ranged) = (i, t, d, k, l, true)
+        default: return 0
+        }
+        let a = b.unit(id), t = b.unit(target)
+        let ac = shownCentre(a), tc = shownCentre(t)
+        a.facing = Battle.facing(dx: tc.0 - ac.0, dy: tc.1 - ac.1)
+        let state = ranged ? "ranged" : "melee"
+        unitState[id] = (state, now, true)
+        let hitAt = Double(actor(a.actor)?.state(state)?.hitFrame ?? 0) * framePeriod(a.actor, state) + (ranged ? 0.25 : 0)
+        let attackTime = max(0.2, stateDuration(a.actor, state, a.facing))
+        let flinchTime = left > 0 ? stateDuration(t.actor, "flinch", t.facing) : 0
+        hits.append((target: target, at: now.addingTimeInterval(hitAt), left: left))
+        blowMessages(damage: dmg, killed: killed, at: tc, since: now.addingTimeInterval(hitAt), side: t.side)
+        pendingCount.append((target, left, now.addingTimeInterval(hitAt)))
+        return max(attackTime, hitAt + flinchTime)
+    }
+
     /// Blows waiting for their hit frame: the target flinches and its count drops then.
     var hits: [(target: Int, at: Date, left: Int)] = []
     var pendingCount: [(unit: Int, left: Int, at: Date)] = []
     func landHits(_ now: Date) {
         for h in hits where h.at <= now {
-            if h.left > 0, !dying.contains(h.target) { unitState[h.target] = ("flinch", now, true) }
+            // a unit swinging its own blow (a simultaneous exchange) is not cut short by a flinch
+            let busySwinging = ["melee", "ranged"].contains(unitState[h.target]?.state ?? "")
+            if h.left > 0, !dying.contains(h.target), !busySwinging { unitState[h.target] = ("flinch", now, true) }
         }
         hits.removeAll { $0.at <= now }
         for p in pendingCount where p.at <= now { shownCount[p.unit] = p.left }

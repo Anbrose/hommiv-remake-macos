@@ -101,4 +101,22 @@ final class BattleAbilityTests: XCTestCase {
         // diagonally out of the zone costs 1 + 1.5
         XCTAssertEqual(reach[Battle.key(50, 51)], 2.5)
     }
+
+    /// Without First Strike both strike at once (0x56ef40): a target killed by the blow still
+    /// strikes back with the stack it had; its death comes after its blow.
+    func testSimultaneousExchange() {
+        let field = Battlefield(terrain: 1, variant: 0, kinds: [], frequency: [:], adjacency: [:], seed: 1)
+        let a = Battle.Fighter(stats: stack(creature("squire", hp: 100, low: 100, high: 100, attack: 30), 5), keyword: "squire", actor: "squire", size: 2, move: 60, shots: 0)
+        let d = Battle.Fighter(stats: stack(creature("peasant", hp: 1, low: 10, high: 10, speed0: true), 10), keyword: "peasant", actor: "peasant", size: 2, move: 1, shots: 0)
+        let b = Battle(field: field, attackers: [a], defenders: [d], seed: 5)
+        _ = b.takeEvents()
+        let u = b.units.first { $0.side == 0 }!, t = b.units.first { $0.side == 1 }!
+        XCTAssertTrue(b.attack(t.id))
+        XCTAssertFalse(t.alive)
+        XCTAssertLessThan(u.stats.totalHealth, 500)      // the peasants still struck back
+        let kinds = b.takeEvents().compactMap { e -> String? in
+            switch e { case .melee: return "melee"; case .together: return "together"; case .die: return "die"; default: return nil }
+        }
+        XCTAssertEqual(Array(kinds.prefix(4)), ["melee", "together", "melee", "die"])
+    }
 }

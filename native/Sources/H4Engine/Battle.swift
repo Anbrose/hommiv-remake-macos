@@ -64,6 +64,8 @@ public final class Battle {
         case effect(unit: Int, name: String, damage: Int, killed: Int, left: Int)
         case defend(unit: Int)
         case wait(unit: Int)
+        /// The next blow starts together with the one before it (a simultaneous melee exchange).
+        case together
         case newRound(Int)
         case finished(attackerWon: Bool)
     }
@@ -728,12 +730,31 @@ public final class Battle {
         hit(u, t, ranged: false)
         for e in extra where e.alive { hit(u, e, ranged: false, secondary: true) }
     }
+    /// The melee exchange (heroes4.exe 0x56ef40): without First Strike on either side both strike
+    /// at once (0x56e680 with the simultaneous flag) -- the target strikes back with the stack it had
+    /// before the blow, even when the blow kills it; with First Strike one side strikes first and the
+    /// other answers with what is left.
     func meleeExchange(_ u: Unit, _ t: Unit) {
         let retaliates = canRetaliate(t, against: u)
         if retaliates, strikesFirst(t, over: u) {
             t.retaliated = true
             blow(t, u)
             if u.alive { blow(u, t) }
+        } else if retaliates, !strikesFirst(u, over: t) {
+            t.retaliated = true
+            let before = t.stats
+            let mark = events.count
+            blow(u, t)
+            let after = t.stats
+            // the target's fall waits until its own blow has landed
+            let isDeath: (Event) -> Bool = { if case .die = $0 { return true }; return false }
+            let deaths = events[mark...].filter(isDeath)
+            events = Array(events[..<mark]) + events[mark...].filter { !isDeath($0) }
+            t.stats.count = before.count; t.stats.wounds = before.wounds
+            events.append(.together)
+            blow(t, u)
+            t.stats.count = after.count; t.stats.wounds = after.wounds
+            events += deaths
         } else {
             blow(u, t)
             if retaliates, canRetaliate(t, against: u) { t.retaliated = true; blow(t, u) }

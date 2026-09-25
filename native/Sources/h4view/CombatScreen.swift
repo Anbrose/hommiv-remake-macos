@@ -163,8 +163,16 @@ final class CombatScreen {
     /// Pull new events from the battle and let the defender's side act on its own.
     func pump() {
         guard let b = battle else { return }
-        queue += b.takeEvents()
-        if playing == nil, queue.isEmpty, b.finished == nil, let u = b.current, u.side == 1 || u.hypnotized { b.autoAct(); queue += b.takeEvents() }
+        take(b.takeEvents())
+        if playing == nil, queue.isEmpty, b.finished == nil, let u = b.current, u.side == 1 || u.hypnotized { b.autoAct(); take(b.takeEvents()) }
+    }
+    /// Queue new events. The battle has already moved the units, so a unit about to move is held
+    /// where it starts until its move plays (otherwise it shows at its end for a frame and jumps back).
+    func take(_ events: [Battle.Event]) {
+        for e in events {
+            if case .move(let id, _, let from, _) = e, unitPos[id] == nil, shownPos[id] == nil { shownPos[id] = (Float(from.0), Float(from.1)) }
+        }
+        queue += events
     }
 
     /// Advance the animation queue.
@@ -237,6 +245,7 @@ final class CombatScreen {
             let loopTime = stateDuration(u.actor, "walk", face)
             let walkTime = Double(loops) * (loopTime > 0 ? loopTime : Double(loop / 16) / CombatScreen.cellsPerSecond)
             moves[id] = Move(length: length / 16, preDist: preDist / 16, postDist: postDist / 16, preTime: preTime, walkTime: walkTime, postTime: postTime)
+            unitPos[id] = (Float(start.0), Float(start.1))   // from this frame on, not only from the next update
             playing = Anim(event: e, started: now, duration: preTime + walkTime + postTime)
         case .melee(let id, let target, let dmg, let killed, let left), .shoot(let id, let target, let dmg, let killed, let left):
             // the blow as it lands now: the striker turns to the target where both are shown

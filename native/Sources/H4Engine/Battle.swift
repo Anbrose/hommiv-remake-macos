@@ -54,13 +54,14 @@ public final class Battle {
     public enum Event {
         /// `path` excludes `from`; `flying` moves take off, fly straight and land (t_play_combat_flight).
         case move(unit: Int, path: [(Int, Int)], from: (Int, Int), flying: Bool)
-        case melee(unit: Int, target: Int, damage: Int, killed: Int)
-        case shoot(unit: Int, target: Int, damage: Int, killed: Int)
+        /// `left`: the creatures of the struck stack after the blow (the screen shows counts as the events play).
+        case melee(unit: Int, target: Int, damage: Int, killed: Int, left: Int)
+        case shoot(unit: Int, target: Int, damage: Int, killed: Int, left: Int)
         case die(unit: Int)
         case morale(unit: Int, good: Bool)
         /// A creature ability or its spell took hold: `name` is the spell animation
         /// (animation.spell.<name>), with any damage it did.
-        case effect(unit: Int, name: String, damage: Int, killed: Int)
+        case effect(unit: Int, name: String, damage: Int, killed: Int, left: Int)
         case defend(unit: Int)
         case wait(unit: Int)
         case newRound(Int)
@@ -228,7 +229,7 @@ public final class Battle {
         // Poison hurts at every new round until the battle ends
         for u in units where u.alive && u.poison > 0 {
             let killed = u.stats.take(u.poison)
-            events.append(.effect(unit: u.id, name: "Poison", damage: u.poison, killed: killed))
+            events.append(.effect(unit: u.id, name: "Poison", damage: u.poison, killed: killed, left: u.stats.count))
             if !u.alive { events.append(.die(unit: u.id)) }
         }
         checkEnd()
@@ -509,7 +510,8 @@ public final class Battle {
         dmg = min(dmg, before)
         let killed = b.stats.take(dmg)
         if a.side == 0 { experience += killed * b.stats.experience }
-        events.append(ranged ? .shoot(unit: a.id, target: b.id, damage: dmg, killed: killed) : .melee(unit: a.id, target: b.id, damage: dmg, killed: killed))
+        events.append(ranged ? .shoot(unit: a.id, target: b.id, damage: dmg, killed: killed, left: b.stats.count)
+                             : .melee(unit: a.id, target: b.id, damage: dmg, killed: killed, left: b.stats.count))
         if b.blind > 0 { b.blind = 0 }   // Blind breaks when the target is hurt
         if !b.alive { events.append(.die(unit: b.id)); b.boundBy = nil }
         if !secondary { aftermath(a, b, ranged: ranged, damage: dmg, healthBefore: before) }
@@ -519,7 +521,7 @@ public final class Battle {
     func effect(_ u: Unit, _ name: String, damage: Int = 0) {
         var killed = 0
         if damage > 0 { killed = u.stats.take(damage) }
-        events.append(.effect(unit: u.id, name: name, damage: damage, killed: killed))
+        events.append(.effect(unit: u.id, name: name, damage: damage, killed: killed, left: u.stats.count))
         if damage > 0, !u.alive { events.append(.die(unit: u.id)) }
     }
 
@@ -540,7 +542,7 @@ public final class Battle {
                 let total = now + gain
                 a.stats.count = (total + a.stats.hitPoints - 1) / a.stats.hitPoints
                 a.stats.wounds = a.stats.count * a.stats.hitPoints - total
-                events.append(.effect(unit: a.id, name: "Vampiric Touch", damage: 0, killed: 0))
+                events.append(.effect(unit: a.id, name: "Vampiric Touch", damage: 0, killed: 0, left: a.stats.count))
             }
         }
         guard b.alive else { return }

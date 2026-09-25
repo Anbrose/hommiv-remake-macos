@@ -156,7 +156,7 @@ final class CombatScreen {
             if let st = st, let d = t.creature(st.creature) { var f = fighter(d, st.count, army: monsterArmy); f.slot = k; defenders.append(f) }
         }
         battle = Battle(field: f, attackers: attackers, defenders: defenders, seed: seed)
-        queue = []; playing = nil; unitPos = [:]; unitState = [:]; dead = []; result = nil; showResults = false; floaters = []; effects = []
+        queue = []; playing = nil; unitPos = [:]; unitState = [:]; dead = []; dying = []; shownPos = [:]; shownCount = [:]; result = nil; showResults = false; floaters = []; effects = []
         pump()
     }
 
@@ -202,6 +202,7 @@ final class CombatScreen {
             begin(e, now: now)
         }
         if playing == nil { pump() }
+        if playing == nil, queue.isEmpty { shownPos.removeAll(); shownCount.removeAll() }
         if fidgeting == nil, now >= nextFidget {
             let waiting = b.units.filter { $0.alive && unitState[$0.id] == nil && unitPos[$0.id] == nil && !$0.disabled }
             if waiting.isEmpty { nextFidget = now.addingTimeInterval(0.5) }
@@ -237,19 +238,18 @@ final class CombatScreen {
             let walkTime = Double(loops) * (loopTime > 0 ? loopTime : Double(loop / 16) / CombatScreen.cellsPerSecond)
             moves[id] = Move(length: length / 16, preDist: preDist / 16, postDist: postDist / 16, preTime: preTime, walkTime: walkTime, postTime: postTime)
             playing = Anim(event: e, started: now, duration: preTime + walkTime + postTime)
-        case .melee(let id, let target, let dmg, let killed):
-            unitState[id] = ("melee", now, true)
-            let mu = b.unit(id)
-            playing = Anim(event: e, started: now, duration: max(0.2, stateDuration(mu.actor, "melee", mu.facing)))
-            let t = b.unit(target)
-            floaters.append(("-\(dmg)" + (killed > 0 ? " (\(killed) killed)" : ""), t.centre.0, t.centre.1, now.addingTimeInterval(0.3)))
-        case .shoot(let id, let target, let dmg, let killed):
-            unitState[id] = ("ranged", now, true)
-            let su = b.unit(id)
-            playing = Anim(event: e, started: now, duration: max(0.2, stateDuration(su.actor, "ranged", su.facing)))
-            let t = b.unit(target)
-            floaters.append(("-\(dmg)" + (killed > 0 ? " (\(killed) killed)" : ""), t.centre.0, t.centre.1, now.addingTimeInterval(0.3)))
+        case .melee(let id, let target, let dmg, let killed, let left), .shoot(let id, let target, let dmg, let killed, let left):
+            // the blow as it lands now: the striker turns to the target where both are shown
+            let ranged: Bool = { if case .shoot = e { return true }; return false }()
+            let a = b.unit(id), t = b.unit(target)
+            let ac = shownCentre(a), tc = shownCentre(t)
+            a.facing = Battle.facing(dx: tc.0 - ac.0, dy: tc.1 - ac.1)
+            unitState[id] = (ranged ? "ranged" : "melee", now, true)
+            playing = Anim(event: e, started: now, duration: max(0.2, stateDuration(a.actor, ranged ? "ranged" : "melee", a.facing)))
+            shownCount[target] = left
+            floaters.append(("-\(dmg)" + (killed > 0 ? " (\(killed) killed)" : ""), tc.0, tc.1, now.addingTimeInterval(0.3)))
         case .die(let id):
+            dying.insert(id)
             unitState[id] = ("die", now, true)
             let du = b.unit(id)
             playing = Anim(event: e, started: now, duration: max(0.2, stateDuration(du.actor, "die", du.facing)))
@@ -264,10 +264,11 @@ final class CombatScreen {
             let u = b.unit(id)
             floaters.append((strings[good ? "combat_action.good_morale" : "combat_action.bad_morale"] ?? (good ? "Good Morale" : "Bad Morale"), u.centre.0, u.centre.1, now))
             playing = Anim(event: e, started: now, duration: effectDuration(name))
-        case .effect(let id, let name, let dmg, let killed):
+        case .effect(let id, let name, let dmg, let killed, let left):
             if effectSprite(name) != nil { effects.append((name, id, now)) }
-            let u = b.unit(id)
-            if dmg > 0 { floaters.append(("-\(dmg)" + (killed > 0 ? " (\(killed) killed)" : ""), u.centre.0, u.centre.1, now)) }
+            let c = shownCentre(b.unit(id))
+            shownCount[id] = left
+            if dmg > 0 { floaters.append(("-\(dmg)" + (killed > 0 ? " (\(killed) killed)" : ""), c.0, c.1, now)) }
             playing = Anim(event: e, started: now, duration: min(1.2, effectSprite(name) != nil ? effectDuration(name) : 0.4))
         case .wait, .newRound:
             break
@@ -278,9 +279,12 @@ final class CombatScreen {
     }
     func finish(_ e: Battle.Event) {
         switch e {
-        case .move(let id, _, _, _): unitPos[id] = nil; unitState[id] = nil; moves[id] = nil
-        case .melee(_, let target, _, _), .shoot(_, let target, _, _):
-            if let b = battle, b.unit(target).alive { unitState[target] = ("flinch", Date(), true) }
+        case .move(let id, let path, _, _):
+            // it stays where this move ended until the queue has played out (the battle may already have moved it on)
+            if let last = path.last { shownPos[id] = (Float(last.0), Float(last.1)) }
+            unitPos[id] = nil; unitState[id] = nil; moves[id] = nil
+        case .melee(_, let target, _, _, let left), .shoot(_, let target, _, _, let left):
+            if left > 0 { unitState[target] = ("flinch", Date(), true) }
         case .die(let id): dead.insert(id)
         case .finished: showResults = true
         default: break
@@ -288,6 +292,17 @@ final class CombatScreen {
     }
 
     var busy: Bool { playing != nil || !queue.isEmpty }
+
+    /// What the screen shows while the queue plays: the battle has already resolved the whole
+    /// action, so positions, stack sizes and deaths follow the events as they are played.
+    var shownPos: [Int: (Float, Float)] = [:]
+    var shownCount: [Int: Int] = [:]
+    var dying: Set<Int> = []
+    func shownAlive(_ u: Battle.Unit) -> Bool { !dying.contains(u.id) && !dead.contains(u.id) && (u.alive || busy) }
+    func shownCentre(_ u: Battle.Unit) -> (Float, Float) {
+        let p = unitPos[u.id] ?? shownPos[u.id] ?? (Float(u.x), Float(u.y))
+        return (p.0 + Float(u.size) / 2, p.1 + Float(u.size) / 2)
+    }
 
     /// The move being played: its length and the part each phase covers (cells) and lasts (s).
     struct Move { var length, preDist, postDist: Float; var preTime, walkTime, postTime: Double }

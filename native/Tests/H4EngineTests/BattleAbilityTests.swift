@@ -4,9 +4,9 @@ import XCTest
 /// Ability rules read from heroes4.exe (damage 0x5ee380 / 0x5ee990, aftermath 0x553440).
 final class BattleAbilityTests: XCTestCase {
     func creature(_ keyword: String, level: Int = 1, alignment: String = "might", hp: Int = 10, low: Int = 2, high: Int = 2,
-                  attack: Int = 10, defense: Int = 10, shots: Int = 0) -> CreatureDef {
+                  attack: Int = 10, defense: Int = 10, shots: Int = 0, speed0: Bool = false) -> CreatureDef {
         CreatureDef(keyword: keyword, name: keyword, plural: keyword, level: level, alignment: alignment, hitPoints: hp, damageLow: low, damageHigh: high,
-                    attack: attack, defense: defense, move: 10, speed: 5, growth: 1, gold: 1, experience: 1, shots: shots, spellPoints: 0,
+                    attack: attack, defense: defense, move: 10, speed: speed0 ? 1 : 5, growth: 1, gold: 1, experience: 1, shots: shots, spellPoints: 0,
                     shortHelp: "", longHelp: "")
     }
     func stack(_ c: CreatureDef, _ n: Int) -> Combatant { Combatant(creature: c, count: n) }
@@ -66,5 +66,22 @@ final class BattleAbilityTests: XCTestCase {
             b.autoResolve()
             XCTAssertNotNil(b.finished, "\(kinds[seed]) battle did not finish")
         }
+    }
+
+    /// A harpy's attack plays: fly there, strike, the target dies, fly back.
+    func testStrikeAndReturnOrder() {
+        let field = Battlefield(terrain: 1, variant: 0, kinds: [], frequency: [:], adjacency: [:], seed: 1)
+        let harpy = Battle.Fighter(stats: stack(creature("harpy", hp: 20, low: 50, high: 50, attack: 30), 10), keyword: "harpy", actor: "harpy", size: 3, move: 60, shots: 0)
+        let peasant = Battle.Fighter(stats: stack(creature("peasant", hp: 1, speed0: true), 1), keyword: "peasant", actor: "peasant", size: 3, move: 1, shots: 0)
+        let b = Battle(field: field, attackers: [harpy], defenders: [peasant], seed: 3)
+        _ = b.takeEvents()
+        let h = b.units.first { $0.side == 0 }!, t = b.units.first { $0.side == 1 }!
+        let start = (h.x, h.y)
+        XCTAssertTrue(b.attack(t.id))
+        let kinds = b.takeEvents().compactMap { e -> String? in
+            switch e { case .move: return "move"; case .melee: return "melee"; case .die: return "die"; default: return nil }
+        }
+        XCTAssertEqual(Array(kinds.prefix(4)), ["move", "melee", "die", "move"])
+        XCTAssertTrue(h.x == start.0 && h.y == start.1)
     }
 }

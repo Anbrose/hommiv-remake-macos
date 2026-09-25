@@ -72,7 +72,8 @@ extension Renderer {
             drawn.append((py - 1, q))
         }
         for u in b.units where u.alive || !cs.dead.contains(u.id) {
-            let pos = cs.unitPos[u.id] ?? (Float(u.x), Float(u.y))
+            let pos = cs.unitPos[u.id] ?? cs.shownPos[u.id] ?? (Float(u.x), Float(u.y))
+            let shownAlive = cs.shownAlive(u)
             // the actor's origin is the footprint's centre
             let (px, py) = CombatScreen.point(pos.0 + Float(u.size) / 2, pos.1 + Float(u.size) / 2)
             var q: [Quad] = []
@@ -80,7 +81,7 @@ extension Renderer {
                 q.append(Quad(texture: texture(for: fr, of: "active_shadow"), x: Int(px + Float(ring.origin.x + Int32(fr.box.left)) * sc), y: Int(py + Float(ring.origin.y + Int32(fr.box.top)) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc)))
             }
             let st = cs.unitState[u.id]
-            let state = st?.state ?? (u.alive ? "wait" : "die")
+            let state = st?.state ?? (shownAlive ? "wait" : "die")
             if let (s, entry) = combatSprite(cs, actor: u.actor, state: state, facing: u.facing) {
                 let tl = s.timeline
                 var frame = s.frames.first, shadow = frame.flatMap { s.shadow(for: $0) }
@@ -97,13 +98,13 @@ extension Renderer {
                     }
                     let e = tl[index]; frame = e.frame; shadow = e.shadow
                 }
-                if !u.alive, cs.dead.contains(u.id), let last = tl.last { frame = last.frame; shadow = last.shadow }
+                if !shownAlive, cs.dead.contains(u.id), let last = tl.last { frame = last.frame; shadow = last.shadow }
                 let ox = px + Float(s.origin.x) * sc, oy = py + Float(s.origin.y) * sc
                 if let sh = shadow { q.append(Quad(texture: texture(for: sh, of: entry), x: Int(ox + Float(sh.box.left) * sc), y: Int(oy + Float(sh.box.top) * sc), w: Int(Float(sh.bitmap.width) * sc), h: Int(Float(sh.bitmap.height) * sc))) }
                 if let fr = frame { q.append(Quad(texture: texture(for: fr, of: entry), x: Int(ox + Float(fr.box.left) * sc), y: Int(oy + Float(fr.box.top) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc))) }
                 // the label above the head: a waving banner in the owner's colour with the stack
                 // size, the acting unit's taller "selected" one; heroes show health and mana bars
-                if u.alive, let sheet = cs.labels(u.side == 0 ? AdventureUI.playerColourNames[0].lowercased() : "gray") {
+                if shownAlive, let sheet = cs.labels(u.side == 0 ? AdventureUI.playerColourNames[0].lowercased() : "gray") {
                     let selected = b.current?.id == u.id && cs.result == nil
                     let k = Int(now.timeIntervalSince1970 * 8) % (selected ? 8 : 4) + 1
                     if let l = sheet[selected ? "selected_\(k)" : "frame_\(k)"] {
@@ -119,14 +120,14 @@ extension Renderer {
                             if hf > 0 { q.append(Quad(texture: uiTexture("label|health|hb", { hb.bitmap }), x: bx + hb.x, y: by + hb.y, w: Int(Float(hb.width) * hf), h: hb.height)) }
                             q.append(Quad(texture: uiTexture("label|health|mb", { mb.bitmap }), x: bx + mb.x, y: by + mb.y, w: mb.width / 2, h: mb.height))
                         } else {
-                            let count = String(u.stats.count)
+                            let count = String(cs.shownCount[u.id] ?? u.stats.count)
                             let w = ui.numberFont.measure(count)
                             q.append(Quad(texture: uiTexture("count|\(count)|dark", { ui.numberFont.render(count, colour: (40, 24, 8)) }), x: boxX + (boxW - w) / 2, y: boxY + (boxH - ui.numberFont.size) / 2, w: w, h: ui.numberFont.size))
                         }
                     }
                 }
             }
-            drawn.append((py + (u.alive ? 0 : -1000), q))
+            drawn.append((py + (shownAlive ? 0 : -1000), q))
         }
         for (_, q) in drawn.sorted(by: { $0.0 < $1.0 }) { out += q }
         // spell-style effects over units: the frame canvas centred on the unit, its bottom at the feet

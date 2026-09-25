@@ -155,9 +155,9 @@ public struct Battlefield {
             let kind = options[rng.next() % options.count]
             var x = rng.next() % n, y = rng.next() % n
             if cluster, let l = last { x = l.x + rng.next() % (l.w + kind.w + 2) - kind.w - 1; y = l.y + rng.next() % (l.h + kind.h + 2) - kind.h - 1 }
-            let (sx, sy) = Battlefield.screen(Float(x), Float(y))
-            if sx < 380 && sy > 560 { continue }     // the deployment corners stay clear
-            if sx > 800 && sy < 460 { continue }
+            // the deployment cells of every land formation stay clear
+            func inZone(_ x0: Int, _ x1: Int, _ y0: Int, _ y1: Int) -> Bool { x + kind.w > x0 && x <= x1 && y + kind.h > y0 && y <= y1 }
+            if kind.blocks && (inZone(72, 95, 47, 82) || inZone(14, 37, 28, 63)) { continue }
             var ok = true
             for i in 0..<kind.w { for j in 0..<kind.h where !Battlefield.onField(x + i, y + j) || (kind.blocks && blocked[(x + i) * n + y + j]) { ok = false } }
             guard ok else { continue }

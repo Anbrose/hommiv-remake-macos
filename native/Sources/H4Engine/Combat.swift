@@ -14,6 +14,8 @@ public struct Combatant {
     public var shooter = false          // has shots: its melee attack is halved unless it has "No Melee Penalty"
     public var noMeleePenalty = false
     public var defending = false        // Defend doubles the defense until the next turn
+    /// Morale from the army's sources (heroes4.exe keeps two, +0xae8 and +0xaec on the combat creature).
+    public var morale = 0
     /// Abilities from the creature table's Short Help Text ("First Strike", "No Retaliation", ...), lower-cased.
     public var abilities: Set<String> = []
     public func has(_ ability: String) -> Bool { abilities.contains(ability.lowercased()) }

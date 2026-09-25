@@ -109,8 +109,8 @@ final class CombatScreen {
         // a hero moves 24 cells (heroes4.exe: 2400 movement, 100 a cell) at Speed 6 plus skill bonuses
         var heroStats = Combatant(hero: h.name, level: h.level)
         heroStats.speed = 6
-        var attackers = [Battle.Fighter(stats: heroStats, keyword: h.keyword, actor: classActor, size: actor(classActor)?.size ?? 4, move: 24, shots: 0)]
-        for s in h.army { if let cd = t.creature(s.creature) { attackers.append(fighter(cd, s.count)) } }
+        var attackers = [Battle.Fighter(stats: heroStats, keyword: h.keyword, actor: classActor, size: actor(classActor)?.size ?? 4, move: 24, shots: 0, slot: 0)]
+        for (k, s) in h.army.enumerated() { if let cd = t.creature(s.creature) { var f = fighter(cd, s.count); f.slot = k + 1; attackers.append(f) } }
         let defenders = [fighter(c, g.monsters[i].count)]
         battle = Battle(field: f, attackers: attackers, defenders: defenders, seed: seed)
         queue = []; playing = nil; unitPos = [:]; unitState = [:]; dead = []; result = nil; showResults = false; floaters = []
@@ -175,7 +175,7 @@ final class CombatScreen {
         case .defend(let id):
             unitState[id] = ("block", now, true)
             playing = Anim(event: e, started: now, duration: 0.3)
-        case .wait, .newRound:
+        case .wait, .newRound, .morale:
             break
         case .finished(let won):
             result = (won, b.round)

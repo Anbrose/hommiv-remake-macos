@@ -17,6 +17,8 @@ public final class Battle {
         public var x: Int, y: Int             // top corner of the footprint
         public var facing: String
         public var acted = false, waited = false, defended = false, retaliated = false
+        /// Morale this round (0x5f3080 / 0x5f3710): a roll of 0...9; checked once when the unit comes up.
+        public var moraleRoll = 0, moraleChecked = false, goodMorale = false, badMorale = false
         public var alive: Bool { stats.alive }
         /// Centre of the footprint in cell units.
         public var centre: (Float, Float) { (Float(x) + Float(size) / 2, Float(y) + Float(size) / 2) }
@@ -29,8 +31,10 @@ public final class Battle {
 
     public struct Fighter {
         public var stats: Combatant; public var keyword: String; public var actor: String; public var size: Int; public var move: Int; public var shots: Int
-        public init(stats: Combatant, keyword: String, actor: String, size: Int, move: Int, shots: Int) {
-            self.stats = stats; self.keyword = keyword; self.actor = actor; self.size = size; self.move = move; self.shots = shots
+        /// The army slot (0...6) the stack sits in; it picks the deployment cell.
+        public var slot: Int
+        public init(stats: Combatant, keyword: String, actor: String, size: Int, move: Int, shots: Int, slot: Int = -1) {
+            self.stats = stats; self.keyword = keyword; self.actor = actor; self.size = size; self.move = move; self.shots = shots; self.slot = slot
         }
     }
 
@@ -40,6 +44,7 @@ public final class Battle {
         case melee(unit: Int, target: Int, damage: Int, killed: Int)
         case shoot(unit: Int, target: Int, damage: Int, killed: Int)
         case die(unit: Int)
+        case morale(unit: Int, good: Bool)
         case defend(unit: Int)
         case wait(unit: Int)
         case newRound(Int)
@@ -58,32 +63,83 @@ public final class Battle {
     public var current: Unit? { order.first.flatMap { id in units.first { $0.id == id } } }
     public func unit(_ id: Int) -> Unit { units.first { $0.id == id }! }
 
-    public init(field: Battlefield, attackers: [Fighter], defenders: [Fighter], seed: Int) {
+    /// Army formations (t_creature_array +0x2c, set by the army dialog's buttons).
+    public enum Formation: Int { case loose = 0, tight = 1, square = 2 }
+
+    /// Deployment cells, heroes4.exe 0xaae8b8 (filled by the initializer at 0x6246f0):
+    /// [formation][side][army slot] = (x, y). Formations 3 and 4 are the siege ones and 5
+    /// the ship deck; side 0 attacks from the bottom left, side 1 defends at the top right.
+    public static let deployment: [[[(Int, Int)]]] = [
+        [[(76, 51), (85, 55), (76, 60), (85, 64), (76, 69), (85, 73), (76, 78)],
+         [(33, 32), (24, 37), (33, 41), (24, 46), (33, 50), (24, 55), (33, 59)]],
+        [[(77, 54), (84, 57), (77, 61), (84, 64), (77, 68), (84, 71), (77, 75)],
+         [(32, 35), (25, 39), (32, 42), (25, 46), (32, 49), (25, 53), (32, 56)]],
+        [[(77, 57), (84, 57), (77, 64), (84, 64), (77, 71), (84, 71), (91, 64)],
+         [(32, 39), (25, 39), (32, 46), (25, 46), (32, 53), (25, 53), (18, 46)]],
+        [[(76, 51), (85, 55), (76, 60), (85, 64), (76, 69), (85, 73), (76, 78)],
+         [(43, 23), (43, 31), (43, 40), (43, 49), (43, 57), (43, 67), (43, 74)]],
+        [[(76, 51), (85, 55), (76, 60), (85, 64), (76, 69), (85, 73), (76, 78)],
+         [(43, 23), (36, 38), (43, 40), (25, 50), (43, 57), (36, 61), (43, 74)]],
+        [[(71, 41), (78, 48), (71, 48), (78, 55), (71, 55), (78, 62), (71, 62)],
+         [(31, 62), (24, 55), (31, 55), (24, 48), (31, 48), (24, 41), (31, 41)]]]
+
+    public init(field: Battlefield, attackers: [Fighter], defenders: [Fighter], seed: Int, formations: (Formation, Formation) = (.loose, .loose)) {
         self.field = field
         rng = GameRandom(seed: seed)
         var id = 0
-        // deployment: the attacker along the bottom-left edge, the defender along the top-right,
-        // in a line across the screen diagonal (world: high x / low x, spread along y)
+        // deployment (heroes4.exe 0x62df10): each army slot has its cell in the formation's
+        // table, the stack's footprint centred on it ((size - 1) / 2 back on both axes)
         for (side, list) in [(0, attackers), (1, defenders)] {
-            // the group's centre on screen, then the units spread across the screen diagonal
-            let (cx, cy) = Battlefield.world(side == 0 ? 250 : 930, side == 0 ? 760 : 270)
+            let formation = side == 0 ? formations.0 : formations.1
+            let table = Battle.deployment[formation.rawValue][side]
+            var bySlot: [Int: Int] = [:]
             for (k, f) in list.enumerated() {
-                let spread = Float(k - (list.count - 1) / 2) * 6
-                let tx = Int(cx - spread * 0.5) - f.size / 2, ty = Int(cy + spread) - f.size / 2
+                let slot = f.slot >= 0 ? f.slot : k
+                let (sx, sy) = table[min(slot, 6)]
+                let tx = sx - (f.size - 1) / 2, ty = sy - (f.size - 1) / 2
                 var placed = false
                 for r in 0..<24 where !placed {
                     for dx in -r...r { for dy in -r...r where !placed && max(abs(dx), abs(dy)) == r {
                         let x = tx + dx, y = ty + dy
                         if field.fits(x, y, size: f.size), !overlaps(x, y, f.size, except: -1) {
                             units.append(Unit(id: id, side: side, stats: f.stats, keyword: f.keyword, actor: f.actor, size: f.size, move: f.move, shots: f.shots, x: x, y: y))
+                            bySlot[slot] = units.count - 1
                             placed = true
                         }
                     } }
                 }
                 id += 1
             }
+            // tight and square close the ranks: stacks slide toward a neighbour (0x62e830)
+            func pull(_ a: Int, _ b: Int, _ limit: Int) -> Bool {
+                guard let i = bySlot[a], let j = bySlot[b] else { return false }
+                return slide(units[i], toward: units[j], limit: limit)
+            }
+            switch formation {
+            case .tight:
+                if pull(2, 4, 1) { while pull(4, 2, 1) && pull(2, 4, 1) {} }
+                _ = pull(0, 2, 100); _ = pull(6, 4, 100); _ = pull(1, 3, 100); _ = pull(5, 3, 100)
+            case .square:
+                _ = pull(2, 3, 100); _ = pull(0, 2, 100); _ = pull(4, 2, 100); _ = pull(1, 3, 100)
+                _ = pull(5, 3, 100); _ = pull(6, 3, 100); _ = pull(0, 1, 100); _ = pull(4, 5, 100)
+            case .loose: break
+            }
         }
         startRound()
+    }
+
+    /// heroes4.exe 0x62e830: the direction is the sign of the centre difference (whole cells,
+    /// truncated), fixed at the start; the stack steps that way while it still fits, at most
+    /// `limit` steps. Reports whether it moved.
+    func slide(_ m: Unit, toward t: Unit, limit: Int) -> Bool {
+        let dxw = (t.x * 16 + t.size * 8) - (m.x * 16 + m.size * 8), dyw = (t.y * 16 + t.size * 8) - (m.y * 16 + m.size * 8)
+        let dx = (dxw / 16).signum(), dy = (dyw / 16).signum()
+        guard dx != 0 || dy != 0 else { return false }
+        var steps = 0
+        while steps < limit, field.fits(m.x + dx, m.y + dy, size: m.size), !overlaps(m.x + dx, m.y + dy, m.size, except: m.id) {
+            m.x += dx; m.y += dy; steps += 1
+        }
+        return steps > 0
     }
 
     func overlaps(_ x: Int, _ y: Int, _ s: Int, except id: Int) -> Bool {
@@ -92,17 +148,51 @@ public final class Battle {
 
     func startRound() {
         round += 1
-        for u in units { u.acted = false; u.waited = false; u.defended = false; u.stats.defending = false; u.retaliated = false }
-        order = Battle.turnOrder(units.filter { $0.alive })
+        for u in units {
+            u.acted = false; u.waited = false; u.defended = false; u.retaliated = false
+            u.moraleRoll = rng.next() % 10; u.moraleChecked = false; u.goodMorale = false; u.badMorale = false
+        }
+        order = turnOrder(units.filter { $0.alive })
         events.append(.newRound(round))
+        checkMorale()
     }
 
-    /// A straight step costs 100 movement, a diagonal one 150 (heroes4.exe combat path finder 0x60d610).
-    /// The game's turn key (0x5f3110): Speed, +1000 for a unit that has not waited, so units
-    /// that wait act after everyone else, still by Speed; ties go to the attacking side.
-    static func turnOrder(_ list: [Unit]) -> [Int] {
+    /// Morale (heroes4.exe 0x5f0020): mechanical and undead creatures have none; otherwise the
+    /// army's sources, clamped to -10...10.
+    func morale(_ u: Unit) -> Int {
+        if u.stats.has("mechanical") || u.stats.has("undead") { return 0 }
+        return min(10, max(-10, u.stats.morale))
+    }
+    /// The unit coming up checks its morale once a round (0x5f3710): bad when 9 - roll < -morale,
+    /// and it falls behind everyone who kept their +1000; good when roll < morale.
+    func checkMorale() {
+        while finished == nil, let u = current, !u.moraleChecked {
+            u.moraleChecked = true
+            let m = morale(u)
+            if 9 - u.moraleRoll < -m {
+                u.badMorale = true
+                events.append(.morale(unit: u.id, good: false))
+                order = turnOrder(order.map { unit($0) })
+            } else if u.moraleRoll < m {
+                u.goodMorale = true
+                events.append(.morale(unit: u.id, good: true))
+            }
+        }
+        // a unit that defended keeps its doubled defence until its own next turn (0x567ef0)
+        current?.stats.defending = false
+    }
+
+    /// The turn key (heroes4.exe 0x5f3110): Speed, +1000 unless morale failed, +1000 for good
+    /// morale (before the check: when the roll is under the morale), and negated for a unit that
+    /// waited. The highest key acts next (0x56f3b0), so waiting units come last, slowest first.
+    func turnKey(_ u: Unit) -> Int {
+        var k = u.stats.speed + (u.badMorale ? 0 : 1000)
+        if u.moraleChecked ? u.goodMorale : u.moraleRoll < morale(u) { k += 1000 }
+        return u.waited ? -k : k
+    }
+    func turnOrder(_ list: [Unit]) -> [Int] {
         list.sorted { a, b in
-            let ka = a.stats.speed + (a.waited ? 0 : 1000), kb = b.stats.speed + (b.waited ? 0 : 1000)
+            let ka = turnKey(a), kb = turnKey(b)
             return ka != kb ? ka > kb : (a.side != b.side ? a.side < b.side : a.id < b.id)
         }.map { $0.id }
     }
@@ -212,7 +302,7 @@ public final class Battle {
         u.acted = true
         order.removeAll { $0 == u.id }
         checkEnd()
-        if finished == nil, order.isEmpty { startRound() }
+        if finished == nil, order.isEmpty { startRound() } else { checkMorale() }
     }
 
     func checkEnd() {
@@ -305,10 +395,11 @@ public final class Battle {
     }
 
     public func wait() {
-        guard finished == nil, let u = current, !u.waited else { defend(); return }
+        guard finished == nil, let u = current, !u.waited else { return }   // once a round: the flag clears only at the next round (0x5ed400)
         u.waited = true
         events.append(.wait(unit: u.id))
-        order = Battle.turnOrder(order.map { unit($0) })
+        order = turnOrder(order.map { unit($0) })
+        checkMorale()
     }
 
     /// A simple opponent: shooters shoot the most dangerous enemy, others attack what they can

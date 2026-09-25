@@ -211,6 +211,8 @@ public final class Hero {
     // defense, speed and spell points; the Dream Teachers visited at +0x7a0)
     public var attackBonus = 0, defenseBonus = 0, speedBonus = 0, spellPointBonus = 0
     public var dreamTeachers = 0
+    /// The spells the hero knows (spell ids, RuleTables.spells; heroes4.exe's bitset at hero+0x780).
+    public var spells: Set<Int> = []
     /// Spell points now (nil: full), and the percent mana sources restored today (hero+0x7e8).
     public var spellPoints: Int? = nil
     public var manaRestoredToday = 0
@@ -296,6 +298,12 @@ public final class GameState {
     public var usedArtifacts: Set<Int> = []
     /// A yes/no question an object asks (the UI shows it; yes runs the action).
     public var question: (text: String, yes: () -> Void)?
+    /// A choice an object offers: the question, the options, what picking one does.
+    public var choice: (text: String, options: [String], pick: (Int) -> Void)?
+    /// The keymaster tents' keys the player has (by colour subtype).
+    public var keys: Set<String> = []
+    /// A hero went through a portal (the view should follow).
+    public var jumped = false
     /// The marketplace to open (its rate class: 3 the panel's Marketplace, 2 a Trading Post).
     public var marketOpen: Int?
     /// Things that happened this frame, for the UI (e.g. "picked up Resources.Gold").
@@ -707,6 +715,7 @@ public final class GameState {
         let h = lu.hero, e = lu.offer[k]
         h.level += 1
         h.learn(e.skill, level: e.level)
+        h.grantSchoolSpells(random: &random)
         h.reconsiderClass()
         let k2 = RuleTables.skillIds[e.skill], lv = RuleTables.skillLevelNames[e.level]
         log.append("\(h.name) reaches level \(h.level): \(tables?.skillTexts["\(k2)_\(lv)"]?.name ?? k2)")

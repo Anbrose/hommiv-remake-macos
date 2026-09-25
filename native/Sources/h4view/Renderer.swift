@@ -132,6 +132,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     var armyPopup: ArmyPopup? = nil        // the right-click window of an army
     var levelUpChoice: Int? = nil          // the offer picked in the level-up dialog
     var overview: KingdomOverview? = nil  // the kingdom overview, when open
+    var choicePicked: Int? = nil          // the option chosen in an object's choice
+    var market: MarketState? = nil         // the marketplace, when open
     var heroShown = 0                     // which of the army's heroes the hero screen shows
     var floaters: [(text: String, x: Int, y: Int, since: Date)] = []
     var buildPage = 0
@@ -616,7 +618,9 @@ final class Renderer: NSObject, MTKViewDelegate {
         out += adventureDialogQuads()
         out += armyPopupQuads()
         out += overviewQuads()
+        out += marketQuads()
         out += levelUpQuads()
+        out += choiceQuads()
         out += messageBoxQuads()
         out += saveDialogQuads()
         out += menuQuads()

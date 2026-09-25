@@ -138,6 +138,25 @@ extension Hero {
         setLv(s, l)
     }
 
+    /// A spell the hero can learn and cast: its school's skill at least the spell's level (basic
+    /// for level 1 ... grandmaster for level 5; heroes4.exe 0x72dd30).
+    public func canLearn(_ spell: Int) -> Bool {
+        guard spell < RuleTables.spells.count else { return false }
+        let s = RuleTables.spells[spell]
+        return s.schoolSkill >= 0 && skill(id: s.schoolSkill) >= s.level && s.level > 0
+    }
+    /// Learning a magic school gives one of its first spells when the hero knows none of them
+    /// (0x730a30's grants: chaos Bloodlust, Sparks, Fire Aura, Haste, Magic Arrow; death Curse,
+    /// Poison, Raise Skeletons, Disrupting Ray; life Bind Wound, Bless, Spiritual Armor; nature
+    /// Speed, Stoneskin, the three summons; order Blur, Precision, Magic Fist).
+    static let schoolGrants: [(school: Int, spells: [Int])] = [(7, [13, 14, 44, 55, 71]), (6, [23, 111, 125, 128]), (4, [8, 10, 58]),
+                                                                  (8, [104, 151, 169, 173, 177]), (5, [109, 115, 72])]
+    public func grantSchoolSpells(random rng: inout H4Random) {
+        for g in Hero.schoolGrants where skill(id: g.school) > 0 && !g.spells.contains(where: spells.contains) {
+            spells.insert(g.spells[rng.next() % g.spells.count])
+        }
+    }
+
     /// The level-up pick without the dialog (0x72bca0): Combat up to a third of the level,
     /// then Resistance up to a sixth, else one of the offers at random. `lvl` is the level before.
     static func autoPick(_ offer: [(skill: Int, level: Int)], level lvl: Int, _ rng: inout H4Random) -> (skill: Int, level: Int)? {
@@ -159,7 +178,7 @@ extension Hero {
             let offer = levelUpOffer(weights: w, random: &rng)
             let pick = Hero.autoPick(offer, level: level, &rng)
             level += 1
-            if let p = pick { learn(p.skill, level: p.level); learned.append(p.skill) }
+            if let p = pick { learn(p.skill, level: p.level); learned.append(p.skill); grantSchoolSpells(random: &rng) }
         }
         return learned
     }
@@ -221,6 +240,9 @@ extension Hero {
         } else {
             for s in def.skills { h.learn(s, level: 0) }
         }
+        // the spells the map gives (a bitset over the spell ids), then the schools' first spells
+        for (i, b) in m.spells.enumerated() { for bit in 0..<8 where b & (1 << bit) != 0 && i * 8 + bit < RuleTables.spells.count { h.spells.insert(i * 8 + bit) } }
+        h.grantSchoolSpells(random: &rng)
         let known = (0..<36).filter { h.lv($0) >= 0 }
         let start = min(40, 1 + known.reduce(0) { $0 + h.lv($1) + 1 } - def.skills.count)
         let preset = max(1, min(70, m.level))

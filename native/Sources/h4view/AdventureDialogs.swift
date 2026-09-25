@@ -37,6 +37,8 @@ extension Renderer {
         if g.chestOffer != nil, adventureDialog == nil { adventureDialog = .chest }
         // an object's yes/no question (a vein, the Tree of Knowledge) in the message box
         if let q = g.question, prompt == nil { prompt = (q.text, true, q.yes); g.question = nil }
+        if let k = g.marketOpen { market = MarketState(k: k); g.marketOpen = nil }
+        if g.jumped, let h = g.heroes.first { g.jumped = false; centre(onCell: (h.x, h.y)) }
     }
     func floaterQuads() -> [Quad] {
         guard let ui = ui else { return [] }

@@ -15,6 +15,10 @@ public struct ObjectState: Codable {
     public var used = false
     /// A weekly generator's own material (its payouts may be gold instead).
     public var baseMaterial = 0
+    /// Skills a teacher or school teaches, a shrine's spell, a tunnel's partner ("level|x|y").
+    public var skills: [Int] = []
+    public var spell: Int? = nil
+    public var partner: String? = nil
 }
 
 extension GameState {
@@ -27,7 +31,9 @@ extension GameState {
 
     /// A table.Adventure Object text with its placeholders filled.
     func objectText(_ p: MapScene.Placed, _ key: String, _ subs: [String: String] = [:]) -> String? {
-        guard var t = tables?.objectText(p.type, p.subtype, key) else { return nil }
+        // a random_* object speaks with its resolved kind's texts
+        let base = p.type.hasPrefix("random_") ? String(p.type.dropFirst(7)) : p.type
+        guard var t = tables?.objectText(p.type, p.subtype, key) ?? tables?.objectText(base, p.subtype, key) ?? tables?.objectText(base, "", key) else { return nil }
         var all = subs
         if all["%object_name"] == nil { all["%object_name"] = tables?.objectText(p.type, p.subtype, "name") ?? p.type }
         for (k, v) in all.sorted(by: { $0.key.count > $1.key.count }) { t = t.replacingOccurrences(of: k, with: v) }
@@ -98,6 +104,7 @@ extension GameState {
             for p in scene.placed { setupObject(p) }
         }
         level = playing
+        linkTunnels()
     }
     static let pileMaterial = ["gold_pile": 0, "wood_pile": 1, "ore_pile": 2, "crystal_pile": 3, "sulfur_pile": 4, "pot_of_mecury": 5, "gem_pile": 6]
     static func pileMaterial(ofModel name: String) -> Int? {
@@ -142,6 +149,8 @@ extension GameState {
             rollStock(&st, material: m)
         case "tree_of_knowledge":
             st.price = random.next() & 1
+        case "teacher", "random_teacher", "school", "shrine", "random_shrine":
+            setupTeaching(p, &st)
         default:
             return
         }
@@ -196,7 +205,10 @@ extension GameState {
                                           "random_weekly_material_generator", "vein", "academy", "arena", "training_grounds", "mercenary_camp",
                                           "sacred_grove", "sphinx", "magic_gem", "mana_recharger", "fountain", "clover_field", "faerie_ring",
                                           "oyster", "dolphin_school", "rainbow", "buoy", "blattner_stone", "idol_of_fortune", "movement_booster",
-                                          "pathfinder", "tree_of_knowledge", "temple", "random_temple", "trading_post"]
+                                          "pathfinder", "tree_of_knowledge", "temple", "random_temple", "trading_post",
+                                          "teacher", "random_teacher", "school", "shrine", "random_shrine", "subterranean_gate", "gateway",
+                                          "teleporter_entrance", "teleporter_exit", "whirlpool", "keymaster_tent", "border_gate", "border_guard",
+                                          "tower", "cartographer", "obelisk", "lighthouse"]
     public func hasVisit(_ p: MapScene.Placed) -> Bool { GameState.visitTypes.contains(p.type) }
 
     func remove(_ p: MapScene.Placed) {
@@ -325,6 +337,9 @@ extension GameState {
             dialogueSound(11)
         case "trading_post":
             marketOpen = 2; dialogueSound(9)
+        case "teacher", "random_teacher", "school", "shrine", "random_shrine", "subterranean_gate", "gateway", "teleporter_entrance",
+             "teleporter_exit", "whirlpool", "keymaster_tent", "border_gate", "border_guard", "tower", "cartographer", "obelisk", "lighthouse":
+            return visitMore(hero, p, &st)
         default:
             return false
         }

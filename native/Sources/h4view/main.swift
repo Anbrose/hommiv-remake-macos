@@ -217,7 +217,8 @@ if ProcessInfo.processInfo.environment["H4VISITALL"] != nil, let h = game.heroes
         let diff = game.resources.filter { $0.value != before[$0.key] }.map { "\($0.key) \($0.value - (before[$0.key] ?? 0))" }
         print("== \(p.type).\(p.subtype) at (\(p.cellX),\(p.cellY)): \(diff) floaters \(game.floaters.map { $0.text }) level \(lv)->\(h.level) q \(game.question?.text.prefix(60) ?? "-") chest \(game.chestOffer.map { "\($0.gold)/\($0.experience)" } ?? "-")")
         for m in game.scripts.messages { print("   \(m.prefix(150))") }
-        game.question = nil; game.chestOffer = nil
+        if let c = game.choice { print("   choice: \(c.text.prefix(80)) -> \(c.options)") }
+        game.question = nil; game.chestOffer = nil; game.choice = nil
     }
     print("resources now \(game.resources)")
     print("hero: atk+\(h.attackBonus) def+\(h.defenseBonus) spd+\(h.speedBonus) sp+\(h.spellPointBonus) exp \(h.experience) luck \(h.armyLuck) morale \(h.armyMorale) temple \(h.templeAlignment ?? "-") backpack \(h.backpack.map { game.artifactName($0) })")
@@ -277,6 +278,7 @@ if let out = snapshot {
     if let n = ProcessInfo.processInfo.environment["H4LEVELUP"].flatMap({ Int($0) }), let h = game.heroes.first {   // snapshot: the level-up dialog
         game.giveExperience(n, to: h); renderer.levelUpChoice = 0
     }
+    if ProcessInfo.processInfo.environment["H4MARKET"] != nil { renderer.market = MarketState(k: 3, sell: 1, buy: 0, lots: 5) }   // snapshot: the marketplace
     if let m = ProcessInfo.processInfo.environment["H4OVERVIEW"] { renderer.overview = KingdomOverview(mode: m == "heroes" ? .heroes : .towns) }   // snapshot: the kingdom overview
     if let k = ProcessInfo.processInfo.environment["H4ARMYPOPUP"].flatMap({ Int($0) }) { renderer.armyPopup = ArmyPopup(hero: 0, selected: k) }   // snapshot: the right-click window
     if openChest, let h = game.heroes.first { game.chestOffer = (h, 1500, 1000); renderer.adventureDialog = .chest; renderer.chestChoice = true }
@@ -495,7 +497,9 @@ final class MapView: MTKView {
         if renderer.menuClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale) { return }
         if renderer.saveDialogClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale, double: e.clickCount >= 2) { return }
         if renderer.messageBoxClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale) { return }   // a script message: only OK
+        if renderer.choiceClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale, double: e.clickCount >= 2) { return }
         if renderer.levelUpClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale, double: e.clickCount >= 2) { return }
+        if renderer.market != nil { renderer.marketClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.overview != nil { renderer.overviewClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.armyPopup != nil { renderer.armyPopupClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.popup != nil {   // an open right-click box: a left click outside it closes it, and does nothing else
@@ -523,6 +527,7 @@ final class MapView: MTKView {
                 else if ui.hit("Game_menu_button", x: cx, y: cy) { renderer.openGameMenu() }
                 else if ui.hit("move_army_button", x: cx, y: cy) { g.continueMoving(hero) }   // the horse: go on along the kept route
                 else if ui.hit("overview_button", x: cx, y: cy) { renderer.overview = KingdomOverview() }
+                else if ui.hit("Marketplace_button", x: cx, y: cy) { renderer.market = MarketState(k: 3) }
                 else if (ui.hit("underground_button", x: cx, y: cy) || ui.hit("surface_button", x: cx, y: cy)), g.map.levels > 1 {
                     g.level = 1 - g.level   // look at the other level (the hero stays where he is)
                 }

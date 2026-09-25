@@ -48,6 +48,7 @@ public struct SaveGame: Codable {
         public var bonuses: [Int]?          // attack, defense, speed, spell points, dream teachers, spell points now (-1 full), mana today
         public var visitedObjects: [String]?, fountainEffects: [String]?, timedEffects: [String: Int]?
         public var armyLuck: [String: Int]?, armyMorale: [String: Int]?, templeAlignment: String?
+        public var spells: [Int]?
     }
     public struct TownState: Codable {
         public var x, y: Int
@@ -168,6 +169,7 @@ extension SaveGame {
         st.bonuses = [h.attackBonus, h.defenseBonus, h.speedBonus, h.spellPointBonus, h.dreamTeachers, h.spellPoints ?? -1, h.manaRestoredToday]
         st.visitedObjects = Array(h.visitedObjects).sorted(); st.fountainEffects = Array(h.fountainEffects).sorted(); st.timedEffects = h.timedEffects
         st.armyLuck = h.armyLuck; st.armyMorale = h.armyMorale; st.templeAlignment = h.templeAlignment
+        st.spells = Array(h.spells).sorted()
         return st
     }
     static func hero(from st: HeroState) -> Hero {
@@ -187,6 +189,7 @@ extension SaveGame {
         }
         h.visitedObjects = Set(st.visitedObjects ?? []); h.fountainEffects = Set(st.fountainEffects ?? []); h.timedEffects = st.timedEffects ?? [:]
         h.armyLuck = st.armyLuck ?? [:]; h.armyMorale = st.armyMorale ?? [:]; h.templeAlignment = st.templeAlignment
+        h.spells = Set(st.spells ?? [])
         h.facing = st.facing; h.movement = st.movement; h.maxMovement = st.maxMovement
         h.plan = st.plan.map { ($0.x, $0.y) }
         if let t = st.target, let n = st.targetName { h.target = (t.x, t.y, n) }

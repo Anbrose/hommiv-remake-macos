@@ -574,7 +574,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         var out: [Quad] = []
         func image(_ name: String) {
             guard let l = d[name] else { return }
-            out.append(Quad(texture: uiTexture("dlg|army|\(name)", { l.bitmap }), x: ox + l.x, y: oy + l.y, w: l.width, h: l.height))
+            out.append(Quad(texture: uiTexture("dlg|armyrc|\(name)", { l.bitmap }), x: ox + l.x, y: oy + l.y, w: l.width, h: l.height))
         }
         func text(_ s: String, in name: String, font: H4Font, colour: (UInt8, UInt8, UInt8) = (40, 24, 8)) {
             guard let l = d[name], !s.isEmpty else { return }

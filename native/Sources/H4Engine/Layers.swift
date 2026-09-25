@@ -27,7 +27,7 @@ public struct LayerFile {
         var out: [UILayer] = []
         while out.count < count, p + 7 < d.count {
             let npal = Int(r.peekU16(at: p)), one = r.peekU16(at: p + 2)
-            guard npal >= 1, npal <= 256, one == 1, r.byte(at: p + 6) == 0 else { throw H4Error.corrupt("layers: no palette at \(p)") }
+            guard npal >= 1, npal <= 256, one <= 1, r.byte(at: p + 6) == 0 else { throw H4Error.corrupt("layers: no palette at \(p)") }
             // the palette runs up to the name: npal-1 entries normally, 254 when npal is 256
             var nameAt = -1, entries = 0
             for n in [npal - 1, npal - 2] where n >= 0 {

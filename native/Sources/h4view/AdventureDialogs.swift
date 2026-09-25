@@ -78,7 +78,13 @@ extension Renderer {
             guard i < g.heroes.count, let d = ui.dialog("army.layout") else { return [] }
             let h = g.heroes[i]
             let ox = (AdventureUI.width - 800) / 2, oy = (AdventureUI.height - 600) / 2
-            out += dialogImages(d, key: "army", at: ox, oy, skip: ["Ring_Pressed", "Move_Army_Up", "Move_Army_Down", "Move_Tombstone_up", "loose_pressed", "loose_Disabled", "tight_Pressed", "tight_Disabled", "square_Pressed", "square_Disabled", "Up_Disabled"])
+            // not drawn: text-area masks (name_text, creature_text: outlines only), the other states of
+            // the buttons, the creature-only abilities frame, and the two-row ring backdrop (a hero
+            // outside a town shows one row); the formation buttons show the army's (loose) pressed
+            out += dialogImages(d, key: "herodlg", at: ox, oy, skip: ["Ring_Pressed", "Move_Army_Up", "Move_Army_Down", "Move_Tombstone_up", "loose_Released", "loose_Disabled",
+                                                                    "tight_Pressed", "tight_Disabled", "square_Pressed", "square_Disabled", "Up_Disabled", "name_text", "creature_text",
+                                                                    "Double_Ring_Background", "Abilities_Frame", "Army_Up_Highlighted", "Army_Up_Pressed", "Army_Down_Highlighted",
+                                                                    "Army_Down_Pressed", "SpellBook_Highlighted", "SpellBook_Pressed", "Ranged", "Ranged_Text"])
             // the class picture with the equipment slots, inside the inventory area
             if let inv = d["hero_inventory"], let cls = ui.dialog("army.\(h.alignment)_might_male"), let bg = cls["Background"] {
                 out.append(Quad(texture: uiTexture("dlg|army|\(h.alignment)|bg", { bg.bitmap }), x: ox + inv.x + (inv.width - bg.width) / 2, y: oy + inv.y + (inv.height - bg.height) / 2, w: bg.width, h: bg.height))
@@ -87,26 +93,37 @@ extension Renderer {
                 out.append(Quad(texture: uiTexture("portrait82|\(h.alignment)|\(h.keyword)", { p.bitmap }), x: ox + slot.x + (slot.width - p.width) / 2, y: oy + slot.y + (slot.height - p.height) / 2, w: p.width, h: p.height))
             }
             out += centred(h.name, in: d["name_text"], at: ox, oy, font: ui.dateFont)
-            let cls = RuleTables.classes[h.alignment]?.might.capitalized ?? "Knight"
+            let cls = (RuleTables.classes[h.alignment]?.might ?? "knight").split(separator: "_").map { $0.capitalized }.joined(separator: " ")
             out += centred("Level \(h.level) \(cls)", in: d["class_text"], at: ox, oy, font: ui.dateFont)
             let s = g.heroStats(h)
+            // the hero's morale from the army's alignments (heroes4.exe 0x640310)
+            let army: [(alignment: String, undead: Bool)] = [(h.alignment, false)] + h.army.compactMap { st in g.tables?.creature(st.creature).map { ($0.alignment, Combatant(creature: $0, count: 1).has("undead")) } }
+            let m = Battle.armyMorale(own: h.alignment, army: army)
+            let moraleText = m > 0 ? "+\(m)" : "\(m)"
             let values: [(String, String)] = [("Damage_Text", s.damage), ("Hit_Points_Text", "\(s.hitPoints)"), ("Melee_Attack_Text", "\(s.attack)"), ("Melee_Defense_Text", "\(s.defense)"),
                                               ("Ranged_Attack_Text", "\(s.attack)"), ("Ranged_Defense_Text", "\(s.defense)"), ("Speed_Text", "\(s.speed)"), ("Move_Text", "\(s.move)"),
-                                              ("Experience_Text", "\(h.experience)"), ("Spell_Points_Text", "0"), ("Shots_Text", "0"), ("Morale_Text", "0"), ("Luck_Text", "0")]
+                                              ("Experience_Text", "\(h.experience)"), ("Spell_Points_Text", "0"), ("Shots_Text", "0"), ("Morale_Text", moraleText), ("Luck_Text", "0")]
             for (slot, v) in values { out += centred(v, in: d[slot], at: ox, oy, font: ui.numberFont) }
-            // the army in the seven circles (the hero first), counts under the icons
-            if let circles = d["creature_circles"] {
-                var slots: [(UILayer?, String)] = [(ui.portrait(keyword: h.keyword, alignment: h.alignment), "")]
+            // the army: one row of creature_rings pieces (Left, Middle x5, Right) tiled by width in
+            // Single_Ring_Background, as t_creature_array_window lays them out; labels last
+            if let row = d["Single_Ring_Background"] {
+                var slots: [(UILayer?, String?)] = [(ui.portrait(keyword: h.keyword, alignment: h.alignment), nil)]
                 slots += h.army.map { (ui.creatureIcon($0.creature), String($0.count)) }
-                let step = circles.width / 7
-                for (k, (icon, count)) in slots.prefix(7).enumerated() {
-                    let cx = ox + circles.x + step * k + step / 2, cy = oy + circles.y + circles.height / 2
-                    if let icon = icon { out.append(Quad(texture: uiTexture("icon|\(icon.name)", { icon.bitmap }), x: cx - icon.width / 2, y: cy - icon.height / 2 - 6, w: icon.width, h: icon.height)) }
-                    if !count.isEmpty {
-                        let w = ui.numberFont.measure(count)
-                        out.append(Quad(texture: shade, x: cx - w / 2 - 4, y: cy + 22, w: w + 8, h: ui.numberFont.size + 2))
-                        out.append(Quad(texture: uiTexture("count|\(count)", { ui.numberFont.render(count, colour: (255, 236, 200)) }), x: cx - w / 2, y: cy + 23, w: w, h: ui.numberFont.size))
-                    }
+                var cursor = ox + row.x
+                var centres: [(Int, Int)] = []
+                for k in 0..<7 {
+                    let name = k == 0 ? "Left" : k == 6 ? "Right" : "Middle"
+                    guard let piece = ui.creatureRing(name) else { continue }
+                    let o = (cursor - piece.x, oy + row.y - 1)
+                    out.append(Quad(texture: uiTexture("cring|\(name)", { piece.bitmap }), x: o.0 + piece.x, y: o.1 + piece.y, w: piece.width, h: piece.height))
+                    centres.append((o.0 + 41, o.1 + 41))
+                    cursor += piece.width
+                }
+                for (k, (icon, _)) in slots.prefix(centres.count).enumerated() {
+                    if let icon = icon { out.append(Quad(texture: uiTexture("icon|\(icon.name)", { icon.bitmap }), x: centres[k].0 - icon.width / 2, y: centres[k].1 - icon.height / 2, w: icon.width, h: icon.height)) }
+                }
+                for (k, (_, count)) in slots.prefix(centres.count).enumerated() {
+                    ringLabel(&out, ui: ui, cx: centres[k].0, cy: centres[k].1, count: count, hero: k == 0)
                 }
             }
             if let ok = d["ok_button"], let b = ui.button("ok") {

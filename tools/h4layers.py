@@ -35,7 +35,7 @@ def parse(b):
     layers = []
     while len(layers) < count and p + 7 < len(b):
         npal, one, flags = struct.unpack_from('<HHH', b, p)
-        if not (1 <= npal <= 256 and one == 1 and b[p + 6] == 0):
+        if not (1 <= npal <= 256 and one in (0, 1) and b[p + 6] == 0):
             raise ValueError(f"layer {len(layers)}: no palette at {p}")
         # the palette runs up to the name: npal-1 entries normally, 254 when npal is 256
         q = None

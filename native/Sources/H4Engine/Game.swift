@@ -992,6 +992,20 @@ public final class GameState {
 
     /// The path arrows to draw for a hero's planned route: (cell, sprite name such as
     /// "green_arrow.left.ne"). Green while the hero can still afford the step this turn, red after;
+    /// Days a hero needs to reach a cell (1 = today), as the path arrows split the route: a step
+    /// is taken while its cost fits what is left, otherwise the next day starts with full
+    /// movement. The adventure cursors show it (their frames are 1, 2, 3 and 4+ days). nil: no way there.
+    public func daysToReach(_ h: Hero, _ goal: (Int, Int)) -> Int? {
+        guard let route = passability.path(from: (h.x, h.y), to: goal) else { return nil }
+        var left = h.movement, days = 1, px = h.x, py = h.y
+        for c in route {
+            let step = passability.stepCost(from: px, py, to: c.x, c.y)
+            if left + 0.001 < step { days += 1; left = h.maxMovement }
+            left -= step; px = c.x; py = c.y
+        }
+        return days
+    }
+
     /// the last cell gets the destination marker.
     public func arrows(for h: Hero) -> [(x: Int, y: Int, name: String)] {
         var plan = h.plan

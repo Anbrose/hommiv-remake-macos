@@ -176,10 +176,6 @@ extension Renderer {
                 out.append(Quad(texture: uiTexture("button|combat.\(name)|\(disabled)", { img.bitmap }), x: slot.x + (slot.width - img.width) / 2, y: slot.y + (slot.height - img.height) / 2, w: img.width, h: img.height))
             }
         }
-        if let wt = walkTurns, !cs.busy {   // the turns to reach the cell, small and blue beside the walking pointer
-            let text = "\(wt.turns)"
-            out.append(Quad(texture: uiTexture("turns|\(text)", { ui.numberFont.render(text, colour: (120, 190, 255)) }), x: wt.x + 12, y: wt.y + 8, w: ui.numberFont.measure(text), h: ui.numberFont.size))
-        }
         out += combatInfoQuads()
         out += hoverQuads()
         if cs.showResults { out += combatResultQuads() }
@@ -344,7 +340,6 @@ extension Renderer {
     /// Which combat cursor fits the cell under the pointer.
     func combatCursor(x: Float, y: Float) -> String {
         guard let cs = combat, let b = cs.battle, cs.info == nil, prompt == nil, !cs.busy, cs.result == nil, let cur = b.current, cur.side == 0, x < 885 else { return "combat.normal" }
-        walkTurns = nil
         if let t = enemyUnder(b, x: x, y: y) {
             if b.canShoot(cur), !combatMeleeMode { return "combat.shoot" }
             let names = ["e": "east", "w": "west", "n": "north", "s": "south", "ne": "northeast", "nw": "northwest", "se": "southeast", "sw": "southwest"]
@@ -354,7 +349,8 @@ extension Renderer {
         // walking: the number beside the pointer is the turns needed to get there
         let c = footprintAt(cur, x: x, y: y)
         guard let cost = b.cost(cur, to: c.0, c.1) else { return "combat.normal" }
-        walkTurns = (max(1, Int((cost / Float(max(1, cur.move))).rounded(.up))), Int(x), Int(y))
+        // the pointer's frame is the turns needed: 1, 2, 3, 4+ (layers.cursor.combat.walk / fly)
+        cursorFrameIndex = min(4, max(1, Int((cost / Float(max(1, cur.move))).rounded(.up)))) - 1
         return cur.stats.has("flying") ? "combat.fly" : "combat.walk"
     }
 }

@@ -63,7 +63,10 @@ final class Renderer: NSObject, MTKViewDelegate {
     var adventureDialog: AdventureDialog? = nil
     var combat: CombatScreen?
     var combatMeleeMode = false
-    var walkTurns: (turns: Int, x: Int, y: Int)?
+    /// The frame the pointer shows, when its frames are not an animation: the move / attack /
+    /// activate and combat walk / fly pointers have one frame per 1, 2, 3 and 4+ days or turns.
+    var cursorFrameIndex: Int?
+    var dayCache: (cell: Int, days: Int?)?
     var showReach = false      // the game's "Show Movement Shadow" option (off by default, as in the original)
     var inCombat: Bool { combat?.battle != nil }
     var chestChoice: Bool? = nil          // true = gold, false = experience
@@ -712,6 +715,28 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// Which of the game's cursors fits what is under a map point: attack over a wandering
     /// stack, activate over something to visit, move over walkable ground, blocked elsewhere.
     func cursorKind(mapPoint m: SIMD2<Float>) -> String {
+        cursorFrameIndex = nil
+        let kind = pointerKind(mapPoint: m)
+        guard ["move", "attack", "activate"].contains(kind), let g = game, let h = g.heroes.first else { return kind }
+        // the days to get there pick the frame; an object is reached from the cell before it
+        var c = cell(at: m)
+        if kind != "move", let p = scene.placed.last(where: { g.isVisitable($0) && (underCursor($0, m) || onFootprint($0, c)) }) {
+            c = kind == "attack" || g.town(for: p) == nil ? (p.cellX, p.cellY) : g.gateCells(p)[0]
+        }
+        let key = c.0 * g.map.size + c.1 + h.x * 1_000_003 + h.y * 7919 + Int(h.movement * 10) * 104729
+        if dayCache?.cell != key {
+            var days = g.daysToReach(h, c)
+            if days == nil, kind != "move" {   // an object: the cheapest free neighbour
+                for dx in -1...1 { for dy in -1...1 where dx != 0 || dy != 0 {
+                    if let d = g.daysToReach(h, (c.0 + dx, c.1 + dy)) { days = min(days ?? d, d) }
+                } }
+            }
+            dayCache = (key, days)
+        }
+        cursorFrameIndex = min(4, max(1, dayCache?.days ?? 1)) - 1
+        return kind
+    }
+    func pointerKind(mapPoint m: SIMD2<Float>) -> String {
         guard let g = game else { return "normal" }
         let c = cell(at: m)
         if let p = scene.placed.last(where: { g.isVisitable($0) && (underCursor($0, m) || onFootprint($0, c)) }) {

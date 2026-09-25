@@ -315,7 +315,7 @@ final class MapView: MTKView {
     }
     func tickCursor() {
         tickHover()
-        guard let s = cursors?.set(cursorName) else { return }
+        guard renderer.cursorFrameIndex == nil, let s = cursors?.set(cursorName) else { return }   // a days / turns pointer does not animate
         cursorFrame = (cursorFrame + 1) % s.frames.count
         s.frames[cursorFrame].set()
     }
@@ -328,6 +328,7 @@ final class MapView: MTKView {
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
         let cx = mouse.x / renderer.uiScale
         var name = "normal"
+        renderer.cursorFrameIndex = nil
         if renderer.inCombat {
             name = renderer.combatCursor(x: cx, y: mouse.y / renderer.uiScale)
             if let cs = renderer.combat, let b = cs.battle { cs.hover(renderer.unitUnder(b, x: cx, y: mouse.y / renderer.uiScale)?.id, now: Date()) }
@@ -336,7 +337,9 @@ final class MapView: MTKView {
             name = renderer.cursorKind(mapPoint: renderer.pan + mouse / renderer.zoom)
         }
         renderer.townHover = renderer.townOpen != nil && renderer.townDialog == nil ? renderer.townBuilding(at: cx, mouse.y / renderer.uiScale)?.name : nil
-        if name != cursorName { cursorName = name; cursorFrame = 0; cursors?.set(name)?.frames.first?.set() }
+        if let i = renderer.cursorFrameIndex, let s = cursors?.set(name) {
+            cursorName = name; cursorFrame = min(i, s.frames.count - 1); s.frames[cursorFrame].set()
+        } else if name != cursorName { cursorName = name; cursorFrame = 0; cursors?.set(name)?.frames.first?.set() }
         // the status line appears once the pointer rests on the map for a moment
         renderer.hover = nil
         hoverPending = (name == "normal" && (renderer.ui == nil || cx >= Float(AdventureUI.mapViewportWidth))) || (renderer.inCombat && renderer.combat?.info == nil && !name.hasPrefix("combat.melee") && name != "combat.shoot") ? nil : (mouse, Date())

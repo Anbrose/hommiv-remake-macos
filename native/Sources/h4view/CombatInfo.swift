@@ -71,11 +71,9 @@ extension Renderer {
         let def = game?.tables?.creature(u.keyword)
         func cap(_ s: String) -> String { s.prefix(1).uppercased() + s.dropFirst() }
         let name = st.count == 1 ? (def?.name ?? st.name) : (def?.plural ?? st.name)
-        text("\(st.count) \(cap(name))", in: "Name", font: ui.font(16))
-        if !st.isHero {
-            text("Level \(st.level)", in: "Level", font: ui.dateFont)
-            text(cap(st.alignment), in: "Class", font: ui.dateFont)
-        }
+        // the title scroll: "24 Bandits" and the alignment under it (a creature has no level or class line)
+        text("\(st.count) \(cap(name))", in: "Name", font: ui.font(30))
+        if !st.isHero { text(cap(st.alignment), in: "Alignment", font: ui.font(24)) }
         // abilities: the exe's order for the creature
         let list = RuleTables.creatureAbilities[u.keyword.lowercased()] ?? Array(st.abilities).sorted()
         let skills = iconSheet("skills.creature.52")
@@ -83,14 +81,24 @@ extension Renderer {
             if let l = skills[a.lowercased()] { icon(l, key: "skill|\(a)", in: "Skill_\(k + 1)") }
         }
         let m = b.morale(u)
+        // movement shows in thirds of the move points (heroes4.exe 0x6a5fb6: points / 300); a
+        // creature that cannot shoot has N/A for shots and ranged attack
+        let na = "N/A"
         let values: [(String, String)] = [
             ("Damage_Value", "\(st.damageLow)-\(st.cursed ? st.damageLow : st.damageHigh)"), ("Melee_Attack_Value", "\(st.attack)"),
             ("Melee_Defense_Value", "\(st.defense)"), ("Hit_Points_Value", "\(st.hitPoints)"), ("Wounds_Value", "\(st.hitPoints - st.wounds)"),
             ("morale_text", m > 0 ? "+\(m)" : "\(m)"), ("luck_text", "0"),
-            ("Shots_Value", st.has("unlimited_shots") ? "-" : "\(u.shots)"), ("Ranged_Attack_Value", st.shooter ? "\(st.attack)" : "0"),
+            ("Shots_Value", !st.shooter ? na : st.has("unlimited_shots") ? "-" : "\(u.shots)"), ("Ranged_Attack_Value", st.shooter ? "\(st.attack)" : na),
             ("Ranged_Defense_Value", "\(st.defense)"), ("Spell_Points_Value", "\(def?.spellPoints ?? 0)"),
-            ("Movement_Value", "\(u.move / (st.aged ? 2 : 1))"), ("Speed_Value", "\(st.speed / (st.aged ? 2 : 1))")]
-        for (slot, v) in values { text(v, in: slot, font: ui.numberFont) }
+            ("Movement_Value", "\(u.move / (st.aged ? 2 : 1) / 3)"), ("Speed_Value", "\(st.speed / (st.aged ? 2 : 1))")]
+        // every value sits on the small scroll (the layout's one "Value_Background", repeated under each)
+        if let vb = d["Value_Background"] {
+            for (slot, _) in values {
+                guard let l = d[slot] else { continue }
+                out.append(Quad(texture: uiTexture("dlg|combatcr|Value_Background", { vb.bitmap }), x: ox + l.x + (l.width - vb.width) / 2, y: oy + l.y + (l.height - vb.height) / 2, w: vb.width, h: vb.height))
+            }
+        }
+        for (slot, v) in values { text(v, in: slot, font: ui.font(22)) }
         // morale and luck pictures (layers.icons.morale.44: "<n> Morale", "<n> Luck")
         let mood = iconSheet("morale.44")
         if let l = mood["\(max(-10, min(10, m))) morale"] { icon(l, key: "morale|\(m)", in: "morale") }

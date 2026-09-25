@@ -66,6 +66,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// The frame the pointer shows, when its frames are not an animation: the move / attack /
     /// activate and combat walk / fly pointers have one frame per 1, 2, 3 and 4+ days or turns.
     var cursorFrameIndex: Int?
+    /// The creature the combat pointer is over (for its red target shadow).
+    var combatTarget: Int?
     var dayCache: (cell: Int, days: Int?)?
     var showReach = false      // the game's "Show Movement Shadow" option (off by default, as in the original)
     var inCombat: Bool { combat?.battle != nil }

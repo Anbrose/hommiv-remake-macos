@@ -79,8 +79,15 @@ extension Renderer {
             // the actor's origin is the footprint's centre
             let (px, py) = CombatScreen.point(pos.0 + Float(u.size) / 2, pos.1 + Float(u.size) / 2)
             var q: [Quad] = []
-            if b.current?.id == u.id, cs.result == nil, let ring = arrowSprite("active_shadow.2", prefix: "combat_object"), let fr = ring.frames.first {
-                q.append(Quad(texture: texture(for: fr, of: "active_shadow"), x: Int(px + Float(ring.origin.x + Int32(fr.box.left)) * sc), y: Int(py + Float(ring.origin.y + Int32(fr.box.top)) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc)))
+            // the ground marks, sized to the footprint (combat_object.<active|target>_shadow.<2...7>):
+            // the acting unit's, and the red one under the creature the pointer would strike
+            let shadowSize = min(7, max(2, u.size))
+            let targeted = combatTarget == u.id && cs.shownAlive(u)
+            if targeted, let ring = arrowSprite("target_shadow.\(shadowSize)", prefix: "combat_object"), let fr = ring.frames.first {
+                q.append(Quad(texture: texture(for: fr, of: "target_shadow.\(shadowSize)"), x: Int(px + Float(ring.origin.x + Int32(fr.box.left)) * sc), y: Int(py + Float(ring.origin.y + Int32(fr.box.top)) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc)))
+            }
+            if b.current?.id == u.id, cs.result == nil, let ring = arrowSprite("active_shadow.\(shadowSize)", prefix: "combat_object"), let fr = ring.frames.first {
+                q.append(Quad(texture: texture(for: fr, of: "active_shadow.\(shadowSize)"), x: Int(px + Float(ring.origin.x + Int32(fr.box.left)) * sc), y: Int(py + Float(ring.origin.y + Int32(fr.box.top)) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc)))
             }
             let st = cs.unitState[u.id]
             let state = st?.state ?? (shownAlive ? "wait" : "die")
@@ -339,9 +346,12 @@ extension Renderer {
 
     /// Which combat cursor fits the cell under the pointer.
     func combatCursor(x: Float, y: Float) -> String {
+        combatTarget = nil
         guard let cs = combat, let b = cs.battle, cs.info == nil, prompt == nil, !cs.busy, cs.result == nil, let cur = b.current, cur.side == 0, x < 885 else { return "combat.normal" }
         if let t = enemyUnder(b, x: x, y: y) {
+            combatTarget = t.id
             if b.canShoot(cur), !combatMeleeMode { return "combat.shoot" }
+            cursorFrameIndex = min(4, b.turnsToAttack(cur, t) ?? 1) - 1   // melee pointers too: 1, 2, 3, 4+ turns
             let names = ["e": "east", "w": "west", "n": "north", "s": "south", "ne": "northeast", "nw": "northwest", "se": "southeast", "sw": "southwest"]
             let dir = Battle.facing(dx: t.centre.0 - cur.centre.0, dy: t.centre.1 - cur.centre.1)
             return "combat.melee.\(names[dir] ?? "east")"

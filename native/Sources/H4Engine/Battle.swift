@@ -666,6 +666,19 @@ public final class Battle {
         x <= b.x + b.size + reach && b.x <= x + s + reach && y <= b.y + b.size + reach && b.y <= y + s + reach
     }
 
+    /// Turns the unit needs to strike the target (1 = now), for the melee pointer's frame; nil: no way.
+    public func turnsToAttack(_ u: Unit, _ t: Unit) -> Int? {
+        let r = Battle.reach(u)
+        if Battle.inReach(u.x, u.y, u.size, t, reach: r) { return 1 }
+        var best = Float.infinity
+        for (k, c) in explore(u, budget: moveBudget(u) * 12) where c < best {
+            let x = k / Battlefield.size, y = k % Battlefield.size
+            if Battle.inReach(x, y, u.size, t, reach: r), field.fits(x, y, size: u.size) || u.stats.has("flying"), !overlaps(x, y, u.size, except: u.id) { best = c }
+        }
+        guard best < .infinity else { return nil }
+        return max(1, Int((best / max(1, moveBudget(u))).rounded(.up)))
+    }
+
     /// The reachable footprint position from which the unit can strike the target that costs least, or nil.
     public func attackPosition(_ u: Unit, _ t: Unit) -> (Int, Int)? {
         let r = Battle.reach(u)

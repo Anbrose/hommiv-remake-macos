@@ -65,6 +65,14 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// The game's movies (movies.h4r), decoded on demand.
     var movies: Movies?
     var sound: GameSound?
+    var buttonTextures: Set<ObjectIdentifier> = []
+    var buttonRects: [(x: Int, y: Int, w: Int, h: Int)] = []
+    /// A press on one of the buttons drawn last frame plays the game's click (sound.miscellaneous.button).
+    func pressSound(x: Float, y: Float) {
+        if buttonRects.contains(where: { x >= Float($0.x) && x < Float($0.x + $0.w) && y >= Float($0.y) && y < Float($0.y + $0.h) }) {
+            sound?.play("miscellaneous.button")
+        }
+    }
 
     /// The music for where the player is: the town's alignment in a town, else the terrain under
     /// the hero (terrain.<Terrain>); combat music is started by the battle itself.
@@ -415,6 +423,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         if let t = uiTextures[key] { return t }
         let t = makeTexture(make())
         uiTextures[key] = t
+        if key.hasPrefix("button|") { buttonTextures.insert(ObjectIdentifier(t)) }
         return t
     }
 
@@ -996,6 +1005,9 @@ final class Renderer: NSObject, MTKViewDelegate {
             for name in g.sounds { sound?.play(name) }
             g.sounds.removeAll()
             updateMusic()
+            // the hero's ride: sound.hero horse.walk loops while a hero walks on the map
+            if !inCombat, townOpen == nil, g.heroes.contains(where: { $0.isWalking }) { sound?.startLoop("hero horse.walk", key: "horse") }
+            else { sound?.stopLoop("horse") }
             g.log.removeAll()
             collectFloaters(now: now)
             toasts.removeAll { $0.until < now }
@@ -1036,6 +1048,15 @@ final class Renderer: NSObject, MTKViewDelegate {
         let inTown = townOpen != nil && town != nil
         let mapList = inTown || inCombat ? [] : quads(at: time)
         let uiList = inCombat ? combatQuads(now: now) : inTown ? townQuads() : uiQuads()
+        // where this frame's buttons are (any quad drawn with a layers.button.* picture), for the click sound
+        buttonRects = uiList.filter { buttonTextures.contains(ObjectIdentifier($0.texture)) }.map { ($0.x, $0.y, $0.w, $0.h) }
+        // the adventure panel's own buttons are painted into its frame; their hotspots mark them
+        if !inCombat, !inTown, let ui = ui {
+            for n in ["Game_menu_button", "Marketplace_button", "move_army_button", "overview_button", "spell_button", "surface_button",
+                      "System_menu_button", "underground_button", "end_turn"] {
+                if let h = ui.hotspot(n) { buttonRects.append((h.x, h.y, h.width, h.height)) }
+            }
+        }
         let list = mapList + uiList
         var verts: [Vertex] = []
         verts.reserveCapacity(list.count * 6)

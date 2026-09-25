@@ -650,8 +650,26 @@ public final class Battle {
 
     // MARK: actions of the current unit
 
+    /// Towards a place further than this turn's move: the route there (searched as far as 12
+    /// turns), cut where this turn's movement ends.
+    public func stepToward(_ u: Unit, _ gx: Int, _ gy: Int) -> (Int, Int)? {
+        let far = moveBudget(u) * 12, n = Battlefield.size
+        guard explore(u, budget: far)[Battle.key(gx, gy)] != nil,
+              let parent = parentCache["\(u.id)|\(u.x)|\(u.y)|\(far)|\(version)"] else { return nil }
+        var route: [Int] = []
+        var k = Battle.key(gx, gy)
+        let start = Battle.key(u.x, u.y)
+        while k != start, k >= 0, route.count < n * n { route.append(k); k = parent[k] }
+        let today = reachable(u)
+        guard let end = route.reversed().last(where: { today[$0] != nil }) else { return nil }
+        return (end / n, end % n)
+    }
+
     public func move(to x: Int, _ y: Int) -> Bool {
-        guard finished == nil, let u = current, let p = path(u, to: x, y), !p.isEmpty else { return false }
+        guard finished == nil, let u = current else { return false }
+        // a place beyond this turn's move: go as far towards it as this turn allows
+        if reachable(u)[Battle.key(x, y)] == nil, let near = stepToward(u, x, y), near != (u.x, u.y) { return move(to: near.0, near.1) }
+        guard let p = path(u, to: x, y), !p.isEmpty else { return false }
         u.moved += reachable(u)[Battle.key(x, y)] ?? 0
         events.append(.move(unit: u.id, path: p, from: (u.x, u.y), flying: u.stats.has("flying")))
         let prev = p.count > 1 ? p[p.count - 2] : (u.x, u.y)
@@ -694,8 +712,18 @@ public final class Battle {
     }
 
     public func attack(_ targetId: Int) -> Bool {
-        guard finished == nil, let u = current, let t = units.first(where: { $0.id == targetId }), t.alive, side(of: t) != side(of: u),
-              let pos = attackPosition(u, t) else { return false }
+        guard finished == nil, let u = current, let t = units.first(where: { $0.id == targetId }), t.alive, side(of: t) != side(of: u) else { return false }
+        guard let pos = attackPosition(u, t) else {
+            // out of reach this turn: head for the nearest place it can be struck from
+            let r = Battle.reach(u)
+            var best: (Int, Int)? = nil, bestCost = Float.infinity
+            for (k, c) in explore(u, budget: moveBudget(u) * 12) where c < bestCost {
+                let x = k / Battlefield.size, y = k % Battlefield.size
+                if Battle.inReach(x, y, u.size, t, reach: r), u.stats.has("flying") ? field.fits(x, y, size: u.size) : true, !overlaps(x, y, u.size, except: u.id) { best = (x, y); bestCost = c }
+            }
+            guard let b = best else { return false }
+            return move(to: b.0, b.1)
+        }
         let start = (u.x, u.y)
         if pos != (u.x, u.y), let p = path(u, to: pos.0, pos.1) {
             u.moved += reachable(u)[Battle.key(pos.0, pos.1)] ?? 0

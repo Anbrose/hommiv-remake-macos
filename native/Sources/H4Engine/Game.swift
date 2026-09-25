@@ -918,7 +918,8 @@ public final class GameState {
         for h in heroes where h.isWalking {
             let next = h.path[0]
             let stepCost = passability.stepCost(from: h.x, h.y, to: next.x, next.y)
-            if h.movement + 0.001 < stepCost { h.path = []; continue }   // out of movement: stop here
+            // out of movement: stop here, keeping the rest of the route (red) to go on with later
+            if h.movement + 0.001 < stepCost { h.plan = h.path; h.path = []; continue }
             h.facing = Hero.facing(dx: next.x - h.x, dy: next.y - h.y)
             h.progress += dt * GameState.cellsPerSecond
             h.distance += dt * GameState.cellsPerSecond

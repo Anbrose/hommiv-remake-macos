@@ -206,6 +206,12 @@ if let out = snapshot {
     }
     lap("textures uploaded")
     var snapTime = 0.0
+    if ProcessInfo.processInfo.environment["H4FAR"] != nil, let hero = game.heroes.first {   // debugging aid: cells 2-3 days away
+        var found = 0
+        for x in stride(from: 0, to: game.map.size, by: 3) { for y in stride(from: 0, to: game.map.size, by: 3) where found < 5 {
+            if let d = game.daysToReach(hero, (x, y)), d >= 2, d <= 3 { print("far cell (\(x),\(y)) \(d) days"); found += 1 }
+        } }
+    }
     if let target = walk, let hero = game.heroes.first {
         if let p = scene.placed.first(where: { $0.cellX == target.0 && $0.cellY == target.1 && game.isVisitable($0) }) {
             game.click(hero: hero, pickup: p)
@@ -221,7 +227,7 @@ if let out = snapshot {
         snapTime = Double(frames) / 60
         for line in game.log { print(line) }
         game.log.removeAll()
-        print("hero now at (\(hero.x),\(hero.y)) facing \(hero.facing), movement \(hero.movement), still walking: \(hero.isWalking)")
+        print("hero now at (\(hero.x),\(hero.y)) facing \(hero.facing), movement \(hero.movement), still walking: \(hero.isWalking), route left \(hero.plan.count) cells")
         let near = scene.placed.filter { game.isPickup($0) && abs($0.cellX - hero.x) <= 6 && abs($0.cellY - hero.y) <= 6 }
         print("pickups nearby: \(near.map { "\($0.name.dropFirst(11).dropLast(4))@(\($0.cellX),\($0.cellY))" }.joined(separator: ", "))")
     }
@@ -371,7 +377,12 @@ final class MapView: MTKView {
         }
     }
     override func mouseExited(with e: NSEvent) { NSCursor.arrow.set(); cursorName = ""; renderer.hover = nil; hoverPending = nil }
-    override func mouseDown(with e: NSEvent) { dragged = 0; renderer.hover = nil; hoverPending = nil }
+    override func mouseDown(with e: NSEvent) {
+        dragged = 0; renderer.hover = nil; hoverPending = nil
+        let p = convert(e.locationInWindow, from: nil)
+        let scale = Float(window?.backingScaleFactor ?? 1)
+        renderer.pressSound(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale)
+    }
     override func mouseDragged(with e: NSEvent) {
         dragged += abs(Float(e.deltaX)) + abs(Float(e.deltaY))
         renderer.pan -= SIMD2(Float(e.deltaX), Float(e.deltaY)) / renderer.zoom
@@ -407,7 +418,7 @@ final class MapView: MTKView {
             let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale
             if renderer.townOpen != nil { renderer.townClick(x: cx, y: cy); return }
             if cx >= Float(AdventureUI.mapViewportWidth) {
-                if ui.hit("end_turn", x: cx, y: cy) { renderer.sound?.play("miscellaneous.button"); g.endTurn() }
+                if ui.hit("end_turn", x: cx, y: cy) { g.endTurn() }
                 else if ui.hit("mini_map", x: cx, y: cy), let mm = ui.hotspot("mini_map") {   // the minimap: bring the view there
                     let n = Float(g.map.size)
                     let col = (cx - Float(mm.x)) / Float(mm.width) * n - n / 2, row = (cy - Float(mm.y)) / Float(mm.height) * n + n / 2

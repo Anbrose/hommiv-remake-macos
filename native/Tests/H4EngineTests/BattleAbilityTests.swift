@@ -119,4 +119,40 @@ final class BattleAbilityTests: XCTestCase {
         }
         XCTAssertEqual(Array(kinds.prefix(4)), ["melee", "together", "melee", "die"])
     }
+
+    /// A stack strikes back once a round unless it has Unlimited Retaliation.
+    func testOneRetaliationPerRound() {
+        let field = Battlefield(terrain: 1, variant: 0, kinds: [], frequency: [:], adjacency: [:], seed: 1)
+        func f(_ k: String, _ n: Int, speed: Bool) -> Battle.Fighter {
+            Battle.Fighter(stats: stack(creature(k, hp: 50, low: 1, high: 1, speed0: !speed), n), keyword: k, actor: k, size: 2, move: 60, shots: 0)
+        }
+        for (target, expected) in [("peasant", 1), ("griffin", 2)] {
+            let b = Battle(field: field, attackers: [f("squire", 5, speed: true), f("orc", 5, speed: true)], defenders: [f(target, 50, speed: false)], seed: 2)
+            _ = b.takeEvents()
+            let t = b.units.first { $0.side == 1 }!
+            let us = b.units.filter { $0.side == 0 }
+            t.x = 50; t.y = 50; us[0].x = 48; us[0].y = 50; us[1].x = 52; us[1].y = 50
+            var answers = 0
+            for _ in 0..<2 {
+                guard let u = b.current, u.side == 0 else { break }
+                XCTAssertTrue(b.attack(t.id))
+                answers += b.takeEvents().filter { if case .melee(let a, _, _, _, _) = $0 { return a == t.id }; return false }.count
+            }
+            XCTAssertEqual(answers, expected, target)
+        }
+    }
+
+    /// A place further than one turn's move: the unit goes as far towards it as it can now.
+    func testMoveBeyondOneTurn() {
+        let field = Battlefield(terrain: 1, variant: 0, kinds: [], frequency: [:], adjacency: [:], seed: 1)
+        let a = Battle.Fighter(stats: stack(creature("squire"), 5), keyword: "squire", actor: "squire", size: 2, move: 5, shots: 0)
+        let d = Battle.Fighter(stats: stack(creature("peasant", speed0: true), 5), keyword: "peasant", actor: "peasant", size: 2, move: 5, shots: 0)
+        let b = Battle(field: field, attackers: [a], defenders: [d], seed: 1)
+        _ = b.takeEvents()
+        let u = b.units.first { $0.side == 0 }!, e = b.units.first { $0.side == 1 }!
+        u.x = 45; u.y = 40; e.x = 70; e.y = 70
+        _ = b.takeEvents()
+        XCTAssertTrue(b.move(to: 45, 60))            // 20 cells away, 5 a turn
+        XCTAssertEqual(u.y, 45); XCTAssertEqual(u.x, 45)
+    }
 }

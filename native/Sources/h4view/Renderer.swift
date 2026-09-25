@@ -552,7 +552,7 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     /// The creature dialog (layers.dialog.army_right_click) opened by a right click on a
     /// wandering stack; drawn centred on the canvas.
-    var creatureDialog: (creature: CreatureDef, count: Int)?
+    var creatureDialog: (creature: CreatureDef, count: Int, escort: (creature: CreatureDef, count: Int)?)?
     static let dialogOrigin = ((AdventureUI.width - 464) / 2, (AdventureUI.height - 494) / 2)
 
     /// Is a canvas point on the open creature dialog (and on its Close button)?
@@ -592,18 +592,30 @@ final class Renderer: NSObject, MTKViewDelegate {
         let c = cd.creature
         func cap(_ s: String) -> String { s.prefix(1).uppercased() + s.dropFirst() }
         text("\(cd.count) \(cd.count == 1 ? cap(c.name) : cap(c.plural))", in: "Title", font: ui.font(16))
-        if let p = ui.creatureIcon(c.keyword) {   // the first of the seven circles
-            out.append(Quad(texture: uiTexture("cicon|\(c.keyword)", { p.bitmap }), x: ox + 28, y: oy + 62, w: p.width, h: p.height))
-            let s = "\(cd.count)"
-            let w = ui.numberFont.measure(s)
-            out.append(Quad(texture: uiTexture("num|\(s)", { ui.numberFont.render(s, colour: (40, 24, 8)) }), x: ox + 28 + (52 - w) / 2, y: oy + 124, w: w, h: ui.numberFont.size))
+        // the army in the seven columns of the background (dividers every 60 px from x = 22):
+        // the stack and, when it has one, the cheaper escort that fights with it
+        var stacks = [(c, cd.count)]
+        if let e = cd.escort { stacks.append((e.creature, e.count)) }
+        for (k, (def, n)) in stacks.enumerated() {
+            let cx = ox + 52 + 60 * k
+            if let p = ui.creatureIcon(def.keyword) {
+                out.append(Quad(texture: uiTexture("cicon|\(def.keyword)", { p.bitmap }), x: cx - p.width / 2, y: oy + 62, w: p.width, h: p.height))
+            }
+            let s = "\(n)", w = ui.numberFont.measure(s)
+            out.append(Quad(texture: uiTexture("num|\(s)", { ui.numberFont.render(s, colour: (40, 24, 8)) }), x: cx - w / 2, y: oy + 124, w: w, h: ui.numberFont.size))
         }
         text("Level \(c.level)", in: "Level", font: ui.dateFont)
         text(cap(c.alignment), in: "Alignment", font: ui.dateFont)
         text(c.shortHelp, in: "Stealth", font: ui.numberFont)
         let ranged = c.shots > 0
+        // the stack's morale from its army's alignments (heroes4.exe 0x640310); none for mechanical or undead
+        var army = [(alignment: c.alignment, undead: Combatant(creature: c, count: 1).has("undead"))]
+        if let e = cd.escort { army.append((e.creature.alignment, Combatant(creature: e.creature, count: 1).has("undead"))) }
+        let noMorale = Combatant(creature: c, count: 1).has("mechanical") || army[0].undead
+        let m = noMorale ? 0 : Battle.armyMorale(own: c.alignment, army: army)
+        let moraleText = m > 0 ? "+\(m)" : "\(m)"
         let values: [(String, String)] = [("Damage_Text", "\(c.damageLow)-\(c.damageHigh)"), ("Melee_Attack_Text", "\(c.attack)"), ("Melee_Defense_Text", "\(c.defense)"),
-                                          ("Hit_Points_Text", "\(c.hitPoints)"), ("Morale_Text", "0"), ("Speed_Text", "\(c.speed)"), ("Movement_Text", "\(c.move)"),
+                                          ("Hit_Points_Text", "\(c.hitPoints)"), ("Morale_Text", moraleText), ("Speed_Text", "\(c.speed)"), ("Movement_Text", "\(c.move)"),
                                           ("Shots_Text", "\(c.shots)"), ("Ranged_Attack_Text", ranged ? "\(c.attack)" : "0"), ("Ranged_Defense_Text", "\(c.defense)"),
                                           ("Spell_Points_Text", "\(c.spellPoints)"), ("Luck_Text", "0"), ("Experience_Text", "\(c.experience)")]
         for (slot, v) in values { text(v, in: slot, font: ui.numberFont) }
@@ -642,7 +654,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         if let h = g.heroes.first(where: { Int($0.position.x.rounded()) == c.0 && Int($0.position.y.rounded()) == c.1 }) { text = g.describe(hero: h) }
         else if let p = scene.placed.last(where: { underCursor($0, m) || onFootprint($0, c) }) {
             if let i = g.monster(for: p), let def = g.tables?.creature(g.monsters[i].creature) {   // a wandering stack gets the creature dialog
-                creatureDialog = (def, g.monsters[i].count)
+                creatureDialog = (def, g.monsters[i].count, g.monsters[i].escort.flatMap { e in g.tables?.creature(e.creature).map { ($0, e.count) } })
                 return
             }
             text = g.describe(p)

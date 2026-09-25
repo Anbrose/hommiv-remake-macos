@@ -82,12 +82,15 @@ extension Renderer {
             // the ground marks, sized to the footprint (combat_object.<active|target>_shadow.<2...7>):
             // the acting unit's, and the red one under the creature the pointer would strike
             let shadowSize = min(7, max(2, u.size))
+            // these sprites are anchored at the footprint's top corner (target_shadow.3: origin -51,-8,
+            // image x -32...33, y 7...41 -- centred on a 3-cell diamond hanging from its top vertex)
+            let (tx, ty) = CombatScreen.point(pos.0, pos.1)
             let targeted = combatTarget == u.id && cs.shownAlive(u)
             if targeted, let ring = arrowSprite("target_shadow.\(shadowSize)", prefix: "combat_object"), let fr = ring.frames.first {
-                q.append(Quad(texture: texture(for: fr, of: "target_shadow.\(shadowSize)"), x: Int(px + Float(ring.origin.x + Int32(fr.box.left)) * sc), y: Int(py + Float(ring.origin.y + Int32(fr.box.top)) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc)))
+                q.append(Quad(texture: texture(for: fr, of: "target_shadow.\(shadowSize)"), x: Int(tx + Float(ring.origin.x + Int32(fr.box.left)) * sc), y: Int(ty + Float(ring.origin.y + Int32(fr.box.top)) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc)))
             }
             if b.current?.id == u.id, cs.result == nil, let ring = arrowSprite("active_shadow.\(shadowSize)", prefix: "combat_object"), let fr = ring.frames.first {
-                q.append(Quad(texture: texture(for: fr, of: "active_shadow.\(shadowSize)"), x: Int(px + Float(ring.origin.x + Int32(fr.box.left)) * sc), y: Int(py + Float(ring.origin.y + Int32(fr.box.top)) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc)))
+                q.append(Quad(texture: texture(for: fr, of: "active_shadow.\(shadowSize)"), x: Int(tx + Float(ring.origin.x + Int32(fr.box.left)) * sc), y: Int(ty + Float(ring.origin.y + Int32(fr.box.top)) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc)))
             }
             let st = cs.unitState[u.id]
             let state = st?.state ?? (shownAlive ? "wait" : "die")
@@ -131,7 +134,7 @@ extension Renderer {
                         } else {
                             let count = String(cs.shownCount[u.id] ?? u.stats.count)
                             let w = ui.numberFont.measure(count)
-                            q.append(Quad(texture: uiTexture("count|\(count)|dark", { ui.numberFont.render(count, colour: (40, 24, 8)) }), x: boxX + (boxW - w) / 2, y: boxY + (boxH - ui.numberFont.size) / 2, w: w, h: ui.numberFont.size))
+                            q.append(Quad(texture: uiTexture("count|\(count)|white", { ui.numberFont.render(count, colour: (255, 255, 255)) }), x: boxX + (boxW - w) / 2, y: boxY + (boxH - ui.numberFont.size) / 2, w: w, h: ui.numberFont.size))
                         }
                     }
                 }

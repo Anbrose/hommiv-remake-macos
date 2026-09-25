@@ -156,7 +156,7 @@ final class CombatScreen {
             if let st = st, let d = t.creature(st.creature) { var f = fighter(d, st.count, army: monsterArmy); f.slot = k; defenders.append(f) }
         }
         battle = Battle(field: f, attackers: attackers, defenders: defenders, seed: seed)
-        queue = []; playing = nil; unitPos = [:]; unitState = [:]; dead = []; dying = []; pendingDeaths = []; shownPos = [:]; shownCount = [:]; result = nil; showResults = false; floaters = []; effects = []
+        queue = []; playing = nil; unitPos = [:]; unitState = [:]; dead = []; dying = []; pendingDeaths = []; hits = []; pendingCount = []; shownPos = [:]; shownCount = [:]; result = nil; showResults = false; floaters = []; effects = []
         pump()
     }
 
@@ -179,6 +179,7 @@ final class CombatScreen {
     /// Advance the animation queue.
     func update(now: Date) {
         guard let b = battle else { return }
+        landHits(now)
         if let p = playing {
             if now.timeIntervalSince(p.started) >= p.duration {
                 finish(p.event)
@@ -212,6 +213,7 @@ final class CombatScreen {
         }
         if playing == nil { pump() }
         if playing == nil, queue.isEmpty { shownPos.removeAll(); shownCount.removeAll() }
+        landHits(now)
         if fidgeting == nil, now >= nextFidget {
             let waiting = b.units.filter { $0.alive && unitState[$0.id] == nil && unitPos[$0.id] == nil && !$0.disabled }
             if waiting.isEmpty { nextFidget = now.addingTimeInterval(0.5) }
@@ -254,10 +256,18 @@ final class CombatScreen {
             let a = b.unit(id), t = b.unit(target)
             let ac = shownCentre(a), tc = shownCentre(t)
             a.facing = Battle.facing(dx: tc.0 - ac.0, dy: tc.1 - ac.1)
-            unitState[id] = (ranged ? "ranged" : "melee", now, true)
-            playing = Anim(event: e, started: now, duration: max(0.2, stateDuration(a.actor, ranged ? "ranged" : "melee", a.facing)))
-            shownCount[target] = left
-            floaters.append(("-\(dmg)" + (killed > 0 ? " (\(killed) killed)" : ""), tc.0, tc.1, now.addingTimeInterval(0.3)))
+            let state = ranged ? "ranged" : "melee"
+            unitState[id] = (state, now, true)
+            // the blow lands on the attack's hit frame (combat_actor: the state's hit frame); the target
+            // flinches then (unless it dies of it: its die event follows) and the damage shows
+            let hitAt = Double(actor(a.actor)?.state(state)?.hitFrame ?? 0) * framePeriod(a.actor, state) + (ranged ? 0.25 : 0)
+            let attackTime = max(0.2, stateDuration(a.actor, state, a.facing))
+            t.facing = Battle.facing(dx: ac.0 - tc.0, dy: ac.1 - tc.1)
+            let flinchTime = left > 0 ? stateDuration(t.actor, "flinch", t.facing) : 0
+            hits.append((target: target, at: now.addingTimeInterval(hitAt), left: left))
+            playing = Anim(event: e, started: now, duration: max(attackTime, hitAt + flinchTime))
+            floaters.append(("-\(dmg)" + (killed > 0 ? " (\(killed) killed)" : ""), tc.0, tc.1, now.addingTimeInterval(hitAt)))
+            pendingCount.append((target, left, now.addingTimeInterval(hitAt)))
         case .die(let id):
             pendingDeaths.remove(id)
             dying.insert(id)
@@ -294,8 +304,8 @@ final class CombatScreen {
             // it stays where this move ended until the queue has played out (the battle may already have moved it on)
             if let last = path.last { shownPos[id] = (Float(last.0), Float(last.1)) }
             unitPos[id] = nil; unitState[id] = nil; moves[id] = nil
-        case .melee(_, let target, _, _, let left), .shoot(_, let target, _, _, let left):
-            if left > 0 { unitState[target] = ("flinch", Date(), true) }
+        case .melee, .shoot:
+            break
         case .die(let id): dead.insert(id)
         case .finished: showResults = true
         default: break
@@ -303,6 +313,18 @@ final class CombatScreen {
     }
 
     var busy: Bool { playing != nil || !queue.isEmpty }
+
+    /// Blows waiting for their hit frame: the target flinches and its count drops then.
+    var hits: [(target: Int, at: Date, left: Int)] = []
+    var pendingCount: [(unit: Int, left: Int, at: Date)] = []
+    func landHits(_ now: Date) {
+        for h in hits where h.at <= now {
+            if h.left > 0, !dying.contains(h.target) { unitState[h.target] = ("flinch", now, true) }
+        }
+        hits.removeAll { $0.at <= now }
+        for p in pendingCount where p.at <= now { shownCount[p.unit] = p.left }
+        pendingCount.removeAll { $0.at <= now }
+    }
 
     /// What the screen shows while the queue plays: the battle has already resolved the whole
     /// action, so positions, stack sizes and deaths follow the events as they are played.

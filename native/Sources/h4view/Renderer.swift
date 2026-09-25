@@ -101,6 +101,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     var chestChoice: Bool? = nil          // true = gold, false = experience
     var armyPopup: ArmyPopup? = nil        // the right-click window of an army
     var levelUpChoice: Int? = nil          // the offer picked in the level-up dialog
+    var overview: KingdomOverview? = nil  // the kingdom overview, when open
     var heroShown = 0                     // which of the army's heroes the hero screen shows
     var floaters: [(text: String, x: Int, y: Int, since: Date)] = []
     var buildPage = 0
@@ -583,6 +584,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         out += creatureDialogQuads()
         out += adventureDialogQuads()
         out += armyPopupQuads()
+        out += overviewQuads()
         out += levelUpQuads()
         out += messageBoxQuads()
         out += saveDialogQuads()

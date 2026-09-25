@@ -70,9 +70,47 @@ final class Renderer: NSObject, MTKViewDelegate {
     var floaters: [(text: String, x: Int, y: Int, since: Date)] = []
     var buildPage = 0
     var buildCells: [(rect: (Int, Int, Int, Int), building: RuleTables.BuildingDef)] = []
-    /// The army display of the town bar: 7 ring centres per row (garrison above, visiting army below).
-    static let armyRingCentres: [(Int, Int)] = (0..<7).map { (532 + $0 * 66, 613) }
-    static let visitingRingCentres: [(Int, Int)] = (0..<7).map { (532 + $0 * 66, 683) }
+    /// The town's army display (hotspot Army_Display, 500,583 - 967,717): heroes4.exe
+    /// (t_creature_array_window, 0x644855) tiles the creature_rings pieces edge to edge, each
+    /// advancing by its own width (Top_Left 70, Top 59, Top_Right 70), the second row one piece
+    /// height (72) lower; the portrait hole is at (15,15)-(67,67) of a piece's frame. Returns the
+    /// frame origins of the 7 pieces of a row; the row is centred in the hotspot.
+    func townRingOrigins(row: Int, ui: AdventureUI) -> [(piece: String, x: Int, y: Int)] {
+        let name = row == 0 ? "Top" : "Bottom"
+        let pieces = (0..<7).map { $0 == 0 ? "\(name)_Left" : $0 == 6 ? "\(name)_Right" : name }
+        let widths = pieces.map { ui.creatureRing($0).map { $0.width } ?? 60 }
+        let total = widths.reduce(0, +)
+        var cursor = 500 + (467 - total) / 2
+        let top = ui.creatureRing("Top"), piece0 = ui.creatureRing(pieces[0])
+        let cursorY = 583 + (row == 0 ? 0 : (top?.height ?? 72))
+        var out: [(piece: String, x: Int, y: Int)] = []
+        for (k, p) in pieces.enumerated() {
+            let l = ui.creatureRing(p)
+            out.append((p, cursor - (l?.x ?? 0), cursorY - (piece0?.y ?? 0)))
+            cursor += widths[k]
+        }
+        return out
+    }
+
+    /// The label under a stack's portrait, as the game's rings draw it: the "inset" scroll with
+    /// the count centred in "inset_text", or for a hero the health and mana bars. (cx, cy) is
+    /// the portrait hole's centre (the piece frame's (41, 41)).
+    func ringLabel(_ out: inout [Quad], ui: AdventureUI, cx: Int, cy: Int, count: String?, hero: Bool) {
+        let ox = cx - 41, oy = cy - 41
+        guard let inset = ui.creatureRing("inset") else { return }
+        out.append(Quad(texture: uiTexture("cring|inset", { inset.bitmap }), x: ox + inset.x, y: oy + inset.y, w: inset.width, h: inset.height))
+        if hero {
+            for (bar, border) in [("health_bar", "health_bar_border"), ("mana_bar", "mana_bar_border")] {
+                if let b = ui.creatureRing(border) {
+                    out.append(Quad(texture: uiTexture("black", { var bm = Bitmap(width: 1, height: 1); bm.pixels = [0, 0, 0, 255]; return bm }), x: ox + b.x, y: oy + b.y, w: b.width, h: b.height))
+                }
+                if let l = ui.creatureRing(bar) { out.append(Quad(texture: uiTexture("cring|\(bar)", { l.bitmap }), x: ox + l.x, y: oy + l.y, w: l.width, h: l.height)) }
+            }
+        } else if let c = count, let box = ui.creatureRing("inset_text") {
+            let f = ui.ringFont, w = f.measure(c)
+            out.append(Quad(texture: uiTexture("ringcount|\(c)", { f.render(c, colour: (16, 12, 8)) }), x: ox + box.x + (box.width - w) / 2, y: oy + box.y + (box.height - f.size) / 2, w: w, h: f.size))
+        }
+    }
     var uiTextures: [String: MTLTexture] = [:]
 
     /// Quads of the town screen (replaces the map and the adventure chrome).
@@ -160,22 +198,22 @@ final class Renderer: NSObject, MTKViewDelegate {
             }
         }
         // the army display: two rows of seven rings (garrison above, the visiting army below)
-        for (row, centres) in [("Top", Renderer.armyRingCentres), ("Bottom", Renderer.visitingRingCentres)] {
-            for (k, (cx, cy)) in centres.enumerated() {
-                let piece = k == 0 ? "\(row)_Left" : k == 6 ? "\(row)_Right" : row
-                guard let ring = ui.creatureRing(piece), let portrait = ui.creatureRing("portrait") else { continue }
-                // the ring frame is laid out around the portrait hotspot's centre (41, 41)
-                let ox = cx - (portrait.x + portrait.width / 2), oy = cy - (portrait.y + portrait.height / 2)
-                out.append(Quad(texture: uiTexture("cring|\(piece)", { ring.bitmap }), x: ox + ring.x, y: oy + ring.y, w: ring.width, h: ring.height))
+        let rows = [townRingOrigins(row: 0, ui: ui), townRingOrigins(row: 1, ui: ui)]
+        for row in rows {
+            for o in row {
+                guard let ring = ui.creatureRing(o.piece) else { continue }
+                out.append(Quad(texture: uiTexture("cring|\(o.piece)", { ring.bitmap }), x: o.x + ring.x, y: o.y + ring.y, w: ring.width, h: ring.height))
             }
         }
         if let h = g.heroes.first {
-            var slots: [(UILayer?, String)] = [(ui.portrait(keyword: h.keyword, alignment: h.alignment), "")]
+            var slots: [(UILayer?, String?)] = [(ui.portrait(keyword: h.keyword, alignment: h.alignment), nil)]
             slots += h.army.map { (ui.creatureIcon($0.creature), String($0.count)) }
-            for (k, (icon, count)) in slots.prefix(7).enumerated() {
-                let (cx, cy) = Renderer.visitingRingCentres[k]
+            for (k, (icon, _)) in slots.prefix(7).enumerated() {
+                let cx = rows[1][k].x + 41, cy = rows[1][k].y + 41
                 if let icon = icon { out.append(Quad(texture: uiTexture("icon|\(icon.name)", { icon.bitmap }), x: cx - icon.width / 2, y: cy - icon.height / 2, w: icon.width, h: icon.height)) }
-                if !count.isEmpty { countBox(count, cx, cy + 24) }
+            }
+            for (k, (_, count)) in slots.prefix(7).enumerated() {
+                ringLabel(&out, ui: ui, cx: rows[1][k].x + 41, cy: rows[1][k].y + 41, count: count, hero: k == 0)
             }
         }
         out += townDialogQuads()
@@ -346,20 +384,20 @@ final class Renderer: NSObject, MTKViewDelegate {
                 out.append(Quad(texture: uiTexture("portrait|\(h.alignment)|\(h.keyword)", { p.bitmap }), x: px, y: py, w: p.width, h: p.height))
             }
         }
-        // the selected hero's army: the hero, then his stacks with their counts
+        // the selected hero's army: the hero, then his stacks; the labels last, over the next row
         if let h = g.heroes.first {
-            var slots: [(UILayer?, String)] = [(ui.portrait(keyword: h.keyword, alignment: h.alignment), "")]
+            var slots: [(UILayer?, String?)] = [(ui.portrait(keyword: h.keyword, alignment: h.alignment), nil)]
             slots += h.army.map { (ui.creatureIcon($0.creature), String($0.count)) }
-            for (i, (icon, count)) in slots.prefix(AdventureUI.armySlots.count).enumerated() {
+            let shown = Array(slots.prefix(AdventureUI.armySlots.count).enumerated())
+            for (i, (icon, _)) in shown {
                 let (cx, cy) = AdventureUI.armySlots[i]
                 if let icon = icon {
                     out.append(Quad(texture: uiTexture("icon|\(icon.name)", { icon.bitmap }), x: cx - icon.width / 2, y: cy - icon.height / 2, w: icon.width, h: icon.height))
                 }
-                if !count.isEmpty {   // the stack size in a small dark box at the ring's bottom, like the game
-                    let w = ui.numberFont.measure(count)
-                    out.append(Quad(texture: shade, x: cx - w / 2 - 3, y: cy + 16, w: w + 6, h: ui.numberFont.size + 2))
-                    out.append(Quad(texture: uiTexture("count|\(count)", { ui.numberFont.render(count, colour: (255, 236, 200)) }), x: cx - w / 2, y: cy + 17, w: w, h: ui.numberFont.size))
-                }
+            }
+            for (i, (_, count)) in shown {
+                let (cx, cy) = AdventureUI.armySlots[i]
+                ringLabel(&out, ui: ui, cx: cx, cy: cy, count: count, hero: i == 0)
             }
         }
         // the town list: each owned town as its card (terrain, walls, three bars) and a piece of the minimap around it

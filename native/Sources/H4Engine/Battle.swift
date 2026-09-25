@@ -199,14 +199,37 @@ public final class Battle {
             if !p.isEmpty { events.append(.move(unit: u.id, path: p)); u.col = b.0; u.row = b.1 }
         }
         u.facing = Battle.facing(dc: t.col - u.col, dr: t.row - u.row)
-        hit(u, t, ranged: false)
-        if t.alive, !t.retaliated {
-            t.retaliated = true
-            t.facing = Battle.facing(dc: u.col - t.col, dr: u.row - t.row)
-            hit(t, u, ranged: false)
-        }
+        t.facing = Battle.facing(dc: u.col - t.col, dr: u.row - t.row)
+        meleeExchange(u, t)
         endAction(u)
         return true
+    }
+
+    /// Can the target strike back at this attacker now? Not against No Retaliation attackers,
+    /// once per round unless it has Unlimited Retaliation.
+    func canRetaliate(_ t: Unit, against a: Unit) -> Bool {
+        t.alive && !a.stats.has("no retaliation") && (!t.retaliated || t.stats.has("unlimited retaliation"))
+    }
+    /// Does the unit strike first in this exchange? First Strike, unless the other side
+    /// negates it (Negate First Strike) or has First Strike too.
+    func strikesFirst(_ x: Unit, over y: Unit) -> Bool {
+        x.stats.has("first strike") && !y.stats.has("negate first strike") && !y.stats.has("first strike")
+    }
+
+    /// A melee exchange, as the game plays it: the attacker strikes, then the target strikes
+    /// back; a defender with First Strike strikes back before the blow lands. Two Attacks
+    /// strike again after the retaliation.
+    func meleeExchange(_ u: Unit, _ t: Unit) {
+        let retaliates = canRetaliate(t, against: u)
+        if retaliates, strikesFirst(t, over: u) {
+            t.retaliated = true
+            hit(t, u, ranged: false)
+            if u.alive { hit(u, t, ranged: false) }
+        } else {
+            hit(u, t, ranged: false)
+            if retaliates, t.alive { t.retaliated = true; hit(t, u, ranged: false) }
+        }
+        if u.alive, t.alive, u.stats.has("two attacks") { hit(u, t, ranged: false) }
     }
 
     public func shoot(_ targetId: Int) -> Bool {

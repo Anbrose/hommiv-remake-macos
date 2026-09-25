@@ -14,6 +14,9 @@ public struct Combatant {
     public var shooter = false          // has shots: its melee attack is halved unless it has "No Melee Penalty"
     public var noMeleePenalty = false
     public var defending = false        // Defend doubles the defense until the next turn
+    /// Abilities from the creature table's Short Help Text ("First Strike", "No Retaliation", ...), lower-cased.
+    public var abilities: Set<String> = []
+    public func has(_ ability: String) -> Bool { abilities.contains(ability.lowercased()) }
 
     public var alive: Bool { count > 0 }
     public var totalHealth: Int { count * hitPoints - wounds }
@@ -22,6 +25,7 @@ public struct Combatant {
         name = c.name; self.count = count; hitPoints = c.hitPoints; damageLow = c.damageLow; damageHigh = c.damageHigh
         attack = c.attack; defense = c.defense; speed = c.speed; experience = c.experience
         shooter = c.shots > 0; noMeleePenalty = c.shortHelp.lowercased().contains("no melee penalty")
+        abilities = Set(c.shortHelp.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces).lowercased() }.filter { !$0.isEmpty })
     }
 
     /// A hero of the given level fights as one strong unit.

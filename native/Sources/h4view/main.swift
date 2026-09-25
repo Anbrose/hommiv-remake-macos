@@ -162,7 +162,7 @@ if let out = snapshot {
        let p = scene.placed.first(where: { $0.cellX == target.0 && $0.cellY == target.1 }), let mi = game.monster(for: p) {
         cs.start(game: game, hero: hero, monsterAt: mi, p, terrain: 1)
         if let b = cs.battle { for _ in 0..<battleSteps { b.autoAct() }; _ = b.takeEvents(); cs.pump(); if b.finished != nil { cs.result = (b.finished!, b.round); cs.showResults = battleResults } }
-        print("battle: round \(cs.battle?.round ?? 0), units \(cs.battle?.units.map { "\($0.stats.name)x\($0.stats.count)@(\($0.x),\($0.y))" }.joined(separator: " ") ?? "")")
+        print("battle: round \(cs.battle?.round ?? 0), units \(cs.battle?.units.map { "\($0.stats.name)x\($0.stats.count)@(\($0.col),\($0.row))" }.joined(separator: " ") ?? "")")
     }
     if openHeroScreen { renderer.adventureDialog = .hero(0) }
     if openChest, let h = game.heroes.first { game.chestOffer = (h, 1500, 1000); renderer.adventureDialog = .chest; renderer.chestChoice = true }
@@ -408,6 +408,7 @@ final class MapView: MTKView {
         case 126: renderer.pan.y -= step
         case 36, 76: if renderer.townOpen == nil, !renderer.inCombat { renderer.game?.endTurn() }   // Return / Enter
         case 14: if renderer.townOpen == nil, !renderer.inCombat { renderer.game?.endTurn() }       // E
+        case 46: renderer.showReach.toggle()   // M = movement shadow
         case 1: if renderer.inCombat, let b = renderer.combat?.battle, !(renderer.combat?.busy ?? true), b.finished == nil { b.wait(); renderer.combat?.pump() }   // S = wait
         case 2: if renderer.inCombat, let b = renderer.combat?.battle, !(renderer.combat?.busy ?? true), b.finished == nil { b.defend(); renderer.combat?.pump() } // D = defend
         case 53:   // Escape closes a dialog, then leaves the town

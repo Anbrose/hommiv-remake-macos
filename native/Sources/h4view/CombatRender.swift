@@ -21,38 +21,46 @@ extension Renderer {
         guard let cs = combat, let b = cs.battle, let ui = ui, let f = cs.field else { return [] }
         var out: [Quad] = []
         let sc = CombatScreen.sceneScale
-        // the ground: a ship's backdrop, or the map's terrain around the fight (1:1, scaled into the scene)
+        // the ground: a ship's backdrop, or the terrain's tiles diamond by diamond with
+        // alternate diamonds a shade darker (the original's chequered field)
         if let bd = f.backdrop {
             out.append(Quad(texture: uiTexture("battlefield|\(cs.fieldName)", { bd.bitmap }), x: 0, y: 0, w: Int(Float(bd.width) * sc), h: Int(Float(bd.height) * sc)))
-        } else {
-            let (ox, oy) = cs.origin
-            for q in terrain {
-                let x = (Float(q.x) - ox) * sc, y = (Float(q.y) - oy) * sc
-                if x + Float(q.w) * sc < 0 || y + Float(q.h) * sc < 0 || x > 885 || y > 768 { continue }
-                out.append(Quad(texture: q.texture, x: Int(x), y: Int(y), w: Int(Float(q.w) * sc), h: Int(Float(q.h) * sc)))
-            }
+        } else if let patch = cs.groundPatch(terrain: f.terrain, variant: f.variant, alt: 1) {
+            for row in -1...Battlefield.rows { for col in -1...Battlefield.columns where (col + row) % 2 == 0 {
+                // the patch's positional tiles continue across neighbours when indexed by the
+                // screen row and the half-column, as the adventure map does
+                let halfCol = Int((Float(col) / 2).rounded(.down))
+                let ti = ((((row % 6) + 6) % 6) + 2) * 10 + ((((halfCol % 6) + 6) % 6) + 2)
+                let dark = ((col % 2) + 2) % 2 != 0
+                let tex = uiTexture("ground|\(f.terrain)|\(f.variant)|\(ti)|\(dark)", {
+                    var bm = patch.tiles[min(ti, patch.tiles.count - 1)]
+                    if dark { for i in stride(from: 0, to: bm.pixels.count, by: 4) { for k in 0..<3 { bm.pixels[i + k] = UInt8(Int(bm.pixels[i + k]) * 93 / 100) } } }
+                    return bm
+                })
+                let (px, py) = CombatScreen.point(Float(col), Float(row))
+                out.append(Quad(texture: tex, x: Int(px - 32 * sc), y: Int(py - 16 * sc), w: Int(64 * sc), h: Int(32 * sc)))
+            } }
         }
-        // the acting unit's reach as a faint shade (the game's "movement shadow" option)
+        // the acting unit's reach as the game's purple-grey diamonds (the "movement shadow" option)
         if showReach, let cur = b.current, cur.side == 0, !cs.busy, cs.result == nil {
             for (key, _) in b.reachable(cur) {
-                let x = key % Battlefield.columns, y = key / Battlefield.columns
-                let (px, py) = CombatScreen.point(Float(x), Float(y))
-                let s = Float(Battlefield.cellSize) * sc
-                out.append(Quad(texture: reachShade, x: Int(px - s / 2), y: Int(py - s * 0.9), w: Int(s), h: Int(s)))
+                let col = key % Battlefield.columns, row = key / Battlefield.columns
+                let (px, py) = CombatScreen.point(Float(col), Float(row))
+                out.append(Quad(texture: reachDiamond, x: Int(px - 32 * sc), y: Int(py - 16 * sc), w: Int(64 * sc), h: Int(32 * sc)))
             }
         }
         // obstacles and units, back to front
         var drawn: [(Float, [Quad])] = []
         for o in f.obstacles {
             guard let s = cs.obstacleSprite(o.name), let fr = s.frames.first else { continue }
-            let (px, py) = CombatScreen.point(Float(o.x) + Float(o.w - 1) / 2, Float(o.y))
+            let (px, py) = CombatScreen.point(Float(o.col), Float(o.row))
             var q: [Quad] = []
             if let sh = s.shadow(for: fr) { q.append(Quad(texture: texture(for: sh, of: o.name), x: Int(px + Float(s.origin.x + Int32(sh.box.left)) * sc), y: Int(py + Float(s.origin.y + Int32(sh.box.top)) * sc), w: Int(Float(sh.bitmap.width) * sc), h: Int(Float(sh.bitmap.height) * sc))) }
             q.append(Quad(texture: texture(for: fr, of: o.name), x: Int(px + Float(s.origin.x + Int32(fr.box.left)) * sc), y: Int(py + Float(s.origin.y + Int32(fr.box.top)) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc)))
             drawn.append((py - 1, q))
         }
         for u in b.units where u.alive || !cs.dead.contains(u.id) {
-            let pos = cs.unitPos[u.id] ?? (Float(u.x), Float(u.y))
+            let pos = cs.unitPos[u.id] ?? (Float(u.col), Float(u.row))
             let (px, py) = CombatScreen.point(pos.0, pos.1)
             var q: [Quad] = []
             if b.current?.id == u.id, cs.result == nil, let ring = arrowSprite("active_shadow.2", prefix: "combat_object"), let fr = ring.frames.first {
@@ -111,7 +119,7 @@ extension Renderer {
         // damage numbers
         for fl in cs.floaters {
             let age = Float(max(0, now.timeIntervalSince(fl.since)))
-            let (px, py) = CombatScreen.point(fl.x, fl.y)
+            let (px, py) = CombatScreen.point(fl.col, fl.row)
             let w = ui.dateFont.measure(fl.text)
             out.append(Quad(texture: uiTexture("date|\(fl.text)|red", { ui.dateFont.render(fl.text, colour: (255, 80, 60)) }), x: Int(px) - w / 2, y: Int(py - 70 - age * 25), w: w, h: ui.dateFont.size))
         }
@@ -146,8 +154,21 @@ extension Renderer {
         return out
     }
 
-    var reachShade: MTLTexture {
-        uiTexture("solid|reach", { var bm = Bitmap(width: 2, height: 2); for i in 0..<4 { bm.pixels[i * 4] = 60; bm.pixels[i * 4 + 1] = 90; bm.pixels[i * 4 + 2] = 160; bm.pixels[i * 4 + 3] = 70 }; return bm })
+    /// A 64x32 diamond in the original's movement-shadow tint.
+    var reachDiamond: MTLTexture {
+        uiTexture("reach|diamond", {
+            var bm = Bitmap(width: 64, height: 32)
+            for y in 0..<32 {
+                for x in 0..<64 {
+                    let dx: Float = abs(Float(x) - 31.5) / 32
+                    let dy: Float = abs(Float(y) - 15.5) / 16
+                    if dx + dy > 1 { continue }
+                    let i = (y * 64 + x) * 4
+                    bm.pixels[i] = 120; bm.pixels[i + 1] = 110; bm.pixels[i + 2] = 170; bm.pixels[i + 3] = 110
+                }
+            }
+            return bm
+        })
     }
 
     /// layers.dialog.Combat_results: victor and loser portraits, losses.
@@ -210,7 +231,7 @@ extension Renderer {
         }
         guard x < Float(cs.hotspot("battle_scene")?.width ?? 885) else { return }
         let c = CombatScreen.cell(at: x, y)
-        if let target = b.units.first(where: { $0.alive && $0.side == 1 && $0.x == c.0 && $0.y == c.1 }) {
+        if let target = b.units.first(where: { $0.alive && $0.side == 1 && $0.col == c.0 && $0.row == c.1 }) {
             if cur.shots > 0, !combatMeleeMode { _ = b.shoot(target.id) } else { _ = b.attack(target.id) }
             combatMeleeMode = false
         } else {
@@ -236,7 +257,7 @@ extension Renderer {
     func combatStatusText(x: Float, y: Float) -> String? {
         guard let cs = combat, let b = cs.battle, !cs.busy, cs.result == nil, let cur = b.current, cur.side == 0, x < 885, let t = game?.tables else { return nil }
         let c = CombatScreen.cell(at: x, y)
-        guard let target = b.units.first(where: { $0.alive && $0.side == 1 && $0.x == c.0 && $0.y == c.1 }) else { return nil }
+        guard let target = b.units.first(where: { $0.alive && $0.side == 1 && $0.col == c.0 && $0.row == c.1 }) else { return nil }
         let ranged = cur.shots > 0 && !combatMeleeMode && !b.units.contains { $0.alive && $0.side == 1 && Battle.adjacent(cur, $0) }
         let (lo, hi) = b.damageRange(cur, target, ranged: ranged)
         let range = lo == hi ? (t.strings["text_damage_range_1"] ?? "%damage damage").replacingOccurrences(of: "%damage", with: "\(lo)")
@@ -249,12 +270,12 @@ extension Renderer {
     func combatCursor(x: Float, y: Float) -> String {
         guard let cs = combat, let b = cs.battle, !cs.busy, cs.result == nil, let cur = b.current, cur.side == 0, x < 885 else { return "combat.normal" }
         let c = CombatScreen.cell(at: x, y)
-        if let t = b.units.first(where: { $0.alive && $0.side == 1 && $0.x == c.0 && $0.y == c.1 }) {
+        if let t = b.units.first(where: { $0.alive && $0.side == 1 && $0.col == c.0 && $0.row == c.1 }) {
             if cur.shots > 0, !combatMeleeMode, !b.units.contains(where: { $0.alive && $0.side == 1 && Battle.adjacent(cur, $0) }) { return "combat.shoot" }
             let names = ["e": "east", "w": "west", "n": "north", "s": "south", "ne": "northeast", "nw": "northwest", "se": "southeast", "sw": "southwest"]
-            let dir = Battle.facing(dx: t.x - cur.x, dy: t.y - cur.y)
+            let dir = Battle.facing(dc: t.col - cur.col, dr: t.row - cur.row)
             return "combat.melee.\(names[dir] ?? "east")"
         }
-        return b.reachable(cur)[c.1 * Battlefield.columns + c.0] != nil ? "combat.walk" : "combat.normal"
+        return b.reachable(cur)[Battlefield.key(c.0, c.1)] != nil ? "combat.walk" : "combat.normal"
     }
 }

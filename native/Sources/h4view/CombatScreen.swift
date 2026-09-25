@@ -2,8 +2,8 @@ import Foundation
 import Metal
 import H4Engine
 
-/// The tactical combat screen: the battlefield backdrop scaled into the 885x768 battle scene
-/// of layers.combat.1024, the units as their combat actors, the side panel with the acting
+/// The tactical combat screen: the battlefield scaled into the 885x768 battle scene of
+/// layers.combat.1024, the units as their combat actors, the side panel with the acting
 /// creature and the action buttons, and the results dialog at the end.
 final class CombatScreen {
     let archive: H4Archive
@@ -22,16 +22,17 @@ final class CombatScreen {
     struct Anim { var event: Battle.Event; var started: Date; var duration: Double }
     var queue: [Battle.Event] = []
     var playing: Anim?
-    var unitPos: [Int: (Float, Float)] = [:]     // visual cell positions while moving
+    var unitPos: [Int: (Float, Float)] = [:]     // visual lattice positions while moving
+    var moveStart: [Int: (Float, Float)] = [:]
     var unitState: [Int: (state: String, since: Date, once: Bool)] = [:]
     var dead: Set<Int> = []
-    var hover: (Int, Int)?
     var result: (won: Bool, rounds: Int)?
     var showResults = false
-    var floaters: [(text: String, x: Float, y: Float, since: Date)] = []
+    var floaters: [(text: String, col: Float, row: Float, since: Date)] = []
 
     static let sceneScale: Float = 0.75
-    static let cellsPerSecond: Double = 7
+    /// Cells walked per second (the original crosses a diamond in about a fifth of a second).
+    static let cellsPerSecond: Double = 5
 
     init(archive: H4Archive) throws {
         self.archive = archive
@@ -59,15 +60,21 @@ final class CombatScreen {
     static let obstacleFamilies: [UInt8: [String]] = [
         1: ["Trees.Green", "Rocks.Mossy", "Bushes", "Shrubs.Ground", "Flowers.bush"], 2: ["Rocks.Brown", "Rocks.Jagged", "Shrubs.Dry"],
         3: ["Trees.Swamp", "plants.swamp", "logs.swamp"], 4: ["Rocks.Lava", "Cracks.Lava", "Shrubs.burnt"], 5: ["Trees.Snow", "Rocks.Snow", "Shrubs.Snow"],
-        6: ["Cactus", "Rocks.Sand", "Trees.Palm"], 7: ["Rocks.Dirt", "Tree_trunks", "Shrubs.orange"], 8: ["Stalagmites", "Mushrooms.Big"]]
+        6: ["Cactus", "cactus", "Rocks.Sand", "Trees.Palm", "Bones", "Shrubs.Dry"], 7: ["Rocks.Dirt", "Tree_trunks", "Shrubs.orange"], 8: ["Stalagmites", "Mushrooms.Big"]]
     var obstacleSprites: [String: Sprite] = [:]
     func obstacleSprite(_ name: String) -> Sprite? {
         if obstacleSprites[name] == nil, let d = payload(name) { obstacleSprites[name] = try? Sprite(data: d) }
         return obstacleSprites[name]
     }
-
-    /// Map-canvas point at the top-left of the 1180x1024 field window (the ground is the map's terrain).
-    var origin: (Float, Float) = (0, 0)
+    /// The ground tiles of a terrain (the adventure patch files), by terrain type and variant.
+    var patches: [String: TerrainPatch] = [:]
+    func groundPatch(terrain: UInt8, variant: UInt8, alt: Int) -> TerrainPatch? {
+        let base = ["water", "grass", "rough", "swamp", "lava", "snow", "sand", "dirt", "subterranean"]
+        let t = Int(terrain) < base.count ? base[Int(terrain)] : "grass"
+        let key = "\(t).\(min(Int(variant), 1) + 1).\(alt)"
+        if patches[key] == nil, let d = payload("terrain.\(key).h4d") { patches[key] = try? TerrainPatch(data: d) }
+        return patches[key]
+    }
     /// The stack labels (layers.icons.combat_labels.<colour>): waving frames and the "selected" ones.
     var labelSheets: [String: LayerFile] = [:]
     func labels(_ colour: String) -> LayerFile? {
@@ -77,8 +84,7 @@ final class CombatScreen {
     var healthSheet: LayerFile? { labels("health") }
 
     /// A land field for the terrain the hero stands on: open ground with obstacles of its kind.
-    func generatedField(terrain: UInt8, variant: UInt8, seed: Int) -> Battlefield? {
-        _ = variant
+    func generatedField(terrain: UInt8, variant: UInt8, seed: Int) -> Battlefield {
         var cands: [(name: String, w: Int, h: Int)] = []
         for fam in CombatScreen.obstacleFamilies[terrain] ?? ["Rocks.Dirt"] {
             let prefix = "combat_object.obstacles.\(fam.lowercased())."
@@ -86,7 +92,7 @@ final class CombatScreen {
                 if let d = try? archive.payload(real), d.count > 4, d[d.startIndex] == 2 { cands.append((real, max(1, Int(d[d.startIndex + 2])), max(1, Int(d[d.startIndex + 3])))) }
             }
         }
-        return Battlefield(obstacles: cands, seed: seed)
+        return Battlefield(terrain: terrain, variant: variant, obstacles: cands, seed: seed)
     }
 
     /// Set up a battle between a hero's army and a wandering stack.
@@ -94,21 +100,13 @@ final class CombatScreen {
         guard let t = g.tables, let c = t.creature(g.monsters[i].creature) else { return }
         hero = h; monsterIndex = i; placed = p
         let seed = g.day * 977 + h.x * 31 + h.y
-        // the field window is centred between the hero and the monster on the map canvas
-        let (hx, hy) = g.scene.screen(x: h.x, y: h.y)
-        let (mx, my) = g.scene.screen(x: p.cellX, y: p.cellY)
-        origin = (Float(hx + mx) / 2 - Float(Battlefield.backdropWidth) / 2, Float(hy + my) / 2 - Float(Battlefield.backdropHeight) / 2)
-        // keep the window on the map canvas
-        origin.0 = max(0, min(Float(g.scene.width - Battlefield.backdropWidth), origin.0))
-        origin.1 = max(0, min(Float(g.scene.height - Battlefield.backdropHeight), origin.1))
         fieldName = "generated.\(terrain).\(variant).\(seed)"
-        field = generatedField(terrain: terrain, variant: variant, seed: seed) ?? loadField("neutral.single")
+        field = generatedField(terrain: terrain, variant: variant, seed: seed)
         guard let f = field else { return }
         let classActor = "hero.\(h.alignment)_fighter_male"
-        // a creature's Move is its cells per turn on the 16-pixel combat grid; a hero walks 20
-        var attackers: [(Combatant, keyword: String, actor: String, move: Int, shots: Int)] = [(Combatant(hero: h.name, level: h.level), h.keyword, classActor, Int(Hero.baseMovement), 0)]
-        for s in h.army { if let cd = t.creature(s.creature) { attackers.append((Combatant(creature: cd, count: s.count), cd.keyword, cd.name, max(4, cd.move), cd.shots)) } }
-        let defenders: [(Combatant, keyword: String, actor: String, move: Int, shots: Int)] = [(Combatant(creature: c, count: g.monsters[i].count), c.keyword, c.name, max(4, c.move), c.shots)]
+        var attackers: [(Combatant, keyword: String, actor: String, shots: Int)] = [(Combatant(hero: h.name, level: h.level), h.keyword, classActor, 0)]
+        for s in h.army { if let cd = t.creature(s.creature) { attackers.append((Combatant(creature: cd, count: s.count), cd.keyword, cd.name, cd.shots)) } }
+        let defenders: [(Combatant, keyword: String, actor: String, shots: Int)] = [(Combatant(creature: c, count: g.monsters[i].count), c.keyword, c.name, c.shots)]
         battle = Battle(field: f, attackers: attackers, defenders: defenders, seed: seed)
         queue = []; playing = nil; unitPos = [:]; unitState = [:]; dead = []; result = nil; showResults = false; floaters = []
         pump()
@@ -131,10 +129,11 @@ final class CombatScreen {
             } else if case .move(let id, let path) = p.event {
                 let t = Float(now.timeIntervalSince(p.started) * CombatScreen.cellsPerSecond)
                 let k = min(path.count - 1, Int(t)), f = t - Float(k)
-                let from = k == 0 ? startOf(id) : (Float(path[k - 1].0), Float(path[k - 1].1))
+                let from = k == 0 ? (moveStart[id] ?? (0, 0)) : (Float(path[k - 1].0), Float(path[k - 1].1))
                 let to = (Float(path[k].0), Float(path[k].1))
                 unitPos[id] = (from.0 + (to.0 - from.0) * f, from.1 + (to.1 - from.1) * f)
                 unitState[id] = ("walk", p.started, false)
+                b.unit(id).facing = Battle.facing(dc: Int((to.0 - from.0).rounded()), dr: Int((to.1 - from.1).rounded()))
             }
             return
         }
@@ -145,28 +144,26 @@ final class CombatScreen {
         if playing == nil { pump() }
         floaters.removeAll { now.timeIntervalSince($0.since) > 1.5 }
     }
-    var moveStart: [Int: (Float, Float)] = [:]
-    func startOf(_ id: Int) -> (Float, Float) { moveStart[id] ?? (0, 0) }
 
     func begin(_ e: Battle.Event, now: Date) {
         guard let b = battle else { return }
         switch e {
         case .move(let id, let path):
             let u = b.unit(id)
-            moveStart[id] = unitPos[id] ?? (Float(u.x), Float(u.y))
             // the unit's logical position already moved; animate from where it was
+            let start = path.count > 0 ? (Float(u.col), Float(u.row)) : (Float(u.col), Float(u.row))
+            moveStart[id] = unitPos[id] ?? startOfPath(path, end: start)
             playing = Anim(event: e, started: now, duration: Double(path.count) / CombatScreen.cellsPerSecond)
-            if let first = path.first { b.unit(id).facing = Battle.facing(dx: first.0 - Int(moveStart[id]!.0.rounded()), dy: first.1 - Int(moveStart[id]!.1.rounded())) }
         case .melee(let id, let target, let dmg, let killed):
             unitState[id] = ("melee", now, true)
             playing = Anim(event: e, started: now, duration: 0.6)
             let t = b.unit(target)
-            floaters.append(("-\(dmg)" + (killed > 0 ? " (\(killed) killed)" : ""), Float(t.x), Float(t.y), now.addingTimeInterval(0.3)))
+            floaters.append(("-\(dmg)" + (killed > 0 ? " (\(killed) killed)" : ""), Float(t.col), Float(t.row), now.addingTimeInterval(0.3)))
         case .shoot(let id, let target, let dmg, let killed):
             unitState[id] = ("ranged", now, true)
             playing = Anim(event: e, started: now, duration: 0.6)
             let t = b.unit(target)
-            floaters.append(("-\(dmg)" + (killed > 0 ? " (\(killed) killed)" : ""), Float(t.x), Float(t.y), now.addingTimeInterval(0.3)))
+            floaters.append(("-\(dmg)" + (killed > 0 ? " (\(killed) killed)" : ""), Float(t.col), Float(t.row), now.addingTimeInterval(0.3)))
         case .die(let id):
             unitState[id] = ("die", now, true)
             playing = Anim(event: e, started: now, duration: 0.9)
@@ -179,6 +176,12 @@ final class CombatScreen {
             result = (won, b.round)
             playing = Anim(event: e, started: now, duration: 0.6)
         }
+    }
+    /// Where a path started: one step before its first cell, towards the unit's end cell.
+    func startOfPath(_ path: [(Int, Int)], end: (Float, Float)) -> (Float, Float) {
+        guard let first = path.first else { return end }
+        if path.count > 1 { let second = path[1]; return (Float(2 * first.0 - second.0), Float(2 * first.1 - second.1)) }
+        return (end.0 - (Float(first.0) - end.0), end.1 - (Float(first.1) - end.1))
     }
 
     func finish(_ e: Battle.Event) {
@@ -196,11 +199,11 @@ final class CombatScreen {
 
     // MARK: geometry
 
-    /// Cell centre -> canvas point (the backdrop is scaled 3/4 into the battle scene).
-    static func point(_ x: Float, _ y: Float) -> (Float, Float) {
-        ((x + 0.5) * Float(Battlefield.cellSize) * sceneScale, (y + 0.9) * Float(Battlefield.cellSize) * sceneScale)
+    /// Lattice position (fractional col, row) -> canvas point of the diamond's centre.
+    static func point(_ col: Float, _ row: Float) -> (Float, Float) {
+        ((32 * col + 16) * sceneScale, (16 * row + 8) * sceneScale)
     }
     static func cell(at canvasX: Float, _ canvasY: Float) -> (Int, Int) {
-        (Int(canvasX / (Float(Battlefield.cellSize) * sceneScale)), Int(canvasY / (Float(Battlefield.cellSize) * sceneScale) - 0.4))
+        Battlefield.cell(at: canvasX / sceneScale, canvasY / sceneScale)
     }
 }

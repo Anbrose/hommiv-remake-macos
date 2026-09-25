@@ -234,3 +234,25 @@ public final class RuleTables {
     public func heroes(ofClass c: String) -> [HeroDef] { heroes.filter { $0.heroClass == c.lowercased() } }
     public func creature(_ keyword: String) -> CreatureDef? { creatures.first { $0.keyword.lowercased() == keyword.lowercased() } }
 }
+
+/// table.combat_grid_colors (updates.h4r): how the combat grid tints its cells per terrain.
+/// Alpha is 0...15 (sixteenths); odd and even cells each have a colour or are left clear.
+public struct GridColors {
+    public struct Entry {
+        public let alpha: Int; public let odd: (UInt8, UInt8, UInt8)?; public let even: (UInt8, UInt8, UInt8)?
+        public init(alpha: Int, odd: (UInt8, UInt8, UInt8)?, even: (UInt8, UInt8, UInt8)?) { self.alpha = alpha; self.odd = odd; self.even = even }
+    }
+    public let byTerrain: [String: Entry]
+    public init(data: Data) {
+        var out: [String: Entry] = [:]
+        for row in RuleTable(data: data).rows {
+            guard let i = row.firstIndex(where: { !$0.isEmpty }), i + 9 < row.count, let a = Int(row[i + 1]) else { continue }
+            func colour(_ k: Int) -> (UInt8, UInt8, UInt8)? {
+                guard row[k].lowercased() == "no", let r = UInt8(row[k + 1]), let g = UInt8(row[k + 2]), let b = UInt8(row[k + 3]) else { return nil }
+                return (r, g, b)
+            }
+            out[row[i].lowercased()] = Entry(alpha: a, odd: colour(i + 2), even: colour(i + 6))
+        }
+        byTerrain = out
+    }
+}

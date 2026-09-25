@@ -85,6 +85,8 @@ final class CombatScreen {
 
     /// Obstacle kinds from combat_header (loaded once).
     lazy var obstacleKinds: [Battlefield.ObstacleKind] = payload("combat_header_table_cache.combat_header.h4d").map(Battlefield.obstacleKinds) ?? []
+    /// Grid tints from updates.h4r (set by main when that archive is present).
+    var gridColors: GridColors?
     static let terrainKeys: [UInt8: String] = [0: "water", 1: "grass", 2: "rough", 3: "swamp", 4: "volcanic", 5: "snow", 6: "sand", 7: "dirt", 8: "subterranean"]
 
     /// A land field for the terrain the hero stands on, obstacles as the game's tables say.

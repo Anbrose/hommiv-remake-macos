@@ -36,10 +36,14 @@ extension Renderer {
                 let tex = uiTexture("ground|\(f.terrain)|\(f.variant)|\(ti)", { patch.tiles[min(ti, patch.tiles.count - 1)] })
                 out.append(Quad(texture: tex, x: Int(px - 32 * sc), y: Int(py - 16 * sc), w: Int(64 * sc) + 1, h: Int(32 * sc) + 1))
             } }
-            // the checker: every other combat cell a shade darker
-            for x in 0..<Battlefield.size { for y in 0..<Battlefield.size where (x + y) % 2 == 1 && Battlefield.onField(x, y) {
+            // the checker: table.combat_grid_colors tints odd and even cells per terrain
+            let key = CombatScreen.terrainKeys[f.terrain] ?? "grass"
+            let tint = cs.gridColors?.byTerrain[key] ?? GridColors.Entry(alpha: 4, odd: nil, even: (12, 36, 12))
+            let alpha = UInt8(min(255, tint.alpha * 16))
+            for x in 0..<Battlefield.size { for y in 0..<Battlefield.size where Battlefield.onField(x, y) {
+                guard let c = (x + y) % 2 == 1 ? tint.odd : tint.even else { continue }
                 let (px, py) = CombatScreen.point(Float(x) + 0.5, Float(y) + 0.5)
-                out.append(Quad(texture: cellDiamond("checker", 0, 0, 0, 38), x: Int(px - 16 * sc), y: Int(py - 8 * sc), w: Int(32 * sc), h: Int(16 * sc)))
+                out.append(Quad(texture: cellDiamond("grid|\(c.0)|\(c.1)|\(c.2)|\(alpha)", c.0, c.1, c.2, alpha), x: Int(px - 16 * sc), y: Int(py - 8 * sc), w: Int(32 * sc), h: Int(16 * sc)))
             } }
         }
         // the acting unit's reach as the game's purple-grey cells (the "movement shadow" option):

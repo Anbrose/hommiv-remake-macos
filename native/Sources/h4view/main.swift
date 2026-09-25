@@ -81,6 +81,10 @@ if args[2] == "--text", args.count >= 6 {   // h4view <h4r> --text <font entry> 
     print("size \(font.size) line \(font.lineHeight) ascent \(font.ascent) glyphs \(font.glyphs.count); '\(args[4])' measures \(font.measure(args[4])) -> \(args[5])")
     exit(0)
 }
+if args[2] == "--raw", args.count >= 5 {   // h4view <h4r> --raw <entry> <out>: write an entry's unpacked bytes (debugging aid)
+    try archive.payload(args[3]).write(to: URL(fileURLWithPath: args[4]))
+    exit(0)
+}
 if args[2] == "--dump" {   // h4view <h4r> --dump <entry>...: describe sprite entries, write each image as PNG (debugging aid)
     for name in args.dropFirst(3) {
         guard let e = archive.byName[name] else { print("\(name): not in archive"); continue }
@@ -138,6 +142,8 @@ var ui: AdventureUI? = nil
 var townScreen: TownScreen? = nil
 var combatScreen: CombatScreen? = nil
 do { ui = try AdventureUI(archive: archive, index: resolver); townScreen = try TownScreen(archive: archive); combatScreen = try CombatScreen(archive: archive); lap("ui loaded") } catch { print("no UI: \(error)") }
+if let cs = combatScreen, let updates = try? H4Archive(url: URL(fileURLWithPath: args[1]).deletingLastPathComponent().appendingPathComponent("updates.h4r")),
+   let d = try? updates.payload("table.combat_grid_colors.h4d") { cs.gridColors = GridColors(data: d) }
 
 /// Camera setup shared by the window and the snapshot: 1 map pixel per canvas pixel times
 /// the requested zoom, the requested cell in the middle of the map viewport.

@@ -151,6 +151,7 @@ final class CombatScreen {
         func fighter(_ cd: CreatureDef, _ n: Int, army: [(alignment: String, undead: Bool)], bonus: ArmyBonuses? = nil) -> Battle.Fighter {
             var st = Combatant(creature: cd, count: n)
             st.morale = Battle.armyMorale(own: cd.alignment, army: army)
+            if bonus != nil { st.morale += g.objectMorale(h, alignment: cd.alignment, undeadOrMechanical: st.has("undead") || st.has("mechanical")) }
             bonus?.apply(&st)
             return Battle.Fighter(stats: st, keyword: cd.keyword, actor: cd.name, size: actor(cd.name)?.size ?? 4, move: cd.move + (bonus?.moveThirds ?? 0), shots: cd.shots)
         }
@@ -158,8 +159,7 @@ final class CombatScreen {
         // a hero moves 24 cells (heroes4.exe: 2400 movement, 100 a cell) at Speed 6 plus skill bonuses
         var attackers: [Battle.Fighter] = []
         for (k, hh) in heroes.enumerated() {
-            var heroStats = Combatant(hero: hh.name, level: hh.level, skills: hh.skills)
-            heroStats.speed = 6
+            var heroStats = g.heroCombatant(hh)
             heroStats.morale = Battle.armyMorale(own: hh.alignment, army: heroArmy)
             let model = "hero.\(hh.alignment)_fighter_male"
             attackers.append(Battle.Fighter(stats: heroStats, keyword: hh.keyword, actor: actor(model) != nil ? model : classActor, size: actor(model)?.size ?? actor(classActor)?.size ?? 4, move: 24, shots: heroStats.shots, slot: k))

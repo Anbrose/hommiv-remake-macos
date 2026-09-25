@@ -68,7 +68,10 @@ public final class RuleTables {
     public let objectTexts: [String: String]
     /// Lower-cased object name -> (major, minor), to find the rows of an object known only by its sprite.
     public let objectNames: [String: (String, String)]
-    public struct ArtifactDef { public let keyword: String, name: String, article: String, slot: String, level: String, help: String }
+    public struct ArtifactDef {
+        public let keyword: String, name: String, article: String, slot: String, level: String, help: String
+        public var pickUp = "", cost = 0, allowedByDefault = true
+    }
     public let artifacts: [String: ArtifactDef]   // by keyword
     /// table.skill_weights: class keyword -> skill keyword -> how likely a level-up offers it.
     public let skillWeights: [String: [String: Int]]
@@ -177,8 +180,11 @@ public final class RuleTables {
         if let d = try? archive.payload("table.Artifacts.h4d") {
             let at = RuleTable(data: d)
             for row in at.rows where row.count > 7 && !row[0].isEmpty {
-                arts[row[0].lowercased()] = ArtifactDef(keyword: row[0], name: at.value(row, "Name"), article: at.value(row, "Name With Article"),
-                                                        slot: at.value(row, "Slot"), level: at.value(row, "Level"), help: at.value(row, "Help Text"))
+                var a = ArtifactDef(keyword: row[0], name: at.value(row, "Name"), article: at.value(row, "Name With Article"),
+                                    slot: at.value(row, "Slot"), level: at.value(row, "Level"), help: at.value(row, "Help Text"))
+                a.pickUp = at.value(row, "Pick Up Text"); a.cost = Int(at.value(row, "Cost")) ?? 0
+                a.allowedByDefault = !["0", "no", "false"].contains(at.value(row, "Allowed By Default").lowercased())
+                arts[row[0].lowercased()] = a
             }
         }
         artifacts = arts

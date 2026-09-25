@@ -136,6 +136,7 @@ if let tables = ruleTables { game.tables = tables; lap("rules: \(tables.creature
 let alignments = ["haven": "life", "academy": "order", "asylum": "chaos", "necropolis": "death", "preserve": "nature", "stronghold": "might"]
 func faction(of name: String) -> String { alignments.first { name.lowercased().contains($0.key) }?.value ?? "life" }
 game.registerObjects(townFactions: Dictionary(scenes.flatMap { $0.placed }.filter { $0.category == "castle" }.map { ($0.name, faction(of: $0.name)) }, uniquingKeysWith: { a, _ in a }))
+game.setupObjects()   // chests, piles, generators: their contents are rolled as the game starts
 let ownedByFirst = map.objects.first { ($0.type == "town" || $0.type == "random_town") && $0.owner == map.humanColour && $0.level == scene.level }
 if let town = scene.placed.first(where: { p in ownedByFirst.map { p.category == "castle" && p.cellX == $0.x && p.cellY == $0.y } ?? false })
     ?? scene.placed.filter({ $0.category == "castle" }).min(by: { ($0.cellY - $0.cellX) < ($1.cellY - $1.cellX) }) {
@@ -204,6 +205,22 @@ if ProcessInfo.processInfo.environment["H4AMBIENT"] != nil {   // debugging aid:
         if let n = [full, short].first(where: { snd.has($0) }) { found[n, default: 0] += 1 } else { missing[full, default: 0] += 1 }
     }
     print("ambient found \(found)\nnone for \(missing)")
+    exit(0)
+}
+if ProcessInfo.processInfo.environment["H4VISITALL"] != nil, let h = game.heroes.first {   // debugging aid: every object's visit, once
+    var seen: Set<String> = []
+    for p in scene.placed where game.hasVisit(p) && !seen.contains("\(p.type).\(p.subtype)") {
+        seen.insert("\(p.type).\(p.subtype)")
+        let before = game.resources, lv = h.level
+        game.scripts.messages = []; game.floaters = []
+        _ = game.debugVisit(hero: h, p)
+        let diff = game.resources.filter { $0.value != before[$0.key] }.map { "\($0.key) \($0.value - (before[$0.key] ?? 0))" }
+        print("== \(p.type).\(p.subtype) at (\(p.cellX),\(p.cellY)): \(diff) floaters \(game.floaters.map { $0.text }) level \(lv)->\(h.level) q \(game.question?.text.prefix(60) ?? "-") chest \(game.chestOffer.map { "\($0.gold)/\($0.experience)" } ?? "-")")
+        for m in game.scripts.messages { print("   \(m.prefix(150))") }
+        game.question = nil; game.chestOffer = nil
+    }
+    print("resources now \(game.resources)")
+    print("hero: atk+\(h.attackBonus) def+\(h.defenseBonus) spd+\(h.speedBonus) sp+\(h.spellPointBonus) exp \(h.experience) luck \(h.armyLuck) morale \(h.armyMorale) temple \(h.templeAlignment ?? "-") backpack \(h.backpack.map { game.artifactName($0) })")
     exit(0)
 }
 // the map's scripts: loaded, then day 1's events (the opening story, ...)

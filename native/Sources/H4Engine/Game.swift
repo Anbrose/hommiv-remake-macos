@@ -207,6 +207,22 @@ public final class Hero {
     public var heroClass = -1
     public var home: (x: Int, y: Int) = (0, 0)   // where a beaten hero regroups
     public var z = 0                              // map level (0 surface, 1 underground)
+    // What adventure objects gave the hero (heroes4.exe's bonus array at hero+0x10: attack,
+    // defense, speed and spell points; the Dream Teachers visited at +0x7a0)
+    public var attackBonus = 0, defenseBonus = 0, speedBonus = 0, spellPointBonus = 0
+    public var dreamTeachers = 0
+    /// Spell points now (nil: full), and the percent mana sources restored today (hero+0x7e8).
+    public var spellPoints: Int? = nil
+    public var manaRestoredToday = 0
+    /// Once-per-hero objects this hero has used ("z|x|y" keys).
+    public var visitedObjects: Set<String> = []
+    /// Until the next battle: fountain effects on the hero ("strength", "speed", "vigor").
+    public var fountainEffects: Set<String> = []
+    /// Until the next battle, for the army: luck and morale by object type, and a temple's alignment.
+    public var armyLuck: [String: Int] = [:], armyMorale: [String: Int] = [:]
+    public var templeAlignment: String? = nil
+    /// Timed army effects by object type (movement boosters, lodges): days left.
+    public var timedEffects: [String: Int] = [:]
     public var x: Int, y: Int         // current cell
     public var facing = "s"
     public var movement: Float
@@ -274,6 +290,14 @@ public final class GameState {
         set { passabilities[min(level, passabilities.count - 1)] = newValue }
     }
     public var heroes: [Hero] = []
+    /// Each adventure object's rolled contents and state, by "level|x|y".
+    public var objectStates: [String: ObjectState] = [:]
+    /// Artifacts already handed out by the random picker (it avoids repeats).
+    public var usedArtifacts: Set<Int> = []
+    /// A yes/no question an object asks (the UI shows it; yes runs the action).
+    public var question: (text: String, yes: () -> Void)?
+    /// The marketplace to open (its rate class: 3 the panel's Marketplace, 2 a Trading Post).
+    public var marketOpen: Int?
     /// Things that happened this frame, for the UI (e.g. "picked up Resources.Gold").
     public var log: [String] = []
     /// Sounds the last actions call for (names under "sound.", e.g. miscellaneous.flag_mine), for the UI to play.
@@ -299,7 +323,12 @@ public final class GameState {
         public var z = 0                                // map level
     }
     public struct Mine { public let x: Int, y: Int, name: String, resource: String, amount: Int; public var owned: Bool; public var z = 0 }
-    public struct Dwelling { public let x: Int, y: Int, name: String, creature: String; public var available: Int; public var z = 0 }
+    /// A creature dwelling on the map: a week's growth waits at the start; once owned it grows by
+    /// the weekly growth in fourteenths each day (heroes4.exe 0x43cdb0: half a week's growth a week).
+    public struct Dwelling {
+        public let x: Int, y: Int, name: String, creature: String; public var available: Int; public var z = 0
+        public var owned = false, fourteenths = 0
+    }
     public struct Monster {
         public var x: Int, y: Int
         public var z = 0   // map level
@@ -494,7 +523,7 @@ public final class GameState {
 
     /// Objects a hero walks up to and uses: pickups, mines, dwellings, monsters and towns.
     public func isVisitable(_ p: MapScene.Placed) -> Bool {
-        isPickup(p) || mine(for: p) != nil || dwelling(for: p) != nil || monster(for: p) != nil || town(for: p) != nil
+        hasVisit(p) || isPickup(p) || mine(for: p) != nil || dwelling(for: p) != nil || monster(for: p) != nil || town(for: p) != nil
     }
 
     /// The town screen to open, set when a hero enters a town; the UI clears it.
@@ -572,9 +601,9 @@ public final class GameState {
 
     /// A hero's combat numbers as the hero screen shows them (the quick-combat formulas).
     public func heroStats(_ h: Hero) -> (attack: Int, defense: Int, damage: String, hitPoints: Int, speed: Int, move: Int, ranged: Int, shots: Int, spellPoints: Int) {
-        let c = Combatant(hero: h.name, level: h.level, skills: h.skills)
+        let c = heroCombatant(h)
         // spell points: 10, and 10 per level of Healing, Enchantment, Occultism, Conjuration and Herbalism (0x729ff0)
-        let sp = 10 + 10 * ["healing", "enchantment", "black", "conjuration", "herbalism"].reduce(0) { $0 + h.skill($1) }
+        let sp = maxSpellPoints(h)
         return (c.attack, c.defense, "\(c.damageLow)-\(c.damageHigh)", c.hitPoints, c.speed, Int(h.maxMovement), c.rangedAttack ?? c.attack, c.shots, sp)
     }
 
@@ -627,6 +656,19 @@ public final class GameState {
 
     /// The game's random numbers for rules ported from the exe.
     public var random = H4Random()
+    /// A hero as a fighter: its level and skills, what objects gave it (attack, defense, speed:
+    /// the bonus array, shown 1:1), and until the next battle the fountains' +20% damage (effect
+    /// 0x99), +2 speed (0x92) and more hit points (0x39).
+    public func heroCombatant(_ h: Hero) -> Combatant {
+        var c = Combatant(hero: h.name, level: h.level, skills: h.skills)
+        c.attack += h.attackBonus; c.rangedAttack = c.rangedAttack.map { $0 + h.attackBonus }
+        c.defense += h.defenseBonus
+        c.speed = max(1, c.speed + h.speedBonus + (h.fountainEffects.contains("speed") ? 2 : 0))
+        if h.fountainEffects.contains("strength") { c.damageLow += c.damageLow / 5; c.damageHigh += c.damageHigh / 5 }
+        if h.fountainEffects.contains("vigor") { c.hitPoints += c.hitPoints / 5 }
+        return c
+    }
+
     /// Experience for an army: each of its heroes gains it, learning a skill per level reached.
     public func giveExperience(_ n: Int, to hero: Hero) {
         for h in [hero] + hero.companions {
@@ -674,7 +716,7 @@ public final class GameState {
 
     /// The hero's army as combatants, its heroes first.
     func combatants(of hero: Hero) -> [Combatant] {
-        var out = ([hero] + hero.companions).map { Combatant(hero: $0.name, level: $0.level, skills: $0.skills) }
+        var out = ([hero] + hero.companions).map { heroCombatant($0) }
         for s in hero.army { if let c = tables?.creature(s.creature) { out.append(Combatant(creature: c, count: s.count)) } }
         return out
     }
@@ -701,6 +743,7 @@ public final class GameState {
     /// thinned, experience, a beaten hero sent home.
     public func finishBattle(hero: Hero, monsterAt i: Int, _ p: MapScene.Placed, won: Bool, army: [Hero.Stack], monstersLeft: Int, experience: Int, rounds: Int) {
         guard let t = tables, i < monsters.count, let c = t.creature(monsters[i].creature) else { return }
+        clearBattleEffects(hero)
         hero.army = army
         refreshMovement(hero)
         if won {
@@ -883,6 +926,7 @@ public final class GameState {
     /// Use an object the hero stands next to.
     func interact(hero: Hero, _ p: MapScene.Placed) {
         if isPickup(p) { take(hero: hero, p); return }
+        if visitObject(hero: hero, p) { return }
         if let i = monster(for: p) { fight(hero: hero, monsterAt: i, p); return }
         if let i = town(for: p) {
             if !towns[i].owned {
@@ -903,6 +947,8 @@ public final class GameState {
             hero.target = nil
         }
         if let i = dwelling(for: p), let c = tables?.creature(dwellings[i].creature) {
+            if !dwellings[i].owned { dwellings[i].owned = true; sounds.append("miscellaneous.flag_mine") }
+            sounds.append("dialogue.recruit")
             // recruit everything you can afford (a proper dialog comes later)
             let affordable = c.gold > 0 ? resources["Gold", default: 0] / c.gold : dwellings[i].available
             let n = min(dwellings[i].available, affordable)
@@ -988,6 +1034,7 @@ public final class GameState {
 
     func take(hero: Hero, _ p: MapScene.Placed) {
         guard hero.movement >= 1 else { log.append("no movement left to pick up \(p.name)"); return }
+        if hasVisit(p) { hero.movement -= 1; visitObject(hero: hero, p); return }
         scene.remove(p)
         passability.free(p.cellX, p.cellY)
         hero.movement -= 1
@@ -1016,7 +1063,10 @@ public final class GameState {
     public func resolveChest(gold: Bool) {
         guard let c = chestOffer else { return }
         if gold { resources["Gold", default: 0] += c.gold; floaters.append(("+\(c.gold) gold", c.hero.x, c.hero.y)) }
-        else { giveExperience(c.experience, to: c.hero); floaters.append(("+\(c.experience) experience", c.hero.x, c.hero.y)) }
+        else {   // shared equally by the army's heroes (0x641310 with the equal split)
+            let hs = [c.hero] + c.hero.companions
+            for h in hs { giveExperience(c.experience / hs.count, toOnly: h) }
+        }
         chestOffer = nil
     }
 
@@ -1202,9 +1252,13 @@ public final class GameState {
         day += 1
         for h in heroes { h.maxMovement = armyMovement(h); h.movement = h.maxMovement; h.path = []; h.plan = [] }
         for (res, amount) in income { resources[res, default: 0] += amount }
+        objectsNewDay()
+        for i in dwellings.indices where dwellings[i].owned {
+            dwellings[i].fourteenths += tables?.creature(dwellings[i].creature)?.growth ?? 0
+            dwellings[i].available += dwellings[i].fourteenths / 14; dwellings[i].fourteenths %= 14
+        }
         for i in towns.indices { towns[i].builtToday = false }
         if dayOfWeek == 1, let t = tables {   // a new week: dwellings restock, in towns too
-            for i in dwellings.indices { dwellings[i].available += t.creature(dwellings[i].creature)?.growth ?? 0 }
             for i in towns.indices {
                 for b in t.buildings(for: towns[i].alignment) where towns[i].buildings.contains(b.keyword) {
                     if let c = b.creature, let def = t.creature(c) { towns[i].available[c, default: 0] += def.growth }

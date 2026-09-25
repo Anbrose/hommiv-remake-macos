@@ -24,6 +24,8 @@ public struct SaveGame: Codable {
     public var removedByLevel: [[MapScene.SavedObject]]? = nil
     public var movedByLevel: [[MapScene.MovedObject]]? = nil
     public var level: Int? = nil
+    public var objectStates: [String: ObjectState]? = nil
+    public var usedArtifacts: [Int]? = nil
 
     public struct Stack: Codable { public var creature: String; public var count: Int }
     public struct Cell: Codable { public var x: Int, y: Int }
@@ -43,6 +45,9 @@ public struct SaveGame: Codable {
         public var equipped: [Int?]?, backpack: [Int]?
         public var companions: [HeroState]?
         public var z: Int?
+        public var bonuses: [Int]?          // attack, defense, speed, spell points, dream teachers, spell points now (-1 full), mana today
+        public var visitedObjects: [String]?, fountainEffects: [String]?, timedEffects: [String: Int]?
+        public var armyLuck: [String: Int]?, armyMorale: [String: Int]?, templeAlignment: String?
     }
     public struct TownState: Codable {
         public var x, y: Int
@@ -53,7 +58,7 @@ public struct SaveGame: Codable {
         public var builtToday: Bool
     }
     public struct CellFlag: Codable { public var x, y: Int; public var on: Bool }
-    public struct CellCount: Codable { public var x, y: Int; public var count: Int }
+    public struct CellCount: Codable { public var x, y: Int; public var count: Int; public var owned: Bool? = nil; public var fourteenths: Int? = nil }
     public struct MonsterState: Codable {
         public var x, y: Int, name, creature: String
         public var count: Int
@@ -87,7 +92,7 @@ extension GameState {
                  towns: towns.map { .init(x: $0.x, y: $0.y, name: $0.name, owned: $0.owned, owner: $0.owner, buildings: Array($0.buildings).sorted(),
                                           available: $0.available, builtToday: $0.builtToday) },
                  mines: mines.map { .init(x: $0.x, y: $0.y, on: $0.owned) },
-                 dwellings: dwellings.map { .init(x: $0.x, y: $0.y, count: $0.available) },
+                 dwellings: dwellings.map { .init(x: $0.x, y: $0.y, count: $0.available, owned: $0.owned, fourteenths: $0.fourteenths) },
                  monsters: monsters.map { .init(x: $0.x, y: $0.y, name: $0.name, creature: $0.creature, count: $0.count,
                                                 extra: $0.extra.map { .init(creature: $0.creature, count: $0.count) }, z: $0.z) },
                  removed: scene.removed, moved: scene.moved,
@@ -96,7 +101,8 @@ extension GameState {
                                 mapEventsEnabled: scripts.mapEvents.map { $0.enabled },
                                 townEventsEnabled: Dictionary(uniqueKeysWithValues: scripts.townEvents.map { ("\($0.key)", $0.value.map { $0.enabled }) })),
                  outcome: outcome, victoryDays: victoryDays,
-                 removedByLevel: scenes.map { $0.removed }, movedByLevel: scenes.map { $0.moved }, level: level)
+                 removedByLevel: scenes.map { $0.removed }, movedByLevel: scenes.map { $0.moved }, level: level,
+                 objectStates: objectStates, usedArtifacts: Array(usedArtifacts).sorted())
     }
 
     /// Put a saved game's state over this freshly started scenario.
@@ -125,7 +131,7 @@ extension GameState {
             towns[i].buildings = Set(t.buildings); towns[i].available = t.available; towns[i].builtToday = t.builtToday
         }
         for m in s.mines { if let i = mines.firstIndex(where: { $0.x == m.x && $0.y == m.y }) { mines[i].owned = m.on } }
-        for d in s.dwellings { if let i = dwellings.firstIndex(where: { $0.x == d.x && $0.y == d.y }) { dwellings[i].available = d.count } }
+        for d in s.dwellings { if let i = dwellings.firstIndex(where: { $0.x == d.x && $0.y == d.y }) { dwellings[i].available = d.count; dwellings[i].owned = d.owned ?? false; dwellings[i].fourteenths = d.fourteenths ?? 0 } }
         // the monsters as saved: the beaten ones are gone (their objects are in `removed`), the rest keep their size
         monsters = s.monsters.map { st in
             var m = Monster(x: st.x, y: st.y, name: st.name, creature: st.creature, count: st.count, extra: st.extra.map { ($0.creature, $0.count) })
@@ -142,6 +148,8 @@ extension GameState {
             scripts.townEvents[t] = evs
         }
         outcome = s.outcome; victoryDays = s.victoryDays
+        if let o = s.objectStates { objectStates = o }
+        if let u = s.usedArtifacts { usedArtifacts = Set(u) }
     }
 }
 
@@ -157,6 +165,9 @@ extension SaveGame {
         st.equipped = h.equipped; st.backpack = h.backpack
         st.companions = h.companions.map { state(of: $0) }
         st.z = h.z
+        st.bonuses = [h.attackBonus, h.defenseBonus, h.speedBonus, h.spellPointBonus, h.dreamTeachers, h.spellPoints ?? -1, h.manaRestoredToday]
+        st.visitedObjects = Array(h.visitedObjects).sorted(); st.fountainEffects = Array(h.fountainEffects).sorted(); st.timedEffects = h.timedEffects
+        st.armyLuck = h.armyLuck; st.armyMorale = h.armyMorale; st.templeAlignment = h.templeAlignment
         return st
     }
     static func hero(from st: HeroState) -> Hero {
@@ -170,6 +181,12 @@ extension SaveGame {
         h.backpack = st.backpack ?? []
         h.companions = (st.companions ?? []).map { hero(from: $0) }
         h.z = st.z ?? 0
+        if let b = st.bonuses, b.count >= 7 {
+            h.attackBonus = b[0]; h.defenseBonus = b[1]; h.speedBonus = b[2]; h.spellPointBonus = b[3]; h.dreamTeachers = b[4]
+            h.spellPoints = b[5] < 0 ? nil : b[5]; h.manaRestoredToday = b[6]
+        }
+        h.visitedObjects = Set(st.visitedObjects ?? []); h.fountainEffects = Set(st.fountainEffects ?? []); h.timedEffects = st.timedEffects ?? [:]
+        h.armyLuck = st.armyLuck ?? [:]; h.armyMorale = st.armyMorale ?? [:]; h.templeAlignment = st.templeAlignment
         h.facing = st.facing; h.movement = st.movement; h.maxMovement = st.maxMovement
         h.plan = st.plan.map { ($0.x, $0.y) }
         if let t = st.target, let n = st.targetName { h.target = (t.x, t.y, n) }

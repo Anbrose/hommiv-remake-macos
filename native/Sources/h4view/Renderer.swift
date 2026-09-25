@@ -116,13 +116,24 @@ final class Renderer: NSObject, MTKViewDelegate {
     var townHover: String?
 
     /// Quads of the town screen (replaces the map and the adventure chrome).
+    /// Buildings with levels show only their highest built level (the halls, the walls, the guilds).
+    static let levelChains = [["village hall", "town hall", "city hall"], ["fort", "citadel", "castle"],
+                              ["mage guild 1", "mage guild 2", "mage guild 3", "mage guild 4", "mage guild 5"]]
+    static func shown(_ built: Set<String>) -> Set<String> {
+        var s = built
+        for chain in levelChains {
+            if let top = chain.lastIndex(where: { built.contains($0) }) { for k in 0..<top { s.remove(chain[k]) } }
+        }
+        return s
+    }
+
     /// The built building under a canvas point: the front-most whose picture is opaque there.
     func townBuilding(at x: Float, _ y: Float) -> UILayer? {
         guard let ts = town, let g = game, let i = townOpen, i < g.towns.count, y < 546 else { return nil }
         let t = g.towns[i]
         guard let lay = ts.layout(t.alignment) else { return nil }
         let hits = lay.layers.filter { l in
-            guard t.buildings.contains(l.name.lowercased()), l.width > 0 else { return false }
+            guard Renderer.shown(t.buildings).contains(l.name.lowercased()), l.width > 0 else { return false }
             let r = TownScreen.place(l)
             guard x >= Float(r.x), x < Float(r.x + r.w), y >= Float(r.y), y < Float(r.y + r.h) else { return false }
             let px = Int((x - Float(r.x)) * Float(l.width) / Float(r.w)), py = Int((y - Float(r.y)) * Float(l.height) / Float(r.h))
@@ -157,7 +168,7 @@ final class Renderer: NSObject, MTKViewDelegate {
                 let r = TownScreen.place(bg); out.append(Quad(texture: uiTexture("town|\(t.alignment)|\(t.terrain)|bg", { bg.bitmap }), x: r.x, y: r.y, w: r.w, h: r.h))
             }
             if let lay = ts.layout(t.alignment) {
-                let built = lay.layers.filter { t.buildings.contains($0.name.lowercased()) && $0.width > 0 }.sorted { $0.y + $0.height < $1.y + $1.height }
+                let built = lay.layers.filter { Renderer.shown(t.buildings).contains($0.name.lowercased()) && $0.width > 0 }.sorted { $0.y + $0.height < $1.y + $1.height }
                 for b in built {
                     if let sh = lay.layers.first(where: { $0.name.lowercased() == b.name.lowercased() + " shadow" }), sh.width > 0 {
                         let r = TownScreen.place(sh); out.append(Quad(texture: uiTexture("town|\(t.alignment)|\(sh.name)", { sh.bitmap }), x: r.x, y: r.y, w: r.w, h: r.h))
@@ -169,8 +180,11 @@ final class Renderer: NSObject, MTKViewDelegate {
                         if !frames.isEmpty {
                             let period = frames[0].speed > 0 ? Double(frames[0].speed) / 60.0 : 0.125
                             let f = frames[Int(Date().timeIntervalSince1970 / period) % frames.count]
+                            // frame boxes are measured from the 1x1 "animation_position" marker,
+                            // which sits where the building's picture starts
+                            let anchor = anim.images.first { $0.name == "animation_position" }?.box ?? (left: 0, top: 0, right: 0, bottom: 0)
                             if f.bitmap.width > 1 {
-                                let l = UILayer(name: f.name, kind: 4, x: b.x + f.box.left, y: b.y + f.box.top, width: f.bitmap.width, height: f.bitmap.height, bitmap: f.bitmap)
+                                let l = UILayer(name: f.name, kind: 4, x: b.x + f.box.left - anchor.left, y: b.y + f.box.top - anchor.top, width: f.bitmap.width, height: f.bitmap.height, bitmap: f.bitmap)
                                 let fr = TownScreen.place(l)
                                 out.append(Quad(texture: texture(for: f, of: "townanim.\(t.alignment).\(b.name)"), x: fr.x, y: fr.y, w: fr.w, h: fr.h))
                             }

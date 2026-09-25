@@ -125,6 +125,7 @@ public final class Battle {
             case .loose: break
             }
         }
+        for side in 0..<2 { initialHealth[side] = units.filter { $0.side == side }.reduce(0) { $0 + $1.stats.totalHealth } }
         startRound()
     }
 
@@ -158,14 +159,48 @@ public final class Battle {
     }
 
     /// Morale (heroes4.exe 0x5f0020): mechanical and undead creatures have none; otherwise the
-    /// army's sources, clamped to -10...10.
+    /// stack's morale from its army plus the side's loss penalty, clamped to -10...10.
     func morale(_ u: Unit) -> Int {
         if u.stats.has("mechanical") || u.stats.has("undead") { return 0 }
-        return min(10, max(-10, u.stats.morale))
+        return min(10, max(-10, u.stats.morale + lossPenalty[u.side]))
+    }
+
+    /// Alignments in the game's order (life, order, death, chaos, nature, might).
+    public static let alignments = ["life", "order", "death", "chaos", "nature", "might"]
+    /// How two alignments get on (0x51ecf0): 0 the same, 1 neighbours on the wheel of the first
+    /// five, 2 when either is might, 3 opposed; morale for each is 0, -1, -2, -5 (0xa643f8).
+    static func relation(_ a: Int, _ b: Int) -> Int {
+        if a == b { return 0 }
+        if a == 5 || b == 5 { return 2 }
+        let d = ((a - b + 5) % 5 + 5) % 5
+        return d == 1 || d == 4 ? 1 : 3
+    }
+    /// A stack's morale from the army it is in (0x640310): +1, then for every alignment present
+    /// (heroes included) the relation's penalty, and -2 with undead in the army unless it is death.
+    public static func armyMorale(own: String, army: [(alignment: String, undead: Bool)]) -> Int {
+        let me = alignments.firstIndex(of: own.lowercased()) ?? 0
+        var m = 1
+        for a in Set(army.compactMap { alignments.firstIndex(of: $0.alignment.lowercased()) }) { m += [0, -1, -2, -5][relation(me, a)] }
+        if army.contains(where: { $0.undead }) && me != 2 { m -= 2 }
+        return m
+    }
+
+    /// Losses sap morale (0x576390): each side's loss is -(10 x hit points lost / hit points at the
+    /// start), and a side that has lost more than the enemy takes the difference.
+    var initialHealth = [0, 0]
+    var lossPenalty = [0, 0]
+    func updateLossMorale() {
+        var loss = [0, 0]
+        for side in 0..<2 where initialHealth[side] > 0 {
+            let now = units.filter { $0.side == side && $0.alive }.reduce(0) { $0 + $1.stats.totalHealth }
+            if now < initialHealth[side] { loss[side] = (now - initialHealth[side]) * 10 / initialHealth[side] }
+        }
+        for side in 0..<2 { lossPenalty[side] = min(0, loss[side] - loss[1 - side]) }
     }
     /// The unit coming up checks its morale once a round (0x5f3710): bad when 9 - roll < -morale,
     /// and it falls behind everyone who kept their +1000; good when roll < morale.
     func checkMorale() {
+        updateLossMorale()
         while finished == nil, let u = current, !u.moraleChecked {
             u.moraleChecked = true
             let m = morale(u)

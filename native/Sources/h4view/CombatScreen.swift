@@ -29,6 +29,20 @@ final class CombatScreen {
     var result: (won: Bool, rounds: Int)?
     var showResults = false
     var floaters: [(text: String, x: Float, y: Float, since: Date)] = []
+    /// Spell-style effects playing over a unit (morale shows "sorrow" / "spiritual fervor").
+    var effects: [(name: String, unit: Int, since: Date)] = []
+    var strings: [String: String] = [:]
+    var effectSprites: [String: Sprite] = [:]
+    func effectSprite(_ name: String) -> Sprite? {
+        if effectSprites[name] == nil, let d = payload("animation.spell.\(name).h4d") { effectSprites[name] = try? Sprite(data: d) }
+        return effectSprites[name]
+    }
+    /// How long an effect runs: its frames' durations (1/60 s each unit), about 1 s without them.
+    func effectDuration(_ name: String) -> Double {
+        guard let s = effectSprite(name) else { return 1 }
+        let t = s.frames.reduce(0) { $0 + max(1, $1.speed) }
+        return t > s.frames.count ? Double(t) / 60 : Double(s.frames.count) / 12
+    }
 
     static let sceneScale: Float = 0.75
     /// Cells walked per second (the original crosses a diamond in about a fifth of a second).
@@ -105,17 +119,24 @@ final class CombatScreen {
         Combatant.abilityKeywords = t.abilityKeywords
         guard let f = field else { return }
         let classActor = "hero.\(h.alignment)_fighter_male"
-        func fighter(_ cd: CreatureDef, _ n: Int) -> Battle.Fighter {
-            Battle.Fighter(stats: Combatant(creature: cd, count: n), keyword: cd.keyword, actor: cd.name, size: actor(cd.name)?.size ?? 4, move: cd.move, shots: cd.shots)
+        // morale from each army's alignments (heroes4.exe 0x640310)
+        let heroArmy: [(alignment: String, undead: Bool)] = [(h.alignment, false)] + h.army.compactMap { st in t.creature(st.creature).map { ($0.alignment, Combatant(creature: $0, count: 1).has("undead")) } }
+        let monsterArmy: [(alignment: String, undead: Bool)] = [(c.alignment, Combatant(creature: c, count: 1).has("undead"))]
+        func fighter(_ cd: CreatureDef, _ n: Int, army: [(alignment: String, undead: Bool)]) -> Battle.Fighter {
+            var st = Combatant(creature: cd, count: n)
+            st.morale = Battle.armyMorale(own: cd.alignment, army: army)
+            return Battle.Fighter(stats: st, keyword: cd.keyword, actor: cd.name, size: actor(cd.name)?.size ?? 4, move: cd.move, shots: cd.shots)
         }
+        strings = t.strings
         // a hero moves 24 cells (heroes4.exe: 2400 movement, 100 a cell) at Speed 6 plus skill bonuses
         var heroStats = Combatant(hero: h.name, level: h.level)
         heroStats.speed = 6
+        heroStats.morale = Battle.armyMorale(own: h.alignment, army: heroArmy)
         var attackers = [Battle.Fighter(stats: heroStats, keyword: h.keyword, actor: classActor, size: actor(classActor)?.size ?? 4, move: 24, shots: 0, slot: 0)]
-        for (k, s) in h.army.enumerated() { if let cd = t.creature(s.creature) { var f = fighter(cd, s.count); f.slot = k + 1; attackers.append(f) } }
-        let defenders = [fighter(c, g.monsters[i].count)]
+        for (k, s) in h.army.enumerated() { if let cd = t.creature(s.creature) { var f = fighter(cd, s.count, army: heroArmy); f.slot = k + 1; attackers.append(f) } }
+        let defenders = [fighter(c, g.monsters[i].count, army: monsterArmy)]
         battle = Battle(field: f, attackers: attackers, defenders: defenders, seed: seed)
-        queue = []; playing = nil; unitPos = [:]; unitState = [:]; dead = []; result = nil; showResults = false; floaters = []
+        queue = []; playing = nil; unitPos = [:]; unitState = [:]; dead = []; result = nil; showResults = false; floaters = []; effects = []
         pump()
     }
 
@@ -150,6 +171,7 @@ final class CombatScreen {
         }
         if playing == nil { pump() }
         floaters.removeAll { now.timeIntervalSince($0.since) > 1.5 }
+        effects.removeAll { now.timeIntervalSince($0.since) > effectDuration($0.name) }
     }
 
     func begin(_ e: Battle.Event, now: Date) {
@@ -177,7 +199,14 @@ final class CombatScreen {
         case .defend(let id):
             unitState[id] = ("block", now, true)
             playing = Anim(event: e, started: now, duration: 0.3)
-        case .wait, .newRound, .morale:
+        case .morale(let id, let good):
+            // bad morale plays the sorrow effect, good morale spiritual fervor (0x5f3710 -> 0x575a70 with 0x91 / 0x94)
+            let name = good ? "spiritual fervor" : "sorrow"
+            effects.append((name, id, now))
+            let u = b.unit(id)
+            floaters.append((strings[good ? "combat_action.good_morale" : "combat_action.bad_morale"] ?? (good ? "Good Morale" : "Bad Morale"), u.centre.0, u.centre.1, now))
+            playing = Anim(event: e, started: now, duration: effectDuration(name))
+        case .wait, .newRound:
             break
         case .finished(let won):
             result = (won, b.round)

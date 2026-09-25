@@ -129,6 +129,17 @@ extension Renderer {
             drawn.append((py + (u.alive ? 0 : -1000), q))
         }
         for (_, q) in drawn.sorted(by: { $0.0 < $1.0 }) { out += q }
+        // spell-style effects over units: the frame canvas centred on the unit, its bottom at the feet
+        for fx in cs.effects {
+            guard let sp = cs.effectSprite(fx.name), !sp.frames.isEmpty else { continue }
+            let frames = sp.frames
+            let k = min(frames.count - 1, Int(Double(frames.count) * now.timeIntervalSince(fx.since) / cs.effectDuration(fx.name)))
+            let fr = frames[max(0, k)]
+            let width = frames.map { $0.box.right }.max() ?? fr.box.right, height = frames.map { $0.box.bottom }.max() ?? fr.box.bottom
+            let u = b.unit(fx.unit)
+            let (px, py) = CombatScreen.point(u.centre.0, u.centre.1)
+            out.append(Quad(texture: texture(for: fr, of: "spell.\(fx.name)"), x: Int(px) - width / 2 + fr.box.left, y: Int(py) - height + fr.box.top + 8, w: fr.bitmap.width, h: fr.bitmap.height))
+        }
         // damage numbers
         for fl in cs.floaters {
             let age = Float(max(0, now.timeIntervalSince(fl.since)))

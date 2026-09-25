@@ -20,6 +20,10 @@ public struct SaveGame: Codable {
     public var scripts: ScriptSave
     public var outcome: Bool?
     public var victoryDays: Int?
+    /// Per map level (saves from before the underground: nil, the surface's are `removed`/`moved`).
+    public var removedByLevel: [[MapScene.SavedObject]]? = nil
+    public var movedByLevel: [[MapScene.MovedObject]]? = nil
+    public var level: Int? = nil
 
     public struct Stack: Codable { public var creature: String; public var count: Int }
     public struct Cell: Codable { public var x: Int, y: Int }
@@ -38,6 +42,7 @@ public struct SaveGame: Codable {
         public var level: Int?, heroClass: Int?, lastCombatOffer: Int?
         public var equipped: [Int?]?, backpack: [Int]?
         public var companions: [HeroState]?
+        public var z: Int?
     }
     public struct TownState: Codable {
         public var x, y: Int
@@ -53,6 +58,7 @@ public struct SaveGame: Codable {
         public var x, y: Int, name, creature: String
         public var count: Int
         public var extra: [Stack]
+        public var z: Int? = nil
     }
     public struct ScriptSave: Codable {
         public var numbers: [String: Int], flags: [String: Bool], messages: [String]
@@ -83,27 +89,35 @@ extension GameState {
                  mines: mines.map { .init(x: $0.x, y: $0.y, on: $0.owned) },
                  dwellings: dwellings.map { .init(x: $0.x, y: $0.y, count: $0.available) },
                  monsters: monsters.map { .init(x: $0.x, y: $0.y, name: $0.name, creature: $0.creature, count: $0.count,
-                                                extra: $0.extra.map { .init(creature: $0.creature, count: $0.count) }) },
+                                                extra: $0.extra.map { .init(creature: $0.creature, count: $0.count) }, z: $0.z) },
                  removed: scene.removed, moved: scene.moved,
                  scripts: .init(numbers: scripts.numbers, flags: scripts.flags, messages: scripts.messages,
                                 victoryText: scripts.victoryText, lossText: scripts.lossText, standardVictoryOn: scripts.standardVictoryOn,
                                 mapEventsEnabled: scripts.mapEvents.map { $0.enabled },
                                 townEventsEnabled: Dictionary(uniqueKeysWithValues: scripts.townEvents.map { ("\($0.key)", $0.value.map { $0.enabled }) })),
-                 outcome: outcome, victoryDays: victoryDays)
+                 outcome: outcome, victoryDays: victoryDays,
+                 removedByLevel: scenes.map { $0.removed }, movedByLevel: scenes.map { $0.moved }, level: level)
     }
 
     /// Put a saved game's state over this freshly started scenario.
     public func restore(_ s: SaveGame) {
         day = s.day
         resources = s.resources
-        for m in s.moved ?? [] {
-            if let p = scene.placed.first(where: { $0.cellX == m.fromX && $0.cellY == m.fromY && $0.name == m.name }) {
-                passability.free(m.fromX, m.fromY); passability.block(m.toX, m.toY)
-                scene.relocate(p, toX: m.toX, y: m.toY)
+        let playing = level
+        for l in scenes.indices {
+            level = l
+            let moved = s.movedByLevel.map { l < $0.count ? $0[l] : [] } ?? (l == 0 ? s.moved ?? [] : [])
+            let removed = s.removedByLevel.map { l < $0.count ? $0[l] : [] } ?? (l == 0 ? s.removed : [])
+            for m in moved {
+                if let p = scene.placed.first(where: { $0.cellX == m.fromX && $0.cellY == m.fromY && $0.name == m.name }) {
+                    passability.free(m.fromX, m.fromY); passability.block(m.toX, m.toY)
+                    scene.relocate(p, toX: m.toX, y: m.toY)
+                }
             }
+            scene.removeAll(removed)
+            for o in removed { passability.free(o.x, o.y) }
         }
-        scene.removeAll(s.removed)
-        for o in s.removed { passability.free(o.x, o.y) }
+        level = s.level ?? playing
         heroes = s.heroes.map { SaveGame.hero(from: $0) }
         for t in s.towns {
             guard let i = towns.firstIndex(where: { $0.x == t.x && $0.y == t.y }) else { continue }
@@ -113,8 +127,11 @@ extension GameState {
         for m in s.mines { if let i = mines.firstIndex(where: { $0.x == m.x && $0.y == m.y }) { mines[i].owned = m.on } }
         for d in s.dwellings { if let i = dwellings.firstIndex(where: { $0.x == d.x && $0.y == d.y }) { dwellings[i].available = d.count } }
         // the monsters as saved: the beaten ones are gone (their objects are in `removed`), the rest keep their size
-        monsters = s.monsters.map { Monster(x: $0.x, y: $0.y, name: $0.name, creature: $0.creature, count: $0.count,
-                                            extra: $0.extra.map { ($0.creature, $0.count) }) }
+        monsters = s.monsters.map { st in
+            var m = Monster(x: st.x, y: st.y, name: st.name, creature: st.creature, count: st.count, extra: st.extra.map { ($0.creature, $0.count) })
+            m.z = st.z ?? 0
+            return m
+        }
         scripts.numbers = s.scripts.numbers; scripts.flags = s.scripts.flags; scripts.messages = s.scripts.messages
         scripts.victoryText = s.scripts.victoryText; scripts.lossText = s.scripts.lossText
         scripts.standardVictoryOn = s.scripts.standardVictoryOn
@@ -139,6 +156,7 @@ extension SaveGame {
         st.level = h.level; st.heroClass = h.heroClass; st.lastCombatOffer = h.lastCombatOffer
         st.equipped = h.equipped; st.backpack = h.backpack
         st.companions = h.companions.map { state(of: $0) }
+        st.z = h.z
         return st
     }
     static func hero(from st: HeroState) -> Hero {
@@ -151,6 +169,7 @@ extension SaveGame {
         if let e = st.equipped { h.equipped = e }
         h.backpack = st.backpack ?? []
         h.companions = (st.companions ?? []).map { hero(from: $0) }
+        h.z = st.z ?? 0
         h.facing = st.facing; h.movement = st.movement; h.maxMovement = st.maxMovement
         h.plan = st.plan.map { ($0.x, $0.y) }
         if let t = st.target, let n = st.targetName { h.target = (t.x, t.y, n) }

@@ -273,10 +273,10 @@ final class AdventureUI {
                 bm.pixels[o] = rgb.0; bm.pixels[o + 1] = rgb.1; bm.pixels[o + 2] = rgb.2; bm.pixels[o + 3] = 255
             } }
         }
-        for m in g.mines { let (px, py) = point(m.x, m.y); diamond(px, py, 2, m.owned ? playerColours[0] : (160, 160, 160)) }
+        for m in g.mines where m.z == g.level { let (px, py) = point(m.x, m.y); diamond(px, py, 2, m.owned ? playerColours[0] : (160, 160, 160)) }
         for d in g.dwellings { let (px, py) = point(d.x, d.y); diamond(px, py, 2, (160, 160, 160)) }
-        for t in g.towns { let (px, py) = point(t.x + 3, t.y + 3); diamond(px, py, 6, t.owned ? playerColours[0] : (200, 200, 200)) }
-        for h in g.heroes { let (px, py) = point(h.x, h.y); diamond(px, py, 1, playerColours[0]) }
+        for t in g.towns where t.z == g.level { let (px, py) = point(t.x + 3, t.y + 3); diamond(px, py, 6, t.owned ? playerColours[0] : (200, 200, 200)) }
+        for h in g.heroes where h.z == g.level { let (px, py) = point(h.x, h.y); diamond(px, py, 1, playerColours[0]) }
         return bm
     }
 

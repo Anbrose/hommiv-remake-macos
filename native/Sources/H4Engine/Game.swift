@@ -206,6 +206,7 @@ public final class Hero {
     /// The hero's class (0...47, table.skill_weights order), -1 unknown.
     public var heroClass = -1
     public var home: (x: Int, y: Int) = (0, 0)   // where a beaten hero regroups
+    public var z = 0                              // map level (0 surface, 1 underground)
     public var x: Int, y: Int         // current cell
     public var facing = "s"
     public var movement: Float
@@ -262,9 +263,16 @@ public final class Hero {
 /// Turn state of a scenario in progress.
 public final class GameState {
     public let map: MapFile
-    public let level: Int
-    public let scene: MapScene
-    public internal(set) var passability: Passability
+    /// The map level in play (0 surface, 1 underground): the active hero's, or the one viewed.
+    public var level: Int { didSet { dangerCache = nil; zoneCache = [:] } }
+    /// Each level's scene and passability; `scene` and `passability` are the current level's.
+    public let scenes: [MapScene]
+    public internal(set) var passabilities: [Passability]
+    public var scene: MapScene { scenes[min(level, scenes.count - 1)] }
+    public internal(set) var passability: Passability {
+        get { passabilities[min(level, passabilities.count - 1)] }
+        set { passabilities[min(level, passabilities.count - 1)] = newValue }
+    }
     public var heroes: [Hero] = []
     /// Things that happened this frame, for the UI (e.g. "picked up Resources.Gold").
     public var log: [String] = []
@@ -288,11 +296,13 @@ public final class GameState {
         public var available: [String: Int] = [:]      // creature keyword -> recruits waiting
         public var builtToday = false
         public var terrain: UInt8 = 1
+        public var z = 0                                // map level
     }
-    public struct Mine { public let x: Int, y: Int, name: String, resource: String, amount: Int; public var owned: Bool }
-    public struct Dwelling { public let x: Int, y: Int, name: String, creature: String; public var available: Int }
+    public struct Mine { public let x: Int, y: Int, name: String, resource: String, amount: Int; public var owned: Bool; public var z = 0 }
+    public struct Dwelling { public let x: Int, y: Int, name: String, creature: String; public var available: Int; public var z = 0 }
     public struct Monster {
         public var x: Int, y: Int
+        public var z = 0   // map level
         public let name: String, creature: String; public var count: Int
         /// The lower-level stack spending what is left of the monster's value (heroes4.exe 0x7f32b0).
         /// The army's other stacks: a random monster's escort, or a placed army's further stacks.
@@ -387,7 +397,7 @@ public final class GameState {
     public var dangerCells: Set<Int> {
         if let d = dangerCache { return d }
         var out = Set<Int>()
-        for i in monsters.indices { out.formUnion(zone(of: i)) }
+        for i in monsters.indices where monsters[i].z == level { out.formUnion(zone(of: i)) }
         dangerCache = out
         return out
     }
@@ -410,7 +420,7 @@ public final class GameState {
     /// the cell and that notices him there.
     public func threat(to h: Hero, at x: Int, _ y: Int) -> Int? {
         guard isDangerous(x, y) else { return nil }
-        return monsters.indices.first { i in zone(of: i).contains(x * map.size + y) && notices(monsters[i], h, at: x, y) }
+        return monsters.indices.first { i in monsters[i].z == level && zone(of: i).contains(x * map.size + y) && notices(monsters[i], h, at: x, y) }
     }
 
     /// The movement an army gets per day: the slowest of the hero and its creatures.
@@ -450,11 +460,15 @@ public final class GameState {
     public var dayOfWeek: Int { (day - 1) % 7 + 1 }
     public static let cellsPerSecond: Float = 4
 
-    public init(map: MapFile, level: Int, scene: MapScene) {
+    public convenience init(map: MapFile, level: Int, scene: MapScene) {
+        self.init(map: map, level: level, scenes: [scene])
+    }
+    /// A game over the map's levels (scenes in level order); `level` is the one in play first.
+    public init(map: MapFile, level: Int, scenes: [MapScene]) {
         self.map = map
-        self.level = level
-        self.scene = scene
-        passability = Passability(map: map, level: level, objects: scene.placed)
+        self.scenes = scenes
+        self.level = min(level, scenes.count - 1)
+        passabilities = scenes.map { Passability(map: map, level: $0.level, objects: $0.placed) }
     }
 
     /// A 1x1 object with a "step here to use" mask: resources, chests, artifacts, campfires.
@@ -464,18 +478,18 @@ public final class GameState {
 
     /// The mine record for a placed object, if it is a working mine.
     public func mine(for p: MapScene.Placed) -> Int? {
-        mines.firstIndex { $0.x == p.cellX && $0.y == p.cellY && $0.name == p.name }
+        mines.firstIndex { $0.x == p.cellX && $0.y == p.cellY && $0.name == p.name && $0.z == level }
     }
 
     public func dwelling(for p: MapScene.Placed) -> Int? {
-        dwellings.firstIndex { $0.x == p.cellX && $0.y == p.cellY && $0.name == p.name }
+        dwellings.firstIndex { $0.x == p.cellX && $0.y == p.cellY && $0.name == p.name && $0.z == level }
     }
 
     public func monster(for p: MapScene.Placed) -> Int? {
-        monsters.firstIndex { $0.x == p.cellX && $0.y == p.cellY && $0.name == p.name }
+        monsters.firstIndex { $0.x == p.cellX && $0.y == p.cellY && $0.name == p.name && $0.z == level }
     }
     public func town(for p: MapScene.Placed) -> Int? {
-        p.category == "castle" ? towns.firstIndex { $0.x == p.cellX && $0.y == p.cellY } : nil
+        p.category == "castle" ? towns.firstIndex { $0.x == p.cellX && $0.y == p.cellY && $0.z == level } : nil
     }
 
     /// Objects a hero walks up to and uses: pickups, mines, dwellings, monsters and towns.
@@ -752,7 +766,21 @@ public final class GameState {
 
     /// Register the towns and mines on the map (names from the rule tables).
     public func registerObjects(townFactions: [String: String]) {
+        let playing = level
         var townIndex = 0
+        for l in scenes.indices {
+            level = l
+            let counts = (towns.count, mines.count, monsters.count, dwellings.count)
+            registerObjects(townFactions: townFactions, townIndex: &townIndex)
+            for i in counts.0..<towns.count { towns[i].z = l }
+            for i in counts.1..<mines.count { mines[i].z = l }
+            for i in counts.2..<monsters.count { monsters[i].z = l }
+            for i in counts.3..<dwellings.count { dwellings[i].z = l }
+        }
+        level = playing
+    }
+    /// The towns, mines, monsters and dwellings of the current level.
+    private func registerObjects(townFactions: [String: String], townIndex: inout Int) {
         for p in scene.placed {
             if p.category == "castle" {
                 let faction = townFactions[p.name] ?? "life"
@@ -918,7 +946,7 @@ public final class GameState {
 
     /// Is the cell free to stand on: passable and no other hero on it?
     func isVacant(_ c: (Int, Int), for hero: Hero) -> Bool {
-        passability.isFree(c.0, c.1) && !heroes.contains { $0 !== hero && standingCell($0) == c }
+        passability.isFree(c.0, c.1) && !heroes.contains { $0 !== hero && $0.z == level && standingCell($0) == c }
     }
 
     /// Click on a visitable object: use it if the hero stands next to it, otherwise plan (then
@@ -1101,7 +1129,7 @@ public final class GameState {
             if c.progress >= Float(c.path.count) { finishCharge() }
             return
         }
-        for h in heroes where h.isWalking {
+        for h in heroes where h.isWalking && h.z == level {
             let next = h.path[0]
             passability.relief = GameState.terrainRelief(h)
             let stepCost = passability.stepCost(from: h.x, h.y, to: next.x, next.y)

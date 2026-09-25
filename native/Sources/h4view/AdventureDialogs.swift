@@ -19,8 +19,9 @@ extension Renderer {
         var out: [Quad] = []
         for (hs, name) in Renderer.panelButtons {
             guard let slot = ui.hotspot(hs) else { continue }
-            let btn = name == "underground" && g.map.levels < 2 ? "surface" : name
-            let state = (name == "underground" && g.map.levels < 2) || name == "spell" || name == "marketplace" ? "Disabled" : "Released"
+            // the level button shows the other level: "underground" on the surface, "surface" below
+            let btn = name == "underground" && (g.map.levels < 2 || g.level == 1) ? "surface" : name
+            let state = (name == "underground" && g.map.levels < 2) || name == "spell" ? "Disabled" : "Released"
             guard let b = ui.button(btn, state: state) ?? ui.button(btn) else { continue }
             out.append(Quad(texture: uiTexture("button|\(btn)|\(state)", { b.bitmap }), x: slot.x + (slot.width - b.width) / 2, y: slot.y + (slot.height - b.height) / 2, w: b.width, h: b.height))
         }

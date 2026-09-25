@@ -122,18 +122,20 @@ if let t = ruleTables {
     RandomResolver.creaturePool = (1...4).map { lv in t.creatures.filter { $0.level == lv && $0.expansion <= expansion && !sea.contains($0.keyword) }.map { $0.keyword } }
 }
 RandomResolver.playerAlignments = Dictionary(map.playerSpecs.map { ($0.colour, $0.alignments) }, uniquingKeysWith: { a, _ in a })
-let scene = try MapScene(map: map, level: min(level, map.levels - 1), archive: archive, masks: masks)
-lap("scene built: \(scene.chunks.count) terrain chunks, \(scene.placed.count) objects")
+// every level of the map (the surface and, on most maps, the underground)
+let scenes = try (0..<max(1, map.levels)).map { try MapScene(map: map, level: $0, archive: archive, masks: masks) }
+let scene = scenes[min(level, scenes.count - 1)]
+lap("scenes built: \(scenes.map { "\($0.chunks.count) terrain chunks, \($0.placed.count) objects" }.joined(separator: "; "))")
 let device = MTLCreateSystemDefaultDevice()!
 
 // A scenario in progress: one hero of the first player's town (the map's owner 0, else the
 // leftmost town) standing at its gate.
 let resolver = RandomResolver(archive: archive)
-let game = GameState(map: map, level: scene.level, scene: scene)
+let game = GameState(map: map, level: scene.level, scenes: scenes)
 if let tables = ruleTables { game.tables = tables; lap("rules: \(tables.creatures.count) creatures, \(tables.heroes.count) heroes") }
 let alignments = ["haven": "life", "academy": "order", "asylum": "chaos", "necropolis": "death", "preserve": "nature", "stronghold": "might"]
 func faction(of name: String) -> String { alignments.first { name.lowercased().contains($0.key) }?.value ?? "life" }
-game.registerObjects(townFactions: Dictionary(scene.placed.filter { $0.category == "castle" }.map { ($0.name, faction(of: $0.name)) }, uniquingKeysWith: { a, _ in a }))
+game.registerObjects(townFactions: Dictionary(scenes.flatMap { $0.placed }.filter { $0.category == "castle" }.map { ($0.name, faction(of: $0.name)) }, uniquingKeysWith: { a, _ in a }))
 let ownedByFirst = map.objects.first { ($0.type == "town" || $0.type == "random_town") && $0.owner == map.humanColour && $0.level == scene.level }
 if let town = scene.placed.first(where: { p in ownedByFirst.map { p.category == "castle" && p.cellX == $0.x && p.cellY == $0.y } ?? false })
     ?? scene.placed.filter({ $0.category == "castle" }).min(by: { ($0.cellY - $0.cellX) < ($1.cellY - $1.cellX) }) {
@@ -148,7 +150,7 @@ if let town = scene.placed.first(where: { p in ownedByFirst.map { p.category == 
         var all = o.heroes.map { Hero.fromMap($0, alignment: align, x: o.x, y: o.y, tables: game.tables, random: &game.random) }
         let hero = all.removeFirst()
         hero.companions = all
-        hero.home = (o.x, o.y)
+        hero.home = (o.x, o.y); hero.z = o.level
         hero.army = (o.army ?? []).compactMap { $0 }.compactMap { s in
             s.creature < RuleTables.creatureIds.count ? Hero.Stack(creature: RuleTables.creatureIds[s.creature], count: s.count) : nil }
         hero.maxMovement = game.armyMovement(hero); hero.movement = hero.maxMovement
@@ -167,7 +169,7 @@ if let town = scene.placed.first(where: { p in ownedByFirst.map { p.category == 
             hero.heroClass = c
             for s in RuleTables.heroClasses[c].skills { hero.learn(s, level: 0) }
         }
-        hero.home = (cell.0, cell.1)
+        hero.home = (cell.0, cell.1); hero.z = scene.level
         game.giveStartingArmy(hero)
         if let m = movementLeft { hero.movement = m }
         game.heroes.append(hero)
@@ -233,7 +235,7 @@ func aim(_ renderer: Renderer, at c: (Int, Int)) {
 
 if let out = snapshot {
     // Render one 1024x768 frame centred on the map into a texture and save it as PNG.
-    let renderer = try Renderer(device: device, scene: scene, pixelFormat: .rgba8Unorm)
+    let renderer = try Renderer(device: device, scenes: scenes, pixelFormat: .rgba8Unorm)
     renderer.game = game
     renderer.resolver = resolver
     renderer.showBlocked = showBlocked
@@ -504,6 +506,9 @@ final class MapView: MTKView {
                 else if ui.hit("Game_menu_button", x: cx, y: cy) { renderer.openGameMenu() }
                 else if ui.hit("move_army_button", x: cx, y: cy) { g.continueMoving(hero) }   // the horse: go on along the kept route
                 else if ui.hit("overview_button", x: cx, y: cy) { renderer.overview = KingdomOverview() }
+                else if (ui.hit("underground_button", x: cx, y: cy) || ui.hit("surface_button", x: cx, y: cy)), g.map.levels > 1 {
+                    g.level = 1 - g.level   // look at the other level (the hero stays where he is)
+                }
                 else if ui.hit("mini_map", x: cx, y: cy), let mm = ui.hotspot("mini_map") {   // the minimap: bring the view there
                     let n = Float(g.map.size)
                     let col = (cx - Float(mm.x)) / Float(mm.width) * n - n / 2, row = (cy - Float(mm.y)) / Float(mm.height) * n + n / 2
@@ -521,7 +526,7 @@ final class MapView: MTKView {
                 else if ui.hit("Hero_List", x: cx, y: cy) {   // a portrait: one click centres the map on the hero, a double click opens the hero screen
                     for (i, (hx, hy)) in AdventureUI.heroSlots.enumerated() where i < g.heroes.count && abs(cx - Float(hx)) < 30 && abs(cy - Float(hy)) < 30 {
                         if e.clickCount >= 2 { renderer.adventureDialog = .hero(i) }
-                        else { renderer.centre(onCell: (Int(g.heroes[i].position.x.rounded()), Int(g.heroes[i].position.y.rounded()))) }
+                        else { g.level = g.heroes[i].z; renderer.centre(onCell: (Int(g.heroes[i].position.x.rounded()), Int(g.heroes[i].position.y.rounded()))) }
                     }
                 }
                 return
@@ -604,7 +609,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         view.colorPixelFormat = .bgra8Unorm
         view.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
         view.preferredFramesPerSecond = 60
-        let renderer = try! Renderer(device: device, scene: scene, pixelFormat: .bgra8Unorm)
+        let renderer = try! Renderer(device: device, scenes: scenes, pixelFormat: .bgra8Unorm)
         renderer.archivePath = args[1]; renderer.mapPath = args.count > 2 ? args[2] : nil
         renderer.game = game
         renderer.resolver = resolver

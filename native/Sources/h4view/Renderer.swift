@@ -36,8 +36,11 @@ final class Renderer: NSObject, MTKViewDelegate {
     let device: MTLDevice
     let queue: MTLCommandQueue
     let pipeline: MTLRenderPipelineState
-    let scene: MapScene
-    var terrain: [Quad] = []
+    /// Every map level's scene; `scene` is the one in play (the game's level).
+    let scenes: [MapScene]
+    var scene: MapScene { game.map { scenes[min($0.level, scenes.count - 1)] } ?? scenes[0] }
+    var terrainByLevel: [[Quad]] = []
+    var terrain: [Quad] { terrainByLevel[min(game?.level ?? 0, terrainByLevel.count - 1)] }
     var textures: [String: MTLTexture] = [:]
     var pan = SIMD2<Float>(0, 0)
     var zoom: Float = 1
@@ -397,6 +400,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     func centre(onTown i: Int) {
         guard let g = game, i < g.towns.count else { return }
         let t = g.towns[i]
+        g.level = t.z
         if let p = scene.placed.first(where: { g.town(for: $0) == i }) {
             centre(onCell: (p.cellX + p.sprite.footprint.w / 2, p.cellY + p.sprite.footprint.h / 2))
         } else { centre(onCell: (t.x, t.y)) }
@@ -424,7 +428,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         let c = cell(at: m)
         guard c.0 >= 0, c.0 < g.map.size, c.1 >= 0, c.1 < g.map.size, let cellData = g.map.cells[g.level][c.0 * g.map.size + c.1] else { return nil }
         var what: String
-        if let h = g.heroes.first(where: { $0.x == c.0 && $0.y == c.1 }) { what = h.name }
+        if let h = g.heroes.first(where: { $0.z == g.level && $0.x == c.0 && $0.y == c.1 }) { what = h.name }
         else if let p = scene.placed.last(where: { underCursor($0, m) || onFootprint($0, c) }), p.type != "decorative" || true { what = g.describe(p).title }
         else if let t = g.describe(cellX: c.0, cellY: c.1) { what = t.title }
         else { what = ui?.terrainName(cellData, tables: g.tables) ?? "" }
@@ -472,7 +476,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
         // minimap: the map squashed into the panel's frame, with the visible area outlined
         if let mm = ui.hotspot("mini_map") {
-            let stamp = g.day * 1000 + g.heroes.reduce(0) { $0 + $1.x * 7 + $1.y } + g.towns.filter { $0.owned }.count * 31 + g.mines.filter { $0.owned }.count * 17
+            let stamp = g.level * 7_000_001 + g.day * 1000 + g.heroes.reduce(0) { $0 + $1.x * 7 + $1.y } + g.towns.filter { $0.owned }.count * 31 + g.mines.filter { $0.owned }.count * 17
             if minimapTexture == nil || minimapStamp != stamp { minimapTexture = makeTexture(AdventureUI.minimap(game: g, size: mm.width)); minimapStamp = stamp }
             out.append(Quad(texture: minimapTexture!, x: mm.x, y: mm.y, w: mm.width, h: mm.height))
             let n = Float(scene.map.size)
@@ -634,9 +638,9 @@ final class Renderer: NSObject, MTKViewDelegate {
         return makeTexture(bm)
     }()
 
-    init(device: MTLDevice, scene: MapScene, pixelFormat: MTLPixelFormat) throws {
+    init(device: MTLDevice, scenes: [MapScene], pixelFormat: MTLPixelFormat) throws {
         self.device = device
-        self.scene = scene
+        self.scenes = scenes
         queue = device.makeCommandQueue()!
         let lib = try device.makeLibrary(source: shaderSource, options: nil)
         let desc = MTLRenderPipelineDescriptor()
@@ -651,13 +655,13 @@ final class Renderer: NSObject, MTKViewDelegate {
         pipeline = try device.makeRenderPipelineState(descriptor: desc)
         vertexBuffer = device.makeBuffer(length: 1 << 20, options: .storageModeShared)!
         super.init()
-        for c in scene.chunks {
-            terrain.append(Quad(texture: makeTexture(c.bitmap), x: c.x, y: c.y, w: c.bitmap.width, h: c.bitmap.height))
+        for sc in scenes {
+            terrainByLevel.append(sc.chunks.map { c in Quad(texture: makeTexture(c.bitmap), x: c.x, y: c.y, w: c.bitmap.width, h: c.bitmap.height) })
+            for p in sc.placed {   // upload every frame of every object up front
+                for img in p.sprite.images { _ = texture(for: img, of: p.name) }
+            }
         }
-        for p in scene.placed {   // upload every frame of every object up front
-            for img in p.sprite.images { _ = texture(for: img, of: p.name) }
-        }
-        pan = SIMD2(Float(scene.width) / 2 - 640, Float(scene.height) / 2 - 400)
+        pan = SIMD2(Float(scenes[0].width) / 2 - 640, Float(scenes[0].height) / 2 - 400)
     }
 
     func texture(for img: SpriteImage, of name: String) -> MTLTexture {
@@ -790,6 +794,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             if g.threat(to: h, at: c.0, c.1) != nil { kind = "Danger_Zone" }
         }
         guard ["move", "attack", "activate", "Danger_Zone"].contains(kind), let g = game, let h = g.heroes.first else { return kind }
+        guard h.z == g.level else { return "normal" }
         // the days to get there pick the frame; an object is reached from the cell before it
         var c = cell(at: m)
         if kind != "move", kind != "Danger_Zone", let p = scene.placed.last(where: { g.isVisitable($0) && (underCursor($0, m) || onFootprint($0, c)) }) {
@@ -814,7 +819,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         if let p = scene.placed.last(where: { g.isVisitable($0) && (underCursor($0, m) || onFootprint($0, c)) }) {
             return g.monster(for: p) != nil ? "attack" : "activate"
         }
-        if g.heroes.contains(where: { $0.x == c.0 && $0.y == c.1 }) { return "normal" }
+        if g.heroes.contains(where: { $0.z == g.level && $0.x == c.0 && $0.y == c.1 }) { return "normal" }
         return g.passability.isFree(c.0, c.1) ? "move" : "blocked"
     }
 
@@ -835,7 +840,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         guard let g = game, let ui = ui else { return }
         let c = cell(at: m)
         var text: (title: String, body: [String])?
-        if let i = g.heroes.firstIndex(where: { Int($0.position.x.rounded()) == c.0 && Int($0.position.y.rounded()) == c.1 }) {
+        if let i = g.heroes.firstIndex(where: { $0.z == g.level && Int($0.position.x.rounded()) == c.0 && Int($0.position.y.rounded()) == c.1 }) {
             armyPopup = ArmyPopup(hero: i); return   // an own army: its right-click window
         }
         else if let p = scene.placed.last(where: { underCursor($0, m) || onFootprint($0, c) }) {
@@ -878,7 +883,7 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     /// A click on the map at a map-canvas point: visit the object there, or walk to the cell.
     func click(mapPoint m: SIMD2<Float>) {
-        guard let g = game, let hero = g.heroes.first else { return }
+        guard let g = game, let hero = g.heroes.first, hero.z == g.level else { return }   // viewing the other level: nothing to do there
         var (x, y) = cell(at: m)
         func underCursor(_ p: MapScene.Placed) -> Bool { self.underCursor(p, m) }
         func onFootprint(_ p: MapScene.Placed) -> Bool { self.onFootprint(p, (x, y)) }
@@ -981,7 +986,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         // heroes are sorted in among the objects by the same depth rule (cell row, then column)
         var pending: [(depth: Float, quads: [Quad])] = []
         if let g = game {
-            for h in g.heroes {
+            for h in g.heroes where h.z == g.level {
                 for a in g.arrows(for: h) {
                     // arrows sort with the objects (a tree in front hides them) and ride up onto bridges
                     guard let s = arrowSprite(a.name), let f = s.frames.first else { continue }

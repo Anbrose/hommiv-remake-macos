@@ -220,6 +220,7 @@ extension Renderer {
         out += hoverQuads()
         if cs.showResults { out += combatResultQuads() }
         out += spellBookQuads()
+        out += optionsQuads()
         if prompt != nil { out += messageBoxQuads() }
         return out
     }
@@ -343,6 +344,9 @@ extension Renderer {
             casting = nil
             if x < 885, let t = unitUnder(b, x: x, y: y), b.canTarget(spell, by: cur, t) { b.cast(spell, on: t.id, tables: g.tables); cs.pump() }
             return
+        }
+        if let slot = cs.hotspot("combat_options"), x >= Float(slot.x), x < Float(slot.x + slot.width), y >= Float(slot.y), y < Float(slot.y + slot.height) {
+            optionsOpen = settings; return
         }
         if let slot = cs.hotspot("cast_spell"), x >= Float(slot.x), x < Float(slot.x + slot.width), y >= Float(slot.y), y < Float(slot.y + slot.height) {
             sound?.play("miscellaneous.button"); openCombatBook(); return

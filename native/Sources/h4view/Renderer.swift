@@ -136,6 +136,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     var market: MarketState? = nil         // the marketplace, when open
     var spellBook: SpellBookState? = nil   // the spell book, when open
     var casting: Int? = nil               // a combat spell being aimed
+    var optionsOpen: GameSettings? = nil   // the options dialog, while open (the values being edited)
+    var settings = GameSettings.load()
     var heroShown = 0                     // which of the army's heroes the hero screen shows
     var floaters: [(text: String, x: Int, y: Int, since: Date)] = []
     var buildPage = 0
@@ -623,6 +625,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         out += overviewQuads()
         out += marketQuads()
         out += spellBookQuads()
+        out += optionsQuads()
         out += levelUpQuads()
         out += choiceQuads()
         out += messageBoxQuads()
@@ -996,7 +999,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         var pending: [(depth: Float, quads: [Quad])] = []
         if let g = game {
             for h in (g.heroes + g.enemyHeroes) where h.z == g.level {
-                for a in (h.owner == g.map.humanColour ? g.arrows(for: h) : []) {
+                for a in (h.owner == g.map.humanColour && settings.showMovementPath ? g.arrows(for: h) : []) {
                     // arrows sort with the objects (a tree in front hides them) and ride up onto bridges
                     guard let s = arrowSprite(a.name), let f = s.frames.first else { continue }
                     let raise = g.passability.elevation(a.x, a.y)

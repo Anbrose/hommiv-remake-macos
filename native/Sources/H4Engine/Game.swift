@@ -521,7 +521,7 @@ public final class GameState {
     public var week: Int { (day - 1) / 7 % 4 + 1 }
     public var month: Int { (day - 1) / 28 + 1 }
     public var dayOfWeek: Int { (day - 1) % 7 + 1 }
-    public static let cellsPerSecond: Float = 4
+    public static var cellsPerSecond: Float = 4
 
     public convenience init(map: MapFile, level: Int, scene: MapScene) {
         self.init(map: map, level: level, scenes: [scene])

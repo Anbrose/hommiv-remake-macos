@@ -129,5 +129,6 @@ final class GameSound: NSObject, AVAudioPlayerDelegate {
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         if player === music { nextInList() }
     }
+    func setMusicVolume(_ v: Float) { musicVolume = v; music?.volume = v }
     func stopMusic() { music?.stop(); music = nil; musicName = nil; playlist = [] }
 }

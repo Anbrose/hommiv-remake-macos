@@ -352,6 +352,7 @@ if let out = snapshot {
         game.giveExperience(n, to: h); renderer.levelUpChoice = 0
     }
     if ProcessInfo.processInfo.environment["H4MARKET"] != nil { renderer.market = MarketState(k: 3, sell: 1, buy: 0, lots: 5) }   // snapshot: the marketplace
+    if ProcessInfo.processInfo.environment["H4OPTIONS"] != nil { renderer.optionsOpen = renderer.settings }   // snapshot: the options
     if let m = ProcessInfo.processInfo.environment["H4OVERVIEW"] { renderer.overview = KingdomOverview(mode: m == "heroes" ? .heroes : .towns) }   // snapshot: the kingdom overview
     if let k = ProcessInfo.processInfo.environment["H4ARMYPOPUP"].flatMap({ Int($0) }) { renderer.armyPopup = ArmyPopup(hero: 0, selected: k) }   // snapshot: the right-click window
     if openChest, let h = game.heroes.first { game.chestOffer = (h, 1500, 1000); renderer.adventureDialog = .chest; renderer.chestChoice = true }
@@ -570,6 +571,7 @@ final class MapView: MTKView {
         let p = convert(e.locationInWindow, from: nil)
         let scale = Float(window?.backingScaleFactor ?? 1)
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
+        if renderer.optionsOpen != nil { renderer.optionsClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.spellBook != nil { renderer.spellBookClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.inCombat {
             renderer.combatClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale)
@@ -687,6 +689,7 @@ final class MapView: MTKView {
         // the original's hot keys on the map: S save, L load
         if !renderer.inCombat, renderer.townOpen == nil, renderer.prompt == nil {
             if e.keyCode == 1 { renderer.openSaveDialog(.save); return }
+            if e.keyCode == 31 { renderer.optionsOpen = renderer.settings; return }   // O: the options
             if e.keyCode == 37 { renderer.openSaveDialog(.load); return }
         }
         switch e.keyCode {
@@ -728,6 +731,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     renderer.movies = movies
     renderer.sound = gameSound
     combatScreen?.sound = gameSound
+    renderer.applySettings()
         renderer.onTitle = { [weak self] t in if self?.window.title != t { self?.window.title = t } }
         view.renderer = renderer
         view.cursors = GameCursors(archive: archive)

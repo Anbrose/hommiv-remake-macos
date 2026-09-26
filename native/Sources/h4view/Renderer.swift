@@ -897,6 +897,11 @@ final class Renderer: NSObject, MTKViewDelegate {
                 creatureDialog = (def, g.monsters[i].count, g.monsters[i].extra.compactMap { e in g.tables?.creature(e.creature).map { ($0, e.count) } })
                 return
             }
+            // a garrison: its troops in the creature dialog (the lead stack and the rest)
+            if p.type == "garrison", let st = g.objectStates["\(g.level)|\(p.cellX)|\(p.cellY)"] {
+                let stacks = zip(st.troopCreatures, st.troopCounts).filter { $0.1 > 0 }.compactMap { c, k in g.tables?.creature(c).map { ($0, k) } }
+                if let lead = stacks.first { creatureDialog = (lead.0, lead.1, Array(stacks.dropFirst())); return }
+            }
             text = g.describe(p)
         }
         else { text = g.describe(cellX: c.0, cellY: c.1) }

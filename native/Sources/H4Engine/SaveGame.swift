@@ -194,6 +194,7 @@ extension GameState {
         if let d = s.dug { dug = Set(d) }
         sanctuaryGuests = (s.sanctuaryGuests ?? [:]).mapValues { SaveGame.hero(from: $0) }
         sanctuaryPaid = Set(s.sanctuaryPaid ?? [])
+        reapplyGarrisons()
         if let f = s.fog { fog = f.compactMap { Data(base64Encoded: $0).map { [UInt8]($0) } }; fogLevel = []; updateVision() }
         if let bs = s.boats { boats = bs; for b in bs where b.z < passabilities.count { passabilities[b.z].block(b.x, b.y) } }
         if let mo = s.mineOwners { for (i, o) in mo.enumerated() where i < mines.count { mines[i].owner = o } }

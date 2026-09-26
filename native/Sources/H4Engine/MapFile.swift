@@ -448,7 +448,21 @@ public struct MapFile {
             switch cats[0] {
             case "sign", "ocean_bottle", "event_trigger", "pandoras_box":
                 if let v = try? sr.word(), v == 1, let t = try? sr.string() { o.text = t }
-            case "mine", "garrison", "creature_dwelling", "shipyard", "lighthouse", "windmill", "weekly_material_generator", "random_weekly_material_generator":
+            case "garrison":
+                // 0x7d3fb0: u16 v, u8 owner (6 none); v >= 2: a flag when owned, 4 built-in events and
+                // the continuous, timed and triggerable lists, then u8 has troops + the creature array
+                if let v = try? sr.word(), v >= 1, let ow = try? sr.byte() {
+                    if ow < 6 { o.owner = ow }
+                    if v >= 2 {
+                        if ow != 6 { _ = try? sr.byte() }
+                        let ok = (try? { () throws -> Bool in
+                            for k in 0..<4 { _ = try sr.builtinEvent(slot: k) }
+                            _ = try sr.list({ try $0.continuousEvent() }); _ = try sr.list({ try $0.timedEvent() }); _ = try sr.list({ try $0.triggerableEvent() })
+                            return true }()) ?? false
+                        if ok, let has = try? sr.byte(), has != 0, let arr = try? sr.creatureArray() { o.army = arr }
+                    }
+                }
+            case "mine", "creature_dwelling", "shipyard", "lighthouse", "windmill", "weekly_material_generator", "random_weekly_material_generator":
                 // owned objects (0x7d3fb0 / 0x7d7270): u16 version, v1+ u8 owner (6 = none)
                 if let v = try? sr.word(), v >= 1, let ow = try? sr.byte(), ow < 6 { o.owner = ow }
             case "carryover_hero":   // 0x5bf4a0: u16 version; v >= 1 u8 owner, string16 hero name

@@ -23,6 +23,28 @@ public struct ObjectState: Codable {
     /// (V0 the initial part), and the days before it grows again after being cleared.
     public var guardCreatures: [String] = [], guardCounts: [Int] = [], guardFractions: [Int] = []
     public var worth = 0, initialWorth = 0
+    /// A garrison: its holder, its troops, its gate cells (x * size + y).
+    public var isGarrison = false
+    public var garrisonOwner: Int? = nil
+    public var troopCreatures: [String] = [], troopCounts: [Int] = []
+    public var gate: [Int] = []
+
+    public init() {}
+    enum CodingKeys: String, CodingKey {
+        case gold, material, amount, artifacts, owner, countdown, price, used, baseMaterial, skills, spell, partner
+        case guardCreatures, guardCounts, guardFractions, worth, initialWorth, isGarrison, garrisonOwner, troopCreatures, troopCounts, gate
+    }
+    /// (every field may be missing: a save from before it existed keeps its default)
+    public init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        func v<T: Decodable>(_ k: CodingKeys, _ def: T) -> T { (try? c.decodeIfPresent(T.self, forKey: k)) ?? nil ?? def }
+        gold = v(.gold, 0); material = v(.material, 0); amount = v(.amount, 0); artifacts = v(.artifacts, [])
+        owner = v(.owner, Int?.none); countdown = v(.countdown, 0); price = v(.price, 0); used = v(.used, false)
+        baseMaterial = v(.baseMaterial, 0); skills = v(.skills, []); spell = v(.spell, Int?.none); partner = v(.partner, String?.none)
+        guardCreatures = v(.guardCreatures, []); guardCounts = v(.guardCounts, []); guardFractions = v(.guardFractions, [])
+        worth = v(.worth, 0); initialWorth = v(.initialWorth, 0); isGarrison = v(.isGarrison, false); garrisonOwner = v(.garrisonOwner, Int?.none)
+        troopCreatures = v(.troopCreatures, []); troopCounts = v(.troopCounts, []); gate = v(.gate, [])
+    }
 }
 
 extension GameState {
@@ -169,6 +191,8 @@ extension GameState {
             setupBank(p, &st)
         case "blacksmith", "conservatory", "random_conservatory":
             setupShop(p, &st)
+        case "garrison":
+            setupGarrison(p, &st)
         case "tavern":
             st.baseMaterial = -1   // (marks a tavern for the daily count)
         default:
@@ -242,7 +266,7 @@ extension GameState {
                                           "teleporter_entrance", "teleporter_exit", "whirlpool", "keymaster_tent", "border_gate", "border_guard",
                                           "tower", "cartographer", "hut_of_the_magi", "ferry", "obelisk", "lighthouse", "creature_bank",
                                           "sign", "ocean_bottle", "prison", "pandoras_box", "seers_hut", "quest_gate", "quest_guard", "tavern", "shipyard",
-                                          "blacksmith", "conservatory", "random_conservatory", "sanctuary", "sea_sanctuary"]
+                                          "blacksmith", "conservatory", "random_conservatory", "sanctuary", "sea_sanctuary", "garrison"]
     public func hasVisit(_ p: MapScene.Placed) -> Bool { GameState.visitTypes.contains(p.type) }
 
     func remove(_ p: MapScene.Placed) {
@@ -373,6 +397,8 @@ extension GameState {
             visitShop(hero, p, st)
         case "sanctuary", "sea_sanctuary":
             visitSanctuary(hero, p)
+        case "garrison":
+            visitGarrison(hero, p, st)
         case "trading_post":
             marketOpen = 2; dialogueSound(9)
         case "teacher", "random_teacher", "school", "shrine", "random_shrine", "subterranean_gate", "gateway", "teleporter_entrance", "ferry",

@@ -452,7 +452,12 @@ extension Renderer {
         if onGate(b, x: x, y: y), b.nextToGate(cur) || b.canShoot(cur) { return "combat.attack_Gate" }
         if let t = enemyUnder(b, x: x, y: y) {
             combatTarget = t.id
-            if b.canShoot(cur), !combatMeleeMode { return "combat.shoot" }
+            if b.canShoot(cur), !combatMeleeMode {
+                // the shooting pointer's frames are the damage divisor: 1, 2, 4, 8 (range and obstacles)
+                let div = b.rangeDivisor(cur, t)
+                cursorFrameIndex = div >= 8 ? 3 : div >= 4 ? 2 : div >= 2 ? 1 : 0
+                return "combat.shoot"
+            }
             cursorFrameIndex = min(4, b.turnsToAttack(cur, t) ?? 1) - 1   // melee pointers too: 1, 2, 3, 4+ turns
             let names = ["e": "east", "w": "west", "n": "north", "s": "south", "ne": "northeast", "nw": "northwest", "se": "southeast", "sw": "southwest"]
             let dir = Battle.facing(dx: t.centre.0 - cur.centre.0, dy: t.centre.1 - cur.centre.1)

@@ -885,7 +885,15 @@ public final class GameState {
             hero.target = nil; pendingBattle = nil
             return
         }
-        if let key = monsters[i].bank {   // a creature bank: the object stays
+        if let key = monsters[i].bank, key.hasPrefix(GameState.garrisonPrefix) {   // a garrison: taken, or it holds
+            let real = String(key.dropFirst(GameState.garrisonPrefix.count))
+            if won { giveExperience(experience, to: hero); takeGarrison(real) }
+            else {
+                garrisonHeld(real, leadLeft: monstersLeft)
+                hero.x = hero.home.x; hero.y = hero.home.y; hero.movement = 0; hero.path = []; hero.plan = []
+            }
+            monsters.remove(at: i)
+        } else if let key = monsters[i].bank {   // a creature bank: the object stays
             if won { giveExperience(experience, to: hero); bankDefeated(hero, p, key: key) }
             else {
                 objectStates[key]?.guardCounts[0] = max(1, monstersLeft)

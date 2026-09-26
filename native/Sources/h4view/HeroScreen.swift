@@ -156,8 +156,11 @@ extension Renderer {
                 out.append(Quad(texture: uiTexture("skill|\(a)", { l.bitmap }), x: ox + slot.x + (slot.width - l.width) / 2, y: oy + slot.y + (slot.height - l.height) / 2, w: l.width, h: l.height))
             }
         }
+        if let t = d["creature_text"], let box = ui.popupBitmap(clientW: t.width - 10, clientH: t.height + 40, size: "large") {
+            out.append(Quad(texture: uiTexture("band|\(box.bitmap.width)x\(box.bitmap.height)", { box.bitmap }), x: ox + t.x + 5 - box.clientX, y: oy + t.y - 20 - box.clientY, w: box.bitmap.width, h: box.bitmap.height))
+        }
         if let t = d["creature_text"] {
-            out += paragraph(c.longHelp, in: UILayer(name: "", kind: 1, x: t.x, y: t.y - 30, width: t.width + 10, height: t.height + 60, bitmap: Bitmap(width: 1, height: 1)), at: ox, oy, font: ui.font(18))
+            out += paragraph(c.longHelp, in: UILayer(name: "", kind: 1, x: t.x + 5, y: t.y - 16, width: t.width - 10, height: t.height + 36, bitmap: Bitmap(width: 1, height: 1)), at: ox, oy, font: ui.font(18))
         }
         out += creatureModelQuads(st.creature, d, ox, oy)
         let bonus = ArmyBonuses(heroes: [leader] + leader.companions)
@@ -224,7 +227,7 @@ extension Renderer {
         var out: [Quad] = []
         func img(_ n: String) { if let l = d[n] { out.append(Quad(texture: uiTexture("dlg|army|\(n)", { l.bitmap }), x: ox + l.x, y: oy + l.y, w: l.width, h: l.height)) } }
         func button(_ file: String, _ state: String, in slot: String) {
-            guard let s = d[slot], let f = (try? ui.archive.payload("layers.button.\(file).h4d")).flatMap({ try? LayerFile(data: $0) }), let b = f[state] ?? f.layers.first(where: { $0.name.lowercased() == state.lowercased() }) else { return }
+            guard let s = d[slot], let f = ((try? ui.archive.payload("layers.button.\(file).h4d")) ?? (try? ui.archive.payload("layers.Button.\(file).h4d"))).flatMap({ try? LayerFile(data: $0) }), let b = f[state] ?? f.layers.first(where: { $0.name.lowercased() == state.lowercased() }) else { return }
             out.append(Quad(texture: uiTexture("button|\(file)|\(state)", { b.bitmap }), x: ox + s.x + (s.width - b.width) / 2, y: oy + s.y + (s.height - b.height) / 2, w: b.width, h: b.height))
         }
         // morale and luck: their icons (icons.morale.34 "+1 Morale", "0 Luck") by the numbers
@@ -237,7 +240,8 @@ extension Renderer {
             out.append(Quad(texture: uiTexture("moraleicon|\(ic.name)", { ic.bitmap }), x: ox + s.x + (s.width - ic.width) / 2, y: oy + s.y + (s.height - ic.height) / 2, w: ic.width, h: ic.height))
         }
         img("loose_pressed"); img("tight_Released"); img("square_Released")
-        img("Move_Army_Down"); img("Move_Army_Up")
+        // the tents: move the army down to / up from the second row (button.move_Down / move_Up)
+        button("move_Down", "Released", in: "Move_Army_Down"); button("move_Up", "Released", in: "Move_Army_Up")
         img("Double_Ring_Background")
         // the rings: the army in the upper row, the lower one empty (another army's place)
         var slots: [(UILayer?, String?)] = army.map { (ui.portrait(keyword: $0.keyword, alignment: $0.alignment), nil) }
@@ -282,7 +286,14 @@ extension Renderer {
         }
         guard let cs = combat, let places = (try? ui.archive.payload("layers.control.creature_model.h4d")).flatMap({ try? LayerFile(data: $0) }) else { return out }
         let actor = cs.actorName(c)
-        guard let (s, entry) = combatSprite(cs, actor: actor, state: "wait", facing: "sw"), let f = s.frames.first else { return out }
+        // the walk loop in place (the combat actor's walk; wait when it has none), facing index 4
+        guard let (s, entry) = combatSprite(cs, actor: actor, state: "walk", facing: "sw") ?? combatSprite(cs, actor: actor, state: "wait", facing: "sw"),
+              var f = s.frames.first else { return out }
+        let tl = s.timeline
+        if !tl.isEmpty {
+            let period = cs.framePeriod(actor, "walk")
+            f = tl[Int(Date().timeIntervalSince1970 / max(0.03, period)) % tl.count].frame
+        }
         let sx = Float(box.width) / 300, sy = Float(box.height) / 300
         for k in 1...3 {
             guard let pl = places["\(k)_of_3"] else { continue }

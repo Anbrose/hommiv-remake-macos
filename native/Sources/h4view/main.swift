@@ -380,7 +380,8 @@ if let out = snapshot {
                 if let u = b.current, var c = u.caster { c.spells = Array(0..<RuleTables.spells.count).filter { RuleTables.spells[$0].has("Teach") }; c.spellPoints = 60; c.skills["chaos"] = 3; u.caster = c }
                 _ = b.takeEvents(); cs.queue = []; cs.playing = nil
                 renderer.openCombatBook()
-                if let s = ProcessInfo.processInfo.environment["H4BOOK"], !s.isEmpty, s != "1" { renderer.spellBook?.school = s }
+                if let s = ProcessInfo.processInfo.environment["H4BOOK"], !s.isEmpty, s != "1" { renderer.spellBook?.tab = s.prefix(1).uppercased() + s.dropFirst() }
+                if ProcessInfo.processInfo.environment["H4BOOKDETAIL"] != nil { renderer.spellBook?.detail = 0 }
             }
             if let fx = ProcessInfo.processInfo.environment["H4FX"] {   // snapshot: an effect on every stack, 0.4 s in
                 cs.queue = []; cs.playing = nil
@@ -738,7 +739,9 @@ final class MapView: MTKView {
                 else if ui.hit("overview_button", x: cx, y: cy) { renderer.overview = KingdomOverview() }
                 else if ui.hit("Marketplace_button", x: cx, y: cy) { renderer.market = MarketState(k: 3) }
                 else if ui.hit("spell_button", x: cx, y: cy) {   // the hero's book, adventure spells first
-                    renderer.spellBook = SpellBookState(spells: Array(hero.spells.union(hero.artifactSpells.withSkill).union(hero.artifactSpells.free)), castable: Set(g.adventureSpells(hero)), points: g.spellPoints(hero), combat: false)
+                    let all = hero.spells.union(hero.artifactSpells.withSkill).union(hero.artifactSpells.free)
+                    renderer.spellBook = SpellBookState(spells: Array(all), castable: Set(g.adventureSpells(hero)), points: g.spellPoints(hero), combat: false,
+                                                        costs: Dictionary(all.map { ($0, hero.spellCost($0)) }, uniquingKeysWith: { a, _ in a }), items: hero.artifactSpells.withSkill.union(hero.artifactSpells.free))
                 }
                 else if (ui.hit("underground_button", x: cx, y: cy) || ui.hit("surface_button", x: cx, y: cy)), g.map.levels > 1 {
                     g.level = 1 - g.level   // look at the other level (the hero stays where he is)

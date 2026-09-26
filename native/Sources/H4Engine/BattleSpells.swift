@@ -138,7 +138,24 @@ extension Battle {
         let p = power(spell, by: u, creatures: tables)
         events.append(.cast(unit: u.id, spell: spell, targets: targets.map { $0.id }))
         let effectSpell = Battle.massOf[spell] ?? spell
-        switch s.kind {
+        // Poison and Plague deal nothing now: their damage after resistance is kept and dealt at the
+        // start of each of the target's turns (0x61b980 / 0x78e320); Regeneration heals each turn
+        let lasting: Set<Int> = [110, 111, 131, 112]
+        switch lasting.contains(effectSpell) ? "lasting" : s.kind {
+        case "lasting":
+            for t in targets {
+                let r = resistance(t, to: spell)
+                var dmg = r >= 100 ? 0 : (p * (100 - r) + 99) / 100
+                if t.stats.under(34) { dmg += dmg >> 2 }
+                switch effectSpell {
+                case 111: t.poison = dmg
+                case 110: t.plague = dmg
+                case 131: t.regeneration = p
+                default: break
+                }
+                t.stats.effects.insert(effectSpell)
+                events.append(.spellHit(unit: t.id, spell: effectSpell, damage: 0, killed: 0, left: t.stats.count))
+            }
         case "damage":
             var chainPower = p
             for (k, t) in targets.enumerated() {
@@ -147,6 +164,7 @@ extension Battle {
                 if t.stats.under(34) { dmg += dmg >> 2 }
                 dmg = min(dmg, t.stats.totalHealth)
                 let killed = t.stats.take(dmg)
+                if dmg > 0 { t.blind = 0 }   // any damage ends Blind (0x5ef290)
                 if side(of: t) != side(of: u), u.side == 0 { experience += killed * t.stats.experience }
                 events.append(.spellHit(unit: t.id, spell: spell, damage: dmg, killed: killed, left: t.stats.count))
                 if !t.alive { events.append(.die(unit: t.id)) }
@@ -169,7 +187,7 @@ extension Battle {
                 // Heal restores the top creature's wounds (never the dead) and cures Poison and Plague
                 let healed = min(p, t.stats.wounds)
                 t.stats.wounds -= healed
-                t.poison = 0; t.stats.effects.remove(111); t.stats.effects.remove(110)
+                t.poison = 0; t.plague = 0; t.stunned = 0; t.stats.effects.remove(111); t.stats.effects.remove(110); t.stats.effects.remove(154)
                 events.append(.spellHit(unit: t.id, spell: spell, damage: -healed, killed: 0, left: t.stats.count))
             }
         case "summoning" where !s.has("Bodies"):
@@ -203,23 +221,22 @@ extension Battle {
     /// A lasting spell on a stack: the stat getters read `effects`; some set the older flags.
     func apply(_ spell: Int, to t: Unit, power p: Int) {
         // opposites cancel: Bless / Curse, Haste / Slow, Fortune / Misfortune
-        let opposite: [Int: [Int]] = [10: [23], 23: [10], 55: [105, 141], 104: [105, 141], 105: [55, 104], 141: [55, 104], 48: [102], 102: [48]]
-        for o in opposite[spell] ?? [] { t.stats.effects.remove(o) }
+        let opposite: [Int: [Int]] = [10: [23], 23: [10], 55: [105, 141], 146: [105, 141], 104: [105, 141], 105: [55, 104, 146], 141: [55, 104, 146],
+                                      48: [102], 102: [48], 145: [103], 25: [103], 103: [145, 25], 6: [144], 21: [6], 154: [6], 144: [6]]
+        for o in opposite[spell] ?? [] { t.stats.effects.remove(o); t.durations[o] = nil; if o == 23 { t.stats.cursed = false } }
+        // the fixed lengths (§1), a turn more when it lands on the stack whose turn it is
+        let lengths: [Int: Int] = [21: 1, 154: 1, 144: 1, 122: 2, 180: 2, 186: 2, 11: 3, 22: 3, 62: 3, 137: 6]
+        if let n = lengths[spell] { t.durations[spell] = n + (current?.id == t.id ? 1 : 0) }
         switch spell {
         case 27, 83:   // Dispel: every spell goes
             t.stats.effects = []; t.stats.cursed = false; t.stats.weakened = false; t.stats.aged = false
+            t.durations = [:]; t.poison = 0; t.plague = 0; t.regeneration = 0; t.hypnotized = false
             return
         case 23: t.stats.cursed = true
         case 185: t.stats.weakened = true
         case 1: t.stats.aged = true
         case 9: t.stats.bound = true
-        case 11: t.blind = 3
-        case 154: t.stunned = max(t.stunned, 1)
-        case 186: t.frozen = max(t.frozen, 2)
-        case 21: t.stunned = max(t.stunned, 1)       // Confusion: loses its next action
-        case 180: t.stunned = max(t.stunned, 2)      // Terror: the next two
         case 62, 138: t.hypnotized = true
-        case 111: t.poison = max(t.poison, p)
         case 51, 57, 114:   // Giant Strength, Health, Prayer: a quarter more hit points
             if !t.stats.under(spell) { t.stats.hitPoints += (t.stats.hitPoints + 2) >> 2 }
         case 33: if !t.stats.under(33) { t.stats.hitPoints *= 2 }

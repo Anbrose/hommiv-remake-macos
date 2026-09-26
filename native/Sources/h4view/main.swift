@@ -363,6 +363,14 @@ if let out = snapshot {
                 print("cast \(RuleTables.spells[sp].name): \(b.cast(sp, on: t?.id, tables: game.tables)) power \(b.current.map { b.power(sp, by: $0, creatures: game.tables) } ?? 0)")
                 let ev = b.takeEvents()
                 for e in ev { print("  \(e)") }
+                if ProcessInfo.processInfo.environment["H4CASTTURNS"] != nil, let t = t {   // debugging: how the effect goes on
+                    for k in 0..<12 where b.finished == nil {
+                        b.autoAct()
+                        let lines = b.takeEvents().filter { if case .effect = $0 { return true }; if case .spellHit = $0 { return true }; if case .newRound = $0 { return true }; return false }
+                        for e in lines { print("  step \(k): \(e)") }
+                    }
+                    print("target \(t.stats.name) x\(t.stats.count) poison \(t.poison) durations \(t.durations)")
+                }
                 cs.take(ev)
                 for _ in 0..<3 { cs.update(now: Date()) }
             }

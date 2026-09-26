@@ -23,9 +23,17 @@ public final class Battle {
         public var moved: Float = 0
         public let initialCount: Int
         /// Turns lost to Stun / Freeze / Blind / Terror (the unit skips its action while any is left).
-        public var stunned = 0, frozen = 0, blind = 0
-        /// Poison damage taken at every new round, and who holds the unit Bound.
-        public var poison = 0
+        /// Lasting effects with a fixed length (spell_effects_spec §1): spell id -> the unit's own
+        /// turns left, counted down at the end of each of its turns (lost ones too); an effect not
+        /// here lasts the battle.
+        public var durations: [Int: Int] = [:]
+        public var stunned: Int { get { durations[154] ?? 0 } set { durations[154] = newValue > 0 ? newValue : nil } }
+        public var frozen: Int { get { durations[186] ?? 0 } set { durations[186] = newValue > 0 ? newValue : nil } }
+        public var blind: Int { get { durations[11] ?? 0 } set { durations[11] = newValue > 0 ? newValue : nil } }
+        /// What acts at the start of each of its turns: Poison's and Plague's stored damage,
+        /// Regeneration's healing (0x567ef0); whether this round's start has run.
+        public var poison = 0, plague = 0, regeneration = 0
+        public var turnStarted = false
         public var boundBy: Int? = nil
         /// Hypnotized: its next action is for the other side.
         public var hypnotized = false
@@ -33,7 +41,8 @@ public final class Battle {
         public var caster: Caster? = nil
         /// Summoned by a spell: gone when the battle ends.
         public var summoned = false
-        public var disabled: Bool { stunned > 0 || frozen > 0 || blind > 0 }
+        /// Its turn is lost: Blind, Stun, Terror, Confusion, Frozen.
+        public var disabled: Bool { stunned > 0 || frozen > 0 || blind > 0 || durations[180] != nil || durations[21] != nil }
         public var alive: Bool { stats.alive }
         /// Centre of the footprint in cell units.
         public var centre: (Float, Float) { (Float(x) + Float(size) / 2, Float(y) + Float(size) / 2) }
@@ -246,13 +255,8 @@ public final class Battle {
             u.moraleRoll = rng.next() % 10; u.moraleChecked = false; u.goodMorale = false; u.badMorale = false
             u.moved = 0
         }
+        for u in units { u.turnStarted = false }
         events.append(.newRound(round))
-        // Poison hurts at every new round until the battle ends
-        for u in units where u.alive && u.poison > 0 {
-            let killed = u.stats.take(u.poison)
-            events.append(.effect(unit: u.id, name: "Poison", damage: u.poison, killed: killed, left: u.stats.count))
-            if !u.alive { events.append(.die(unit: u.id)) }
-        }
         checkEnd()
         guard finished == nil else { return }
         order = turnOrder(units.filter { $0.alive })
@@ -302,12 +306,24 @@ public final class Battle {
     /// and it falls behind everyone who kept their +1000; good when roll < morale.
     func checkMorale() {
         updateLossMorale()
-        // a stunned, frozen or blinded unit loses its action
-        while finished == nil, let u = current, u.disabled {
-            if u.stunned > 0 { u.stunned -= 1 } else if u.frozen > 0 { u.frozen -= 1 } else { u.blind -= 1 }
+        // the unit coming up: what acts at the start of its turn, then a lost turn (Blind, Stun,
+        // Terror, Confusion; Frozen silently) -- its durations count down all the same
+        while finished == nil, let u = current {
+            if !u.turnStarted {
+                u.turnStarted = true
+                startOfTurn(u)
+                checkEnd()
+                if finished != nil { return }
+                if !u.alive { order.removeFirst(); if order.isEmpty { startRound(); return }; continue }
+            }
+            guard u.disabled else { break }
+            if u.frozen == 0 {
+                let lost = [11: "Blind", 154: "Stun", 180: "Terror", 21: "Confusion"].first { u.durations[$0.key] != nil }
+                if let l = lost { events.append(.effect(unit: u.id, name: RuleTables.spells[l.key].keyword, damage: 0, killed: 0, left: u.stats.count)) }
+            }
             u.acted = true
             order.removeFirst()
-            if u.stats.has("regeneration") { u.stats.wounds = 0 }
+            countDown(u)
             if order.isEmpty { startRound(); return }
         }
         while finished == nil, let u = current, !u.moraleChecked {
@@ -622,8 +638,8 @@ public final class Battle {
         // Weakness: the Weakness spell with every attack
         if a.stats.has("weakness"), Battle.living(b), magic, !b.stats.weakened { b.stats.weakened = true; effect(b, "Weakness") }
         // Poison: from now on the target takes the poisoner's damage every round
-        if a.stats.has("poison"), Battle.living(b), b.poison == 0 {
-            b.poison = max(1, QuickCombat.rollBase(a.stats, rng: &rng))   // a fresh roll of its base damage (0x575fe0 -> 0x5ee690)
+        if a.stats.has("poison"), Battle.living(b) {   // (a new dose keeps the larger, 0x5f0220)
+            b.poison = max(b.poison, max(1, QuickCombat.rollBase(a.stats, rng: &rng)))   // a fresh roll of its base damage (0x575fe0 -> 0x5ee690)
             effect(b, "poison attack")
         }
         // Stun (melee) / ranged stun: chance = damage as a percentage of the target's health, less 5
@@ -682,10 +698,40 @@ public final class Battle {
     /// The side a unit fights for now (a hypnotized one fights for the other).
     public func side(of u: Unit) -> Int { u.hypnotized ? 1 - u.side : u.side }
 
+    /// The start of a stack's turn (0x567ef0): Regeneration heals the top creature (the spell's
+    /// power; the ability 50, a hero 20 + 2 x level), then Poison and Plague deal their stored damage.
+    func startOfTurn(_ u: Unit) {
+        guard u.alive else { return }
+        var heal = u.regeneration
+        if heal == 0, u.stats.has("regeneration") { heal = u.stats.isHero ? 20 + 2 * u.stats.level : 50 }
+        if heal > 0, u.stats.wounds > 0 {
+            let h = min(heal, u.stats.wounds)
+            u.stats.wounds -= h
+            events.append(.spellHit(unit: u.id, spell: 131, damage: -h, killed: 0, left: u.stats.count))
+        }
+        for (dmg, name) in [(u.poison, "poison"), (u.plague, "plague")] where dmg > 0 && u.alive {
+            let d = min(dmg, u.stats.totalHealth)
+            let killed = u.stats.take(d)
+            if d > 0 { u.blind = 0 }
+            if u.side == 1 { experience += killed * u.stats.experience }
+            events.append(.effect(unit: u.id, name: name, damage: d, killed: killed, left: u.stats.count))
+            if !u.alive { events.append(.die(unit: u.id)) }
+        }
+    }
+    /// The end of each of the stack's own turns (0x5f2730): every duration down by one, gone at 0.
+    func countDown(_ u: Unit) {
+        for (k, v) in u.durations {
+            if v <= 1 {
+                u.durations[k] = nil; u.stats.effects.remove(k)
+                if k == 62 { u.hypnotized = false }
+            } else { u.durations[k] = v - 1 }
+        }
+    }
+
     func endAction(_ u: Unit) {
         u.acted = true
-        u.hypnotized = false
-        if u.stats.has("regeneration"), u.alive { u.stats.wounds = 0 }   // heals all its wounds at the end of its turn
+        if u.durations[62] == nil { u.hypnotized = false }   // (Hypnotize holds for its three turns)
+        countDown(u)
         order.removeAll { $0 == u.id }
         checkEnd()
         if finished == nil, order.isEmpty { startRound() } else { checkMorale() }

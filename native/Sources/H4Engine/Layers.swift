@@ -79,7 +79,9 @@ public struct LayerFile {
                 }
             }
             p = alphaStart
-            if kind == 4 { p += (px + 1) / 2 + (px > 0 ? ((px + 4 + 63) / 64 + 1) / 2 : 0) }
+            // (the summary nibbles follow only when the header's second word is 1: the nature
+            // town's views have layers without them)
+            if kind == 4 { p += (px + 1) / 2 + (px > 0 && one == 1 ? ((px + 4 + 63) / 64 + 1) / 2 : 0) }
             var layer = UILayer(name: name, kind: kind, x: x0, y: y0, width: w, height: h, bitmap: bm)
             layer.paletteSize = npal
             out.append(layer)

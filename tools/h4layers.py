@@ -64,7 +64,7 @@ def parse(b):
         if kind == 4:
             alpha = b[q:q + (npx + 1) // 2]
             q += (npx + 1) // 2
-            q += ((npx + 4 + 63) // 64 + 1) // 2 if npx else 0   # summary nibbles, as in sprites
+            q += ((npx + 4 + 63) // 64 + 1) // 2 if npx and one == 1 else 0   # summary nibbles, only when the header's second word is 1
         layers.append(dict(name=name, kind=kind, box=(x0, y0, x1, y1), pal=pal, rows=rows, pix=pix, alpha=alpha))
         p = q
     return layers

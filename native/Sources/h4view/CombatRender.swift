@@ -18,6 +18,7 @@ extension Renderer {
 
     /// Quads of the combat screen.
     func combatQuads(now: Date) -> [Quad] {
+        unitHeads = []
         guard let cs = combat, let b = cs.battle, let ui = ui, let f = cs.field else { return [] }
         var out: [Quad] = []
         let sc = CombatScreen.sceneScale
@@ -133,6 +134,9 @@ extension Renderer {
                 let ox = px + Float(s.origin.x) * sc, oy = py + Float(s.origin.y) * sc
                 if let sh = shadow { q.append(Quad(texture: texture(for: sh, of: entry), x: Int(ox + Float(sh.box.left) * sc), y: Int(oy + Float(sh.box.top) * sc), w: Int(Float(sh.bitmap.width) * sc), h: Int(Float(sh.bitmap.height) * sc))) }
                 if let fr = frame { q.append(Quad(texture: texture(for: fr, of: entry), x: Int(ox + Float(fr.box.left) * sc), y: Int(oy + Float(fr.box.top) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc))) }
+                // where the stack's head is on screen (the messages about it float from there)
+                let c = cs.shownCentre(u)
+                unitHeads.append((c.0, c.1, px, frame.map { oy + Float($0.box.top) * sc } ?? (py - 100 * sc)))
                 // the label above the head: a waving banner in the owner's colour with the stack
                 // size, the acting unit's taller "selected" one; heroes show health and mana bars
                 if shownAlive, let sheet = cs.labels(u.side == 0 ? AdventureUI.playerColourNames[0].lowercased() : "gray") {
@@ -184,7 +188,11 @@ extension Renderer {
         let messageFont = ui.font(24)
         for fl in cs.floaters where now >= fl.since {
             let age = Float(max(0, now.timeIntervalSince(fl.since)))
-            let (px, py) = CombatScreen.point(fl.x, fl.y)
+            var (px, py) = CombatScreen.point(fl.x, fl.y)
+            // over the stack it is about: centred on it, starting above its banner
+            if let h = unitHeads.min(by: { abs($0.cx - fl.x) + abs($0.cy - fl.y) < abs($1.cx - fl.x) + abs($1.cy - fl.y) }), abs(h.cx - fl.x) + abs(h.cy - fl.y) < 1.5 {
+                px = h.sx; py = h.top + 20
+            }
             let icon = fl.icon.flatMap { iconSheet("combat_messages")[$0.lowercased()] }
             let w = messageFont.measure(fl.text), iw = icon?.width ?? 0
             let x0 = Int(px) - (w + iw) / 2, y0 = Int(py - 80 - age * 25) + fl.line * 30

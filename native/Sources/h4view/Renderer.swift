@@ -438,6 +438,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// Cancel beside OK, and what OK does.
     var prompt: (text: String, cancel: Bool, ok: (() -> Void)?)?
     var outcomeShown = false
+    /// Each drawn combat stack: its cell centre and its head on screen (for the floating messages).
+    var unitHeads: [(cx: Float, cy: Float, sx: Float, top: Float)] = []
     lazy var highlightRing: Sprite? = (try? resolver?.archive.payload("animation.highlight_ring.h4d")).flatMap { try? Sprite(data: $0) }
     var messageItemHelp: String? = nil        // a found artifact's help, shown while right-clicked
     var pointerCanvas: (Float, Float) = (0, 0) { didSet { pointerSince = Date() } }

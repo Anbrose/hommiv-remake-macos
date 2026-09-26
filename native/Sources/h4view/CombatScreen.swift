@@ -450,7 +450,7 @@ final class CombatScreen {
             let name = good ? "spiritual fervor" : "sorrow"
             effects.append((name, id, now))
             let u = b.unit(id)
-            floaters.append((strings[good ? "combat_action.good_morale" : "combat_action.bad_morale"] ?? (good ? "Good Morale" : "Bad Morale"), u.centre.0, u.centre.1, now, nil, 0, false))
+            floaters.append((strings[good ? "combat_action.good_morale" : "combat_action.bad_morale"] ?? (good ? "Good Morale" : "Bad Morale"), shownCentre(u).0, shownCentre(u).1, now, nil, 0, false))
             playing = Anim(event: e, started: now, duration: effectDuration(name))
         case .effect(let id, let name, let dmg, let killed, let left):
             if effectSprite(name) != nil { effects.append((name, id, now)) }

@@ -9,8 +9,21 @@ public struct Caster {
     public var spellPoints: Int
     public var creature = false           // a creature caster: level 0, Spell Power x count for damage
     public var spellPower = 0             // the creature's Spell Power column
+    /// From worn items: spells castable without the school skill (scrolls), costs, power bonuses in percent.
+    public var free: Set<Int> = []
+    public var costs: [Int: Int] = [:]
+    public var powerBonus: [Int: Int] = [:]
+    public func cost(_ spell: Int) -> Int { costs[spell] ?? (spell < RuleTables.spells.count ? RuleTables.spells[spell].cost : 0) }
     public init(level: Int, skills: [String: Int], spells: [Int], spellPoints: Int) {
         self.level = level; self.skills = skills; self.spells = spells; self.spellPoints = spellPoints
+    }
+    /// A hero's book: known spells, those of worn spellbooks and scrolls, their costs and power.
+    public init(hero h: Hero, spellPoints: Int) {
+        let items = h.artifactSpells
+        let all = h.spells.union(items.withSkill).union(items.free)
+        self.init(level: h.level, skills: h.skills, spells: Array(all).sorted(), spellPoints: spellPoints)
+        free = items.free
+        for sp in all { costs[sp] = h.spellCost(sp); let b = h.spellPowerBonus(sp); if b != 0 { powerBonus[sp] = b } }
     }
     func skill(_ k: String) -> Int { skills[k] ?? 0 }
 }
@@ -37,7 +50,7 @@ extension Battle {
             level = 0
             if s.kind == "damage" || s.kind == "summoning" || spell == 133 { pct = c.spellPower * pct * u.stats.count / 100 }
         } else {
-            pct += 20 * c.skill(Battle.powerSkill[s.school] ?? "")
+            pct += 20 * c.skill(Battle.powerSkill[s.school] ?? "") + (c.powerBonus[spell] ?? 0)
             if s.kind == "damage" || s.has("Dmg") { pct += 20 * c.skill("sorcery") }
         }
         var p = s.base * pct / 100
@@ -84,8 +97,8 @@ extension Battle {
         return c.spells.filter { sp in
             guard sp < RuleTables.spells.count else { return false }
             let s = RuleTables.spells[sp]
-            let skillOK = c.creature || (s.schoolSkill >= 0 && (c.skills[RuleTables.skillIds[s.schoolSkill]] ?? 0) >= s.level)
-            return s.has("Cmb") && s.cost <= c.spellPoints && skillOK
+            let skillOK = c.creature || c.free.contains(sp) || (s.schoolSkill >= 0 && (c.skills[RuleTables.skillIds[s.schoolSkill]] ?? 0) >= s.level)
+            return s.has("Cmb") && c.cost(sp) <= c.spellPoints && skillOK
         }
     }
     /// A spell that needs no target (mass spells, Armageddon, summons...).
@@ -120,7 +133,7 @@ extension Battle {
                 if spell == 41 { targets.removeAll { $0.id == t.id } }
             }
         }
-        c.spellPoints -= s.cost
+        c.spellPoints -= c.cost(spell)
         u.caster = c
         let p = power(spell, by: u, creatures: tables)
         events.append(.cast(unit: u.id, spell: spell, targets: targets.map { $0.id }))

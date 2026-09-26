@@ -477,8 +477,12 @@ public final class GameState {
         var m = Hero.baseMovement
         for s in h.army { if let c = tables?.creature(s.creature), c.move > 0 { m = min(m, Float(c.move)) } }
         // Master / Grandmaster Pathfinding: the whole army +25% / +50% on land (0x6426c0)
-        let pf = ([h] + h.companions).map { $0.skill("pathfinding") }.max() ?? 0
-        return m * [1, 1, 1, 1, 1.25, 1.5][pf]
+        // Master / Grandmaster Pathfinding (125 / 150) and Boots of Speed style items add up
+        // (0x6426c0: max(1, 0.01 x (PATH[pathfinding] + items)), the best hero of the army)
+        let best = ([h] + h.companions).map { hh -> Int in
+            [100, 100, 100, 100, 125, 150][hh.skill("pathfinding")] + hh.artifactEffects.filter { $0.type == 0x00 && $0.land }.reduce(0) { $0 + $1.amount }
+        }.max() ?? 100
+        return m * max(1, Float(best) / 100)
     }
     /// How much Pathfinding takes off rough terrain (in cells: 0.25, 0.5, then all of it; never
     /// below the plain cost; heroes4.exe's table [0, 25, 50, 100, 100, 100] of 100 a cell).
@@ -498,6 +502,7 @@ public final class GameState {
         var out: [String: Int] = [:]
         for t in towns where t.owned { out["Gold", default: 0] += hallIncome(t) }
         for m in mines where m.owned { out[m.resource, default: 0] += m.amount }
+        for (r, n) in artifactIncome { out[r, default: 0] += n }   // bags of gold, carts of ore...
         // Estates: 100 gold a day per level of the skill, plus 10% per level of the hero (table.skills)
         for h in heroes.flatMap({ [$0] + $0.companions }) where h.skill("estates") > 0 {
             out["Gold", default: 0] += 100 * h.skill("estates") * (10 + h.level) / 10
@@ -687,6 +692,29 @@ public final class GameState {
         c.speed = max(1, c.speed + h.speedBonus + (h.fountainEffects.contains("speed") ? 2 : 0))
         if h.fountainEffects.contains("strength") { c.damageLow += c.damageLow / 5; c.damageHigh += c.damageHigh / 5 }
         if h.fountainEffects.contains("vigor") { c.hitPoints += c.hitPoints / 5 }
+        // worn artifacts (tenths of shown points for attack and defense; HP in percent)
+        var hpPct = 0, resist = [0, 30, 50, 70, 80, 100][min(5, h.skill("resistance"))]
+        for e in h.artifactEffects where e.target == 0 || e.target == 5 {
+            switch e.type {
+            case 0x37:
+                if e.melee { c.attack += e.amount / 10 }
+                if e.ranged { c.rangedAttack = (c.rangedAttack ?? c.attack) + e.amount / 10 }
+            case 0x0a: c.defense += e.amount / 10
+            case 0x10: hpPct += e.amount
+            case 0x09:
+                let extra = e.amount + e.perLevel * h.level / max(1, e.divisor)
+                c.damageLow += extra; c.damageHigh += extra
+            case 0x2a: c.speed = max(1, c.speed + e.amount)
+            case 0x17: resist += (100 - resist) * e.amount / 100
+            case 0x38:
+                c.abilities.insert(e.ability)
+                if e.ability == "ranged" { c.shooter = true; if c.shots == 0 { c.shots = 12 } }
+            case 0x2b: if e.spell >= 0 { c.effects.insert(e.spell) }
+            default: break
+            }
+        }
+        c.hitPoints = c.hitPoints * (100 + hpPct) / 100
+        c.magicResistance = min(100, resist)
         return c
     }
 

@@ -160,6 +160,22 @@ extension Renderer {
                     cursor += piece.width
                 }
             }
+            // an artifact: worn ones come off into the backpack, backpack ones are put on where they fit
+            if let d = ui.dialog("army.layout"), i < g.heroes.count {
+                let army = [g.heroes[i]] + g.heroes[i].companions
+                let h = army[min(heroShown, army.count - 1)]
+                if let hit = heroArtifactHit(h, d, ox, oy, x: x, y: y) {
+                    switch hit {
+                    case .worn(let s): h.unequip(slot: s)
+                    case .backpack(let k):
+                        if g.drink(h, backpackIndex: k) { break }   // a potion is drunk
+                        if !h.equip(backpackIndex: k, tables: g.tables) { g.log.append("No free place to wear \(g.artifactName(h.backpack[k]))") }
+                    }
+                    g.refreshMovement(g.heroes[i])
+                    sound?.play("miscellaneous.button")
+                    return true
+                }
+            }
             if let d = ui.dialog("army.layout"), inside(d["ok_button"], at: ox, oy, x, y) { adventureDialog = nil; heroShown = 0 }
             else if x < Float(ox) || x >= Float(ox + 800) || y < Float(oy) || y >= Float(oy + 600) { adventureDialog = nil }
             return true

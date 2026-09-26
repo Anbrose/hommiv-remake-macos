@@ -267,12 +267,26 @@ public struct ArmyBonuses {
         let t = best("tactics")
         speed = t; moveThirds = t == 0 ? 0 : Int(Double(3) * (1 + 0.5 * Double(t - 1)))
         morale = best("leadership"); luck = best("leadership")
+        // worn items working on the army's creatures (target 3; the influence record, 0x5f0f00)
+        for h in heroes {
+            attackPercent += h.artifactSum(0x08, target: 3); defensePercent += h.artifactSum(0x0a, target: 3)
+            speed += h.artifactSum(0x2a, target: 3); morale += h.artifactSum(0x1b, target: 3); luck += h.artifactSum(0x16, target: 3)
+            resistance += h.artifactSum(0x17, target: 3); moveThirds += h.artifactSum(0x05, target: 3) / 300
+            abilities += h.artifactEffects.filter { $0.type == 0x38 && ($0.target == 3 || $0.target == 5) }.map { $0.ability }
+            spellEffects += h.artifactEffects.filter { $0.type == 0x2b && ($0.target == 3 || $0.target == 5) }.map { $0.spell }
+        }
     }
+    public var resistance = 0
+    public var abilities: [String] = []
+    public var spellEffects: [Int] = []
     /// A creature stack with the bonuses.
     public func apply(_ c: inout Combatant) {
         c.attack = c.attack * (100 + attackPercent) / 100
         c.defense = c.defense * (100 + defensePercent) / 100
         c.speed += speed
         c.morale += morale
+        if resistance > 0 { c.magicResistance += (100 - c.magicResistance) * resistance / 100 }
+        for a in abilities { c.abilities.insert(a) }
+        for sp in spellEffects where sp >= 0 { c.effects.insert(sp) }
     }
 }

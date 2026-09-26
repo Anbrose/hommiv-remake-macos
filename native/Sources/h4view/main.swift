@@ -597,7 +597,7 @@ final class MapView: MTKView {
                 else if ui.hit("overview_button", x: cx, y: cy) { renderer.overview = KingdomOverview() }
                 else if ui.hit("Marketplace_button", x: cx, y: cy) { renderer.market = MarketState(k: 3) }
                 else if ui.hit("spell_button", x: cx, y: cy) {   // the hero's book, adventure spells first
-                    renderer.spellBook = SpellBookState(spells: Array(hero.spells), castable: Set(g.adventureSpells(hero)), points: g.spellPoints(hero), combat: false)
+                    renderer.spellBook = SpellBookState(spells: Array(hero.spells.union(hero.artifactSpells.withSkill).union(hero.artifactSpells.free)), castable: Set(g.adventureSpells(hero)), points: g.spellPoints(hero), combat: false)
                 }
                 else if (ui.hit("underground_button", x: cx, y: cy) || ui.hit("surface_button", x: cx, y: cy)), g.map.levels > 1 {
                     g.level = 1 - g.level   // look at the other level (the hero stays where he is)

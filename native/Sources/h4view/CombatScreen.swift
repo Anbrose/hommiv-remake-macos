@@ -178,11 +178,11 @@ final class CombatScreen {
         var out: [Battle.Fighter] = []
         for (k, hh) in heroes.enumerated() {
             var st = g.heroCombatant(hh)
-            st.magicResistance = [0, 30, 50, 70, 80, 100][min(5, hh.skill("resistance"))]
             st.morale = Battle.armyMorale(own: hh.alignment, army: army)
             let model = "hero.\(hh.alignment)_fighter_male", fallback = "hero.\(h.alignment)_fighter_male"
-            let book = Caster(level: hh.level, skills: hh.skills, spells: Array(hh.spells), spellPoints: g.spellPoints(hh))
-            out.append(Battle.Fighter(stats: st, keyword: hh.keyword, actor: actor(model) != nil ? model : fallback, size: actor(model)?.size ?? actor(fallback)?.size ?? 4, move: 24, shots: st.shots, slot: k, caster: book))
+            let book = Caster(hero: hh, spellPoints: g.spellPoints(hh))
+            let itemMove = hh.artifactEffects.filter { $0.type == 0x05 && ($0.target == 0 || $0.target == 5) }.reduce(0) { $0 + $1.amount } / 300
+            out.append(Battle.Fighter(stats: st, keyword: hh.keyword, actor: actor(model) != nil ? model : fallback, size: actor(model)?.size ?? actor(fallback)?.size ?? 4, move: max(1, 24 + itemMove), shots: st.shots, slot: k, caster: book))
         }
         for (k, s) in h.army.enumerated() {
             guard let cd = t.creature(s.creature) else { continue }
@@ -235,17 +235,7 @@ final class CombatScreen {
             return Battle.Fighter(stats: st, keyword: cd.keyword, actor: cd.name, size: actor(cd.name)?.size ?? 4, move: cd.move + (bonus?.moveThirds ?? 0), shots: cd.shots)
         }
         strings = t.strings
-        // a hero moves 24 cells (heroes4.exe: 2400 movement, 100 a cell) at Speed 6 plus skill bonuses
-        var attackers: [Battle.Fighter] = []
-        for (k, hh) in heroes.enumerated() {
-            var heroStats = g.heroCombatant(hh)
-            heroStats.magicResistance = [0, 30, 50, 70, 80, 100][min(5, hh.skill("resistance"))]
-            heroStats.morale = Battle.armyMorale(own: hh.alignment, army: heroArmy)
-            let model = "hero.\(hh.alignment)_fighter_male"
-            let book = Caster(level: hh.level, skills: hh.skills, spells: Array(hh.spells), spellPoints: g.spellPoints(hh))
-            attackers.append(Battle.Fighter(stats: heroStats, keyword: hh.keyword, actor: actor(model) != nil ? model : classActor, size: actor(model)?.size ?? actor(classActor)?.size ?? 4, move: 24, shots: heroStats.shots, slot: k, caster: book))
-        }
-        for (k, s) in h.army.enumerated() { if let cd = t.creature(s.creature) { var f = fighter(cd, s.count, army: heroArmy, bonus: bonus); f.slot = k + heroes.count; attackers.append(f) } }
+        let attackers = armyFighters(game: g, h, tables: t)
         // a wandering stack has no hero: it splits against the attacker's stacks (0x62da90)
         func backRow(_ d: CreatureDef) -> Bool { d.shots > 0 || Combatant(creature: d, count: 1).has("ranged") }
         var stacks = [Battle.ArmySlot(creature: c.keyword, count: g.monsters[i].count, backRow: backRow(c))]

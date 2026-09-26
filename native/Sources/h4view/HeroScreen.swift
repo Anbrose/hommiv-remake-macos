@@ -113,4 +113,20 @@ extension Renderer {
         let name = game?.tables?.strings[k] ?? k.split(separator: "_").map { $0.capitalized }.joined(separator: " ")
         return "Level \(h.level) \(name)"
     }
+
+    enum ArtifactHit { case worn(Int), backpack(Int) }
+    /// Which worn slot or backpack place is under the pointer (a place holding an artifact).
+    func heroArtifactHit(_ h: Hero, _ d: LayerFile, _ ox: Int, _ oy: Int, x: Float, y: Float) -> ArtifactHit? {
+        func at(_ sx: Int, _ sy: Int) -> Bool { x >= Float(sx) && x < Float(sx + 44) && y >= Float(sy) && y < Float(sy + 44) }
+        if let inv = d["hero_inventory"], let m = dollLayout(h), let bg = m["Background"] {
+            let dx = ox + inv.x + (inv.width - bg.width) / 2, dy = oy + inv.y + (inv.height - bg.height) / 2
+            for (i, a) in h.equipped.enumerated() where i < 14 && a != nil {
+                if let s = m[Renderer.slotLayers[i]], at(dx + s.x, dy + s.y) { return .worn(i) }
+            }
+        }
+        for k in h.backpack.indices.prefix(10) {
+            if let s = d["backpack \(k + 1) slot"], at(ox + s.x, oy + s.y) { return .backpack(k) }
+        }
+        return nil
+    }
 }

@@ -193,7 +193,7 @@ extension GameState {
             h.manaRestoredToday = 0
             for (k, d) in h.timedEffects { h.timedEffects[k] = d > 1 ? d - 1 : nil }
             // spell points come back: 2, and 2 per level of the five magic secondaries (0x72da20)
-            let regen = 2 + 2 * ["healing", "enchantment", "black", "conjuration", "herbalism"].reduce(0) { $0 + h.skill($1) }
+            let regen = 2 + 2 * ["healing", "enchantment", "black", "conjuration", "herbalism"].reduce(0) { $0 + h.skill($1) } + h.artifactSum(0x1a)
             if let sp = h.spellPoints { h.spellPoints = min(maxSpellPoints(h), sp + regen) }
         }
     }
@@ -205,7 +205,7 @@ extension GameState {
         objectStates[key] = st
     }
     public func maxSpellPoints(_ h: Hero) -> Int {
-        10 + 10 * ["healing", "enchantment", "black", "conjuration", "herbalism"].reduce(0) { $0 + h.skill($1) } + h.spellPointBonus
+        10 + 10 * ["healing", "enchantment", "black", "conjuration", "herbalism"].reduce(0) { $0 + h.skill($1) } + h.spellPointBonus + h.artifactSum(0x19)
     }
     public func spellPoints(_ h: Hero) -> Int { h.spellPoints ?? maxSpellPoints(h) }
 

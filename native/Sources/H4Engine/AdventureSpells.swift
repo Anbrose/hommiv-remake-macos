@@ -4,14 +4,15 @@ import Foundation
 extension GameState {
     /// Adventure spells the hero knows and can cast now (school skill, spell points).
     public func adventureSpells(_ h: Hero) -> [Int] {
-        h.spells.filter { sp in
-            sp < RuleTables.spells.count && RuleTables.spells[sp].has("Adv") && h.canLearn(sp) && RuleTables.spells[sp].cost <= spellPoints(h)
+        let items = h.artifactSpells
+        return h.spells.union(items.withSkill).union(items.free).filter { sp in
+            sp < RuleTables.spells.count && RuleTables.spells[sp].has("Adv") && (h.canLearn(sp) || items.free.contains(sp)) && h.spellCost(sp) <= spellPoints(h)
         }.sorted()
     }
     public func castAdventureSpell(_ spell: Int, by h: Hero) {
         guard adventureSpells(h).contains(spell) else { return }
         let s = RuleTables.spells[spell]
-        h.spellPoints = spellPoints(h) - s.cost
+        h.spellPoints = spellPoints(h) - h.spellCost(spell)
         sounds.append("spell.\(s.keyword)")
         switch spell {
         case 181:   // Town Gate: to the nearest own town
@@ -80,5 +81,23 @@ extension GameState {
         }
         if !learned.isEmpty { log.append("learned " + Set(learned).map { RuleTables.spells[$0].name }.sorted().joined(separator: ", ")) }
         return learned
+    }
+}
+
+extension GameState {
+    /// Drink a potion from the backpack on the map: its spell on the hero, free; the potion is gone.
+    @discardableResult
+    public func drink(_ h: Hero, backpackIndex k: Int) -> Bool {
+        guard h.backpack.indices.contains(k), let e = (RuleTables.artifactEffects[h.backpack[k]] ?? []).first(where: { $0.type == 0x2e }),
+              e.spell >= 0, e.spell < RuleTables.spells.count, RuleTables.spells[e.spell].has("Adv") else { return false }
+        let name = artifactName(h.backpack[k])
+        h.backpack.remove(at: k)
+        let saved = h.spellPoints
+        h.spellPoints = spellPoints(h) + h.spellCost(e.spell)   // the potion pays for itself
+        h.spells.insert(e.spell)
+        castAdventureSpell(e.spell, by: h)
+        if e.spell != 76 { h.spellPoints = saved }
+        log.append("\(h.name) drinks \(name)")
+        return true
     }
 }

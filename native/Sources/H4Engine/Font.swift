@@ -36,8 +36,11 @@ public final class H4Font {
         return code >= 0 && code < glyphs.count ? glyphs[code] : glyphs[0]
     }
 
+    /// The pen moves on by the glyph's width plus its extra spacing (the record's fourth word: 0 for
+    /// most letters, 4 for the space).
+    func step(_ g: Glyph) -> Int { g.width + g.advance }
     public func measure(_ text: String) -> Int {
-        text.reduce(0) { $0 + max(glyph($1).width, glyph($1).advance) + 1 }
+        text.reduce(0) { $0 + step(glyph($1)) }
     }
 
     /// The text as an RGBA bitmap in one colour.
@@ -56,7 +59,7 @@ public final class H4Font {
                     }
                 }
             }
-            x += max(g.width, g.advance) + 1
+            x += step(g)
         }
         return bm
     }

@@ -62,7 +62,7 @@ final class MenuView: NSView {
     let archivePath: String
     let archive: H4Archive
     let strings: [String: String]
-    let font14: H4Font, font12: H4Font, font22: H4Font, font16: H4Font, font20: H4Font, font30: H4Font
+    let font14: H4Font, font12: H4Font, font22: H4Font, font16: H4Font, font18: H4Font, font20: H4Font, font30: H4Font
     let sound: GameSound
     var screen: Screen = .main
     var popup: [(String, () -> Void)]? = nil
@@ -88,6 +88,7 @@ final class MenuView: NSView {
         font22 = (try? H4Font(data: archive.payload("font.Prose_Antique.22.h4d"))) ?? font14
         font16 = (try? H4Font(data: archive.payload("font.Prose_Antique.16.h4d"))) ?? font14
         font20 = (try? H4Font(data: archive.payload("font.Prose_Antique.20.h4d"))) ?? font14
+        font18 = (try? H4Font(data: archive.payload("font.Prose_Antique.18.h4d"))) ?? font14
         font30 = (try? H4Font(data: archive.payload("font.Prose_Antique.30.h4d"))) ?? font22
         sound = GameSound(dataDirectory: dir)
         super.init(frame: NSRect(x: 0, y: 0, width: 1024, height: 768))
@@ -254,8 +255,10 @@ final class MenuView: NSView {
         let rows = popupRows(items, f)
         let total = rows.reduce(0) { $0 + $1.h }
         // the parchment (with its side borders) repeated down the entries' height
-        // the middle and its two teal borders repeated down the entries' height
-        var y = top.height
+        // the top first, then the middle and its two teal borders repeated down the entries' height
+        // from the parchment's own first row (it covers the top bar's last one)
+        draw(top, key: "sm|top")
+        var y = parch.y
         while y < top.height + total {
             let h = min(parch.height, top.height + total - y)
             for n in ["background", "left", "right"] {
@@ -264,7 +267,11 @@ final class MenuView: NSView {
             }
             y += h
         }
-        draw(top, key: "sm|top")
+        // the middle goes on under the bottom's corner pieces (bottom_border_size)
+        if let bg = f["background"] {
+            let under = (f["bottom_border_size"]?.height ?? bottom.height) - 8
+            draw(UILayer(name: "", kind: 4, x: bg.x + 4, y: top.height + total, width: bg.width - 8, height: under, bitmap: crop(bg.bitmap, height: under)), key: "sm|under|\(under)")
+        }
         for r in rows {
             let hot = hover.1 >= Float(origin.1 + r.y) && hover.1 < Float(origin.1 + r.y + r.h) && hover.0 >= Float(origin.0 + parch.x) && hover.0 < Float(origin.0 + parch.x + parch.width)
             for (k, line) in r.lines.enumerated() {
@@ -335,17 +342,17 @@ final class MenuView: NSView {
                 fill(CGRect(x: origin.0 + vline + 9, y: origin.1 + slot.y - 2, width: 743 - vline - 9, height: slot.height + 3), (0.4, 0.4, 0.8, 1))
             }
             let ink: (UInt8, UInt8, UInt8) = sel ? (250, 250, 250) : (12, 8, 4)
-            label(m.name, in: slot, font: font20, colour: ink, centre: false)
+            label(m.name, in: slot, font: font22, colour: ink, centre: false)
             func cell(_ c: Int) -> UILayer { UILayer(name: "", kind: 1, x: cols[c].x0, y: slot.y, width: cols[c].x1 - cols[c].x0, height: slot.height, bitmap: Bitmap(width: 1, height: 1)) }
             // (the file's size is 76 cells a step: 76 small, 152 medium, 228 large, 304 extra large)
-            label(sizes[max(0, min(6, (m.size + 38) / 76 - 1))], in: cell(0), font: font20, colour: ink)
+            label(sizes[max(0, min(6, (m.size + 38) / 76 - 1))], in: cell(0), font: font22, colour: ink)
             let dname = ["easy", "Normal", "Hard", "expert", "impossible"][min(4, max(0, m.difficulty))]
             if let ic = diffIcons?[dname] { let c = cell(1); draw(UILayer(name: "", kind: 4, x: c.x + (c.width - ic.width) / 2, y: c.y + (c.height - ic.height) / 2, width: ic.width, height: ic.height, bitmap: ic.bitmap), key: "diff|\(dname)") }
-            label("\(m.players)", in: cell(2), font: font20, colour: ink)
+            label("\(m.players)", in: cell(2), font: font22, colour: ink)
             let tname = m.version >= 29 ? "expansion_2" : m.version >= 28 ? "expansion" : "original"
             if let ic = typeIcons?[tname] { let c = cell(3); draw(UILayer(name: "", kind: 4, x: c.x + (c.width - ic.width) / 2 - ic.x / 2, y: c.y + (c.height - ic.height) / 2, width: ic.width, height: ic.height, bitmap: ic.bitmap), key: "mtype|\(tname)") }
         }
-        if selected < maps.count { paragraph(text("map_description.new_game", "Map Description:") + "\n" + maps[selected].summary.description, in: f["Description"], font: font16) }
+        if selected < maps.count { paragraph(text("map_description.new_game", "Map Description:") + "\n" + maps[selected].summary.description, in: f["Description"], font: font18) }
         button(text("cancel", "Cancel"), in: f["Back_Button"])
         button(text("details", "Details"), in: f["Details_Button"], enabled: false)
         button(text("next", "Next"), in: f["Begin_Button"], enabled: selected < maps.count)

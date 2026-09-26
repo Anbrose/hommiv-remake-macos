@@ -44,6 +44,7 @@ public struct Passability {
         roadType = MapScene.roadTypes(map: map, level: level)
         water = [Bool](repeating: false, count: size * size)
         occupied = [Bool](repeating: false, count: size * size)
+        edgeBlocked = [Bool](repeating: false, count: size * size)
         terrainBlocked = [Bool](repeating: true, count: size * size)
         let cells = map.cells[level]
         for x in 0..<size {
@@ -65,7 +66,7 @@ public struct Passability {
             // pickups block too: the hero stops next to them and takes them from there
             for b in p.sprite.blocked {
                 let x = p.cellX + b.x, y = p.cellY + b.y
-                if x >= 0, x < size, y >= 0, y < size { blocked[x * size + y] = true; occupied[x * size + y] = true }
+                if x >= 0, x < size, y >= 0, y < size { blocked[x * size + y] = true; occupied[x * size + y] = true; edgeBlocked[x * size + y] = true }
             }
         }
         // bridges (and their ramps) are walkable over the river they span: their whole footprint is a deck
@@ -76,6 +77,7 @@ public struct Passability {
                     let x = p.cellX + i, y = p.cellY + j
                     if x >= 0, x < size, y >= 0, y < size {
                         blocked[x * size + y] = false; terrainBlocked[x * size + y] = false; cost[x * size + y] = 1; elevation[x * size + y] = raise
+                        edgeBlocked[x * size + y] = false
                         bridgeAxis[x * size + y] = 3   // axis decided below
                     }
                 }
@@ -93,6 +95,8 @@ public struct Passability {
     public func canStep(from x0: Int, _ y0: Int, to x1: Int, _ y1: Int) -> Bool {
         guard isFree(x1, y1) else { return false }
         let dx = x1 - x0, dy = y1 - y0
+        // no cutting a corner past an object's cell (0x4d79d0: its edges are blocked)
+        if dx != 0, dy != 0, edgeAt(x1, y0) || edgeAt(x0, y1) { return false }
         for i in [x0 * size + y0, x1 * size + y1] {
             switch bridgeAxis[i] {
             case 1: if dy != 0 { return false }
@@ -107,10 +111,15 @@ public struct Passability {
         x >= 0 && x < size && y >= 0 && y < size ? elevation[x * size + y] : 0
     }
 
+    /// An object's footprint covers the cell (its four edges are blocked: no corner cutting past it).
+    public var edgeBlocked: [Bool] = []
+    func edgeAt(_ x: Int, _ y: Int) -> Bool { x >= 0 && y >= 0 && x < size && y < size && edgeBlocked[x * size + y] }
+    /// Cells of the guard zones the player sees: a route enters them only as its last step.
+    public var zones: Set<Int> = []
     /// Something stands on the cell (an object, a monster, an army, a ship).
     public private(set) var occupied: [Bool] = []
     public mutating func free(_ x: Int, _ y: Int) {
-        if x >= 0, x < size, y >= 0, y < size { occupied[x * size + y] = false; blocked[x * size + y] = terrainBlocked[x * size + y] }
+        if x >= 0, x < size, y >= 0, y < size { occupied[x * size + y] = false; blocked[x * size + y] = terrainBlocked[x * size + y]; edgeBlocked[x * size + y] = false }
     }
     public mutating func block(_ x: Int, _ y: Int) {
         if x >= 0, x < size, y >= 0, y < size { occupied[x * size + y] = true; blocked[x * size + y] = true }
@@ -131,60 +140,74 @@ public struct Passability {
 
     /// Cost of stepping from (x0, y0) onto (x1, y1): the target cell's terrain cost, or the
     /// road's rate when both cells have a road ("road-to-road moves, regardless of the
-    /// terrain"); x1.4 diagonally.
+    /// terrain"); x1.5 diagonally (0x4ff180: cost += cost >> 1).
     public func stepCost(from x0: Int, _ y0: Int, to x1: Int, _ y1: Int) -> Float {
-        let i = x1 * size + y1
-        let base = roadType[i] > 0 && roadType[x0 * size + y0] > 0 ? Passability.roadRate(roadType[i]) : cost[i] > 1 ? max(1, cost[i] - relief) : cost[i]
-        return base * (x0 != x1 && y0 != y1 ? 1.4 : 1)
+        Float(stepCost100(from: x0, y0, to: x1, y1)) / 100
     }
 
-    /// A* over the 8 neighbours; the path excludes the start and includes the goal, or nil.
+    /// The planner (heroes4.exe 0x4ff180, pathing_spec §4): Dijkstra over the 8 neighbours in the
+    /// exe's direction order with integer costs (100 a plain step; a diagonal adds half), a
+    /// cell's route replaced only by a strictly cheaper one; cells in a seen guard zone are
+    /// entered but not left (§2). The path excludes the start and includes the goal, or nil.
     public func path(from start: (Int, Int), to goal: (Int, Int)) -> [(x: Int, y: Int)]? {
         guard isFree(goal.0, goal.1), start != goal else { return nil }
         let n = size * size
-        var g = [Float](repeating: .infinity, count: n)
+        var g = [Int32](repeating: .max, count: n)
         var prev = [Int32](repeating: -1, count: n)
         var closed = [Bool](repeating: false, count: n)
-        var open: [(f: Float, i: Int)] = []
-        func h(_ i: Int) -> Float {
-            let dx = abs(i / size - goal.0), dy = abs(i % size - goal.1)
-            return Float(max(dx, dy)) * 0.67
+        var heap: [(c: Int32, i: Int32)] = []
+        func push(_ c: Int32, _ i: Int) {
+            heap.append((c, Int32(i))); var k = heap.count - 1
+            while k > 0 { let p = (k - 1) / 2; if heap[p].c <= heap[k].c { break }; heap.swapAt(p, k); k = p }
         }
-        let s = start.0 * size + start.1, t = goal.0 * size + goal.1
-        g[s] = 0
-        open.append((h(s), s))
-        while !open.isEmpty {
-            var best = 0
-            for k in 1..<open.count where open[k].f < open[best].f { best = k }
-            let (_, i) = open.remove(at: best)
-            if closed[i] { continue }
-            if i == t { break }
-            closed[i] = true
-            let x = i / size, y = i % size
-            for dx in -1...1 {
-                for dy in -1...1 where dx != 0 || dy != 0 {
-                    let nx = x + dx, ny = y + dy
-                    guard canStep(from: x, y, to: nx, ny) else { continue }
-                    let j = nx * size + ny
-                    if closed[j] { continue }
-                    let ng = g[i] + stepCost(from: x, y, to: nx, ny)
-                    if ng < g[j] {
-                        g[j] = ng
-                        prev[j] = Int32(i)
-                        open.append((ng + h(j), j))
-                    }
+        func pop() -> (c: Int32, i: Int32) {
+            let top = heap[0]; let last = heap.removeLast()
+            if !heap.isEmpty {
+                heap[0] = last; var k = 0
+                while true {
+                    let l = 2 * k + 1, r = l + 1; var m = k
+                    if l < heap.count, heap[l].c < heap[m].c { m = l }
+                    if r < heap.count, heap[r].c < heap[m].c { m = r }
+                    if m == k { break }; heap.swapAt(m, k); k = m
                 }
             }
+            return top
+        }
+        let s = start.0 * size + start.1, t = goal.0 * size + goal.1
+        g[s] = 0; push(0, s)
+        let dirs = [(-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1)]
+        while !heap.isEmpty {
+            let (c, ii) = pop(); let i = Int(ii)
+            if closed[i] || c > g[i] { continue }
+            if i == t { break }
+            closed[i] = true
+            if i != s, zones.contains(i) { continue }   // inside a guard zone: no further
+            let x = i / size, y = i % size
+            for (dx, dy) in dirs {
+                let nx = x + dx, ny = y + dy
+                guard canStep(from: x, y, to: nx, ny) else { continue }
+                let j = nx * size + ny
+                if closed[j] { continue }
+                let ng = g[i] + Int32(stepCost100(from: x, y, to: nx, ny))
+                if ng < g[j] { g[j] = ng; prev[j] = Int32(i); push(ng, j) }
+            }
             for j in jumps[i] ?? [] where !closed[j] && !blocked[j] {
-                let ng = g[i] + 1
-                if ng < g[j] { g[j] = ng; prev[j] = Int32(i); open.append((ng + h(j), j)) }
+                let ng = g[i] + 100
+                if ng < g[j] { g[j] = ng; prev[j] = Int32(i); push(ng, j) }
             }
         }
-        guard g[t] < .infinity else { return nil }
+        guard g[t] < .max else { return nil }
         var out: [(x: Int, y: Int)] = []
         var i = t
         while i != s { out.append((i / size, i % size)); i = Int(prev[i]) }
         return out.reversed()
+    }
+    /// A step's cost in hundredths (the planner's integers): diagonal cost += cost >> 1.
+    func stepCost100(from x0: Int, _ y0: Int, to x1: Int, _ y1: Int) -> Int {
+        let i = x1 * size + y1
+        let base = roadType[i] > 0 && roadType[x0 * size + y0] > 0 ? Passability.roadRate(roadType[i]) : cost[i] > 1 ? max(1, cost[i] - relief) : cost[i]
+        let c = Int((base * 100).rounded())
+        return x0 != x1 && y0 != y1 ? c + c >> 1 : c
     }
 }
 
@@ -1150,8 +1173,14 @@ public final class GameState {
     static func adjacent(_ a: (Int, Int), _ b: (Int, Int)) -> Bool { max(abs(a.0 - b.0), abs(a.1 - b.1)) == 1 }
 
     /// Is the cell next to any cell of the object's footprint?
+    /// Next to an object to use it: straight beside one of its cells (0x4fe990: objects are visited
+    /// by an orthogonal step; armies and wandering stacks may be met diagonally too).
     func nextTo(_ c: (Int, Int), _ p: MapScene.Placed) -> Bool {
-        for i in 0..<p.sprite.footprint.w { for j in 0..<p.sprite.footprint.h where GameState.adjacent(c, (p.cellX + i, p.cellY + j)) { return true } }
+        let diagonalOK = monster(for: p) != nil
+        for i in 0..<p.sprite.footprint.w { for j in 0..<p.sprite.footprint.h {
+            let dx = abs(c.0 - p.cellX - i), dy = abs(c.1 - p.cellY - j)
+            if diagonalOK ? max(dx, dy) == 1 : dx + dy == 1 { return true }
+        } }
         return false
     }
 
@@ -1184,7 +1213,7 @@ public final class GameState {
     /// walk) to the cheapest neighbouring cell; it is used on arrival. A town is entered through
     /// the middle gate cell; when that is taken, through the nearer of the other two.
     public func click(hero: Hero, pickup p: MapScene.Placed) {
-        passability.relief = GameState.terrainRelief(hero)
+        passability.relief = GameState.terrainRelief(hero); passability.zones = seenZones(for: hero)
         let walking = hero.isWalking
         if walking { interrupt(hero) }
         let from = standingCell(hero)
@@ -1195,7 +1224,8 @@ public final class GameState {
             candidates = isVacant(gate[0], for: hero) ? [gate[0]] : Array(gate.dropFirst())
         } else {
             let fw = p.sprite.footprint.w, fh = p.sprite.footprint.h
-            for dx in -1...fw { for dy in -1...fh where dx == -1 || dy == -1 || dx == fw || dy == fh { candidates.append((p.cellX + dx, p.cellY + dy)) } }
+            let corners = monster(for: p) != nil   // (only stacks are met across a corner)
+            for dx in -1...fw { for dy in -1...fh where (dx == -1 || dy == -1 || dx == fw || dy == fh) && (corners || !((dx == -1 || dx == fw) && (dy == -1 || dy == fh))) { candidates.append((p.cellX + dx, p.cellY + dy)) } }
         }
         if !walking, candidates.contains(where: { $0 == from }), canUse(from: from, p) { interact(hero: hero, p); return }
         if !walking, let t = hero.target, t.x == p.cellX, t.y == p.cellY, !hero.plan.isEmpty {
@@ -1278,7 +1308,7 @@ public final class GameState {
 
     /// Click handling: first click plans a path to the cell, a second click on the same cell walks it.
     public func click(hero: Hero, x: Int, y: Int) {
-        passability.relief = GameState.terrainRelief(hero)
+        passability.relief = GameState.terrainRelief(hero); passability.zones = seenZones(for: hero)
         if let e = enemyAt(x, y) { attack(e, with: hero); return }
         hero.attackTarget = nil
         if hero.boat != nil {   // at sea: sail over water; a coast cell to land on
@@ -1531,7 +1561,7 @@ public final class GameState {
     /// is taken while its cost fits what is left, otherwise the next day starts with full
     /// movement. The adventure cursors show it (their frames are 1, 2, 3 and 4+ days). nil: no way there.
     public func daysToReach(_ h: Hero, _ goal: (Int, Int)) -> Int? {
-        passability.relief = GameState.terrainRelief(h)
+        passability.relief = GameState.terrainRelief(h); passability.zones = seenZones(for: h)
         if jumpsLevel != level { refreshJumps(); jumpsLevel = level }
         guard let route = passability.path(from: (h.x, h.y), to: goal) else { return nil }
         var left = h.movement, days = 1, px = h.x, py = h.y
@@ -1545,7 +1575,7 @@ public final class GameState {
 
     /// the last cell gets the destination marker.
     public func arrows(for h: Hero) -> [(x: Int, y: Int, name: String)] {
-        passability.relief = GameState.terrainRelief(h)
+        passability.relief = GameState.terrainRelief(h); passability.zones = seenZones(for: h)
         var plan = h.plan
         guard !plan.isEmpty else { return [] }
         // a route to an object ends on the object itself (as in the game), though the hero stops

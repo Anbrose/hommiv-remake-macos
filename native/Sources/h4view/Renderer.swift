@@ -438,6 +438,11 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// Cancel beside OK, and what OK does.
     var prompt: (text: String, cancel: Bool, ok: (() -> Void)?)?
     var outcomeShown = false
+    /// 15000 -> "15,000"
+    static func grouped(_ n: Int) -> String {
+        let f = NumberFormatter(); f.numberStyle = .decimal; f.groupingSeparator = ","; f.usesGroupingSeparator = true
+        return f.string(from: NSNumber(value: n)) ?? String(n)
+    }
     /// Each drawn combat stack: its cell centre and its head on screen (for the floating messages).
     var unitHeads: [(cx: Float, cy: Float, sx: Float, top: Float)] = []
     lazy var highlightRing: Sprite? = (try? resolver?.archive.payload("animation.highlight_ring.h4d")).flatMap { try? Sprite(data: $0) }
@@ -530,12 +535,25 @@ final class Renderer: NSObject, MTKViewDelegate {
             }
         }
         // resource numbers, right-aligned in their fields
+        // the treasury: each amount centred under its pile, thousands separated ("15,000")
+        let f16 = ui.font(16)
         for name in ui.resourceNames {
-            guard let field = ui.hotspot("\(name)_Number") else { continue }
-            let text = String(g.resources[name] ?? 0)
-            let t = uiTexture("num|\(text)", { ui.numberFont.render(text, colour: (40, 24, 8)) })
-            let w = ui.numberFont.measure(text)
-            out.append(Quad(texture: t, x: field.x + field.width - w - 2, y: field.y + (field.height - ui.numberFont.size) / 2, w: w, h: ui.numberFont.size))
+            guard let field = ui.hotspot("\(name)_Number") ?? ui.hotspot("\(name.lowercased())_number") else { continue }
+            let text = Renderer.grouped(g.resources[name] ?? 0)
+            let t = uiTexture("num16|\(text)", { f16.render(text, colour: (12, 8, 4)) })
+            let w = f16.measure(text)
+            out.append(Quad(texture: t, x: field.x + (field.width - w) / 2, y: field.y + (field.height - f16.size) / 2 + 1, w: w, h: f16.size))
+        }
+        // a resource's name once the pointer rests on its pile
+        if Date().timeIntervalSince(pointerSince) > 0.8 {
+            for name in ui.resourceNames {
+                guard let h = ui.hotspot(name), pointerCanvas.0 >= Float(h.x), pointerCanvas.0 < Float(h.x + h.width), pointerCanvas.1 >= Float(h.y), pointerCanvas.1 < Float(h.y + h.height) else { continue }
+                let s = g.tables?.interfaceTexts["adventure_map.\(name.lowercased())"]?.balloon ?? name
+                let fb = ui.font(18), w = fb.measure(s) + 12, hh = fb.size + 8
+                let bx = Int(pointerCanvas.0) - w - 4, by = Int(pointerCanvas.1) - hh / 2
+                out += [Quad(texture: solid(20, 12, 4), x: bx - 1, y: by - 1, w: w + 2, h: hh + 2), Quad(texture: solid(255, 252, 240), x: bx, y: by, w: w, h: hh),
+                        Quad(texture: uiTexture("dlgtext|18|\(s)|12", { fb.render(s, colour: (12, 8, 4)) }), x: bx + 6, y: by + 4, w: w - 12, h: fb.size)]
+            }
         }
         // the day scroll and its two text lines
         if let slot = ui.hotspot("day_scroll") {

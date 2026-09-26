@@ -38,6 +38,7 @@ extension GameState {
 
     /// One computer player's day.
     func aiTurn(_ colour: Int) {
+        for k in passabilities.indices { passabilities[k].zones = [] }   // (the player's view of guard zones is not the computer's)
         acting(as: colour) {
             // income: its towns' halls, its mines
             for t in towns where t.owner == colour { resources["Gold", default: 0] += hallIncome(t) }

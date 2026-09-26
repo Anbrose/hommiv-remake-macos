@@ -149,3 +149,15 @@ extension GameState {
         return hs.finalize()
     }
 }
+
+extension GameState {
+    /// The guard zones of the stacks the player sees that would notice this hero (a route
+    /// enters them only as its last step, pathing_spec §2).
+    func seenZones(for h: Hero) -> Set<Int> {
+        var out = Set<Int>()
+        for i in monsters.indices where monsters[i].z == level && monsters[i].bank == nil && monsterSeen(i) {
+            for c in zone(of: i) where notices(monsters[i], h, at: c / map.size, c % map.size) { out.insert(c) }
+        }
+        return out
+    }
+}

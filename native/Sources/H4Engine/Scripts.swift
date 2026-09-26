@@ -118,11 +118,11 @@ public struct ScriptReader {
         for _ in 0..<n { out.append(try action()) }
         return out
     }
-    /// An artifact (0x664640): u16 id; the spell scroll (124) and the spell book (166) add a spell.
+    /// An artifact (0x664640): u16 id; the parchment (124) and the scroll (166) add their spell.
     mutating func artifact() throws -> Int {
         let a = try u16()
         guard a <= 248 else { throw ScriptError(message: "artifact \(a)") }
-        if a == 166 || a == 124 { _ = try u16() }
+        if a == 166 || a == 124 { return RuleTables.artifact(a, spell: try u16()) }
         return a
     }
     mutating func creatureArray() throws -> [(creature: Int, count: Int)?] {

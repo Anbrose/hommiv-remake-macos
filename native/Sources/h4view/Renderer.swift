@@ -139,6 +139,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     var optionsOpen: GameSettings? = nil   // the options dialog, while open (the values being edited)
     var settings = GameSettings.load()
     var hire: HireOffer? = nil             // the tavern's dialog
+    var shop: ShopState? = nil             // a blacksmith's or conservatory's shop
+    var sanctuary: SanctuaryOffer? = nil   // a sanctuary's dialog
     var puzzle: String? = nil              // the puzzle map shown (an obelisk colour)
     var heroShown = 0                     // which of the army's heroes the hero screen shows
     var floaters: [(text: String, x: Int, y: Int, since: Date)] = []
@@ -355,6 +357,8 @@ final class Renderer: NSObject, MTKViewDelegate {
             }
         }
         out += townDialogQuads()
+        out += shopQuads()
+        out += hireQuads()
         return out
     }
 
@@ -377,6 +381,11 @@ final class Renderer: NSObject, MTKViewDelegate {
             if y < 546, let lay = ts.layout(t.alignment) {
                 if let top = townBuilding(at: x, y) {
                     if top.name.lowercased().hasPrefix("mage guild") { townDialog = .mageGuild(page: 0); return }
+                    if top.name.lowercased() == "blacksmith", let hero = g.heroes.first {   // the town's blacksmith: its alignment's wares
+                        let o = ShopOffer(key: "town|\(i)", title: text("blacksmith", "Blacksmith"), panel: t.alignment.capitalized, items: [], potions: [], hero: hero)
+                        shop = ShopState(offer: o, panel: ui?.dialog("Blacksmith.\(o.panel)")); sound?.play("dialogue.marketplace")
+                        return
+                    }
                     if top.name.lowercased().contains("tavern") {   // the town's tavern: hire a hero (one a week)
                         if let r = g.tavernRefusal(town: i) { prompt = (r, false, nil) } else { hire = g.hireOffer(town: i) }
                         return
@@ -634,6 +643,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         out += optionsQuads()
         out += hireQuads()
         out += puzzleQuads()
+        out += shopQuads()
+        out += sanctuaryQuads()
         out += levelUpQuads()
         out += choiceQuads()
         out += messageBoxQuads()
@@ -903,7 +914,12 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     /// A click on the map at a map-canvas point: visit the object there, or walk to the cell.
     func click(mapPoint m: SIMD2<Float>) {
-        guard let g = game, let hero = g.heroes.first, hero.z == g.level else { return }   // viewing the other level: nothing to do there
+        guard let g = game else { return }
+        // a sanctuary holding one of the player's armies: leave it?
+        if let p = scene.placed.last(where: { ($0.type == "sanctuary" || $0.type == "sea_sanctuary") && g.sanctuaryGuests["\(g.level)|\($0.cellX)|\($0.cellY)"] != nil && (self.underCursor($0, m) || self.onFootprint($0, cell(at: m))) }) {
+            g.askLeaveSanctuary("\(g.level)|\(p.cellX)|\(p.cellY)"); return
+        }
+        guard let hero = g.heroes.first, hero.z == g.level else { return }   // viewing the other level: nothing to do there
         var (x, y) = cell(at: m)
         func underCursor(_ p: MapScene.Placed) -> Bool { self.underCursor(p, m) }
         func onFootprint(_ p: MapScene.Placed) -> Bool { self.onFootprint(p, (x, y)) }

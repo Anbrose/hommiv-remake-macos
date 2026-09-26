@@ -12,9 +12,19 @@ public final class H4Archive {
         public let alias: String
     }
 
-    public let entries: [Entry]
-    public let byName: [String: Entry]
+    public private(set) var entries: [Entry]
+    public private(set) var byName: [String: Entry]
     private let data: Data
+    /// Entries another archive supplies (an expansion's or update's files this one lacks).
+    private var supplied: [String: H4Archive] = [:]
+
+    /// Take in another archive's entries that this one does not have (updates.h4r's conservatory
+    /// guilds and artifacts, the expansions' additions); what this archive has stays as it is.
+    public func supplement(with other: H4Archive) {
+        for e in other.entries where byName[e.name] == nil {
+            byName[e.name] = e; entries.append(e); supplied[e.name] = other
+        }
+    }
 
     public init(url: URL) throws {
         data = try Data(contentsOf: url, options: .mappedIfSafe)
@@ -49,6 +59,7 @@ public final class H4Archive {
 
     /// Unpacked bytes of an entry (aliases are followed).
     public func payload(_ name: String) throws -> Data {
+        if let a = supplied[name] { return try a.payload(name) }
         guard var e = byName[name] else { throw H4Error.missing(name) }
         var hops = 0
         while !e.alias.isEmpty, hops < 8 {

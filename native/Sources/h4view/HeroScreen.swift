@@ -32,16 +32,18 @@ extension Renderer {
 
     /// The artifact's icon (any of the four sheets) by id.
     func artifactIcon(_ id: Int) -> UILayer? {
+        let id = RuleTables.artifactBase(id)
         guard id < RuleTables.artifactIds.count else { return nil }
         let k = RuleTables.artifactIds[id]
         for s in ["armor", "item", "weapon", "special"] { if let l = iconSheet("artifacts.\(s)")[k] { return l } }
         return nil
     }
     func artifactName(_ id: Int) -> (name: String, help: String) {
-        guard id < RuleTables.artifactIds.count else { return ("?", "") }
-        let k = RuleTables.artifactIds[id]
+        let b = RuleTables.artifactBase(id)
+        guard b < RuleTables.artifactIds.count else { return ("?", "") }
+        let k = RuleTables.artifactIds[b]
         let a = game?.tables?.artifacts[k]
-        return (a?.name ?? k, a?.help ?? "")
+        return (game?.artifactName(id) ?? a?.name ?? k, a?.help ?? "")
     }
     /// The hero's paper doll layout (layers.dialog.army.<model>, e.g. death_might_male).
     func dollLayout(_ h: Hero) -> LayerFile? {

@@ -9,7 +9,7 @@ extension Hero {
         let worn = equipped.compactMap { $0 }
         var sets: [[Int]: [ArtifactEffect]] = [:]
         for id in worn {
-            for e in RuleTables.artifactEffects[id] ?? [] {
+            for e in RuleTables.effects(ofArtifact: id) {
                 if e.type == 59 { sets[e.required] = e.subs } else { out.append(e) }
             }
         }
@@ -61,6 +61,7 @@ extension Hero {
     /// four, two-handed ones in the right hand with both hands free; nil when there is no room or
     /// it cannot be worn (backpack items, potions).
     public func slot(for id: Int, tables: RuleTables?) -> Int? {
+        let id = RuleTables.artifactBase(id)
         guard id < RuleTables.artifactIds.count, let a = tables?.artifacts[RuleTables.artifactIds[id]] else { return nil }
         let s = a.slot.lowercased()
         switch s {
@@ -74,7 +75,7 @@ extension Hero {
         }
     }
     func twoHanded(_ tables: RuleTables?) -> Bool {
-        guard let r = equipped[13], r < RuleTables.artifactIds.count else { return false }
+        guard let r = equipped[13].map(RuleTables.artifactBase), r < RuleTables.artifactIds.count else { return false }
         return tables?.artifacts[RuleTables.artifactIds[r]]?.slot.lowercased() == "both hands"
     }
     /// Put on a backpack item (index), if it has a free slot.
@@ -82,6 +83,11 @@ extension Hero {
     public func equip(backpackIndex i: Int, tables: RuleTables?) -> Bool {
         guard backpack.indices.contains(i), let s = slot(for: backpack[i], tables: tables) else { return false }
         equipped[s] = backpack.remove(at: i)
+        // a parchment teaches its spell when put on (0x7263a0) and is used up; one the hero cannot
+        // learn yet stays where it was put
+        if let a = equipped[s], RuleTables.artifactBase(a) == 0x7c, let sp = RuleTables.artifactSpell(a), !spells.contains(sp), canLearn(sp) {
+            spells.insert(sp); equipped[s] = nil
+        }
         return true
     }
     /// Take off an equipped item into the backpack.
@@ -89,6 +95,25 @@ extension Hero {
         guard equipped.indices.contains(s), let a = equipped[s] else { return }
         equipped[s] = nil
         backpack.append(a)
+    }
+}
+
+extension RuleTables {
+    /// A parchment (0x7c) or scroll (0xa6) with its spell (0x664190 / 0x663d10): the base id in the
+    /// low 16 bits, the spell + 1 above; every other artifact is its plain id.
+    public static func artifact(_ base: Int, spell: Int) -> Int { base | ((spell + 1) << 16) }
+    public static func artifactBase(_ id: Int) -> Int { id & 0xffff }
+    public static func artifactSpell(_ id: Int) -> Int? { id >> 16 > 0 ? (id >> 16) - 1 : nil }
+    /// The artifact's effects, a parchment's or scroll's naming its own spell.
+    public static func effects(ofArtifact id: Int) -> [ArtifactEffect] {
+        let base = artifactEffects[artifactBase(id)] ?? []
+        guard let sp = artifactSpell(id) else { return base }
+        return base.map { e in
+            var e = e
+            if e.spell >= 0 { e.spell = sp }
+            if !e.spells.isEmpty { e.spells = [sp] }
+            return e
+        }
     }
 }
 

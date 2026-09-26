@@ -39,6 +39,8 @@ extension Renderer {
         if let q = g.question, prompt == nil { prompt = (q.text, true, q.yes); g.question = nil }
         if let k = g.marketOpen { market = MarketState(k: k); g.marketOpen = nil }
         if let o = g.hireOpen { hire = o; g.hireOpen = nil }
+        if let o = g.shopOpen { shop = ShopState(offer: o, panel: ui?.dialog("Blacksmith.\(o.panel)")); g.shopOpen = nil }
+        if let o = g.sanctuaryOpen { sanctuary = o; g.sanctuaryOpen = nil }
         if let c = g.puzzleOpen, g.scripts.messages.isEmpty { puzzle = c; g.puzzleOpen = nil }
         if g.jumped, let h = g.heroes.first { g.jumped = false; centre(onCell: (h.x, h.y)) }
     }

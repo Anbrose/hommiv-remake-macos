@@ -350,6 +350,12 @@ public final class GameState {
     public var keys: Set<String> = []
     /// A hero went through a portal (the view should follow).
     public var jumped = false
+    /// A blacksmith's or conservatory's shop to open, a sanctuary's dialog.
+    public var shopOpen: ShopOffer?
+    public var sanctuaryOpen: SanctuaryOffer?
+    /// Armies hidden in sanctuaries (by object key), and the sanctuaries paid for today.
+    public var sanctuaryGuests: [String: Hero] = [:]
+    public var sanctuaryPaid: Set<String> = []
     /// The marketplace to open (its rate class: 3 the panel's Marketplace, 2 a Trading Post).
     public var marketOpen: Int?
     /// Things that happened this frame, for the UI (e.g. "picked up Resources.Gold").
@@ -1408,7 +1414,7 @@ public final class GameState {
         let me = map.humanColour, myTeam = map.teams[me]
         func ally(_ p: Int) -> Bool { p == me || (myTeam != nil && map.teams[p] == myTeam) }
         let held = towns.compactMap { $0.owner }
-        if heroes.isEmpty && !held.contains(where: ally) {
+        if heroes.isEmpty && sanctuaryGuests.isEmpty && !held.contains(where: ally) {
             outcome = false
             log.append(map.lossText ?? text("default_loss_condition", "Lose all towns and armies."))
             return
@@ -1438,6 +1444,7 @@ public final class GameState {
         for h in heroes { h.maxMovement = armyMovement(h); h.movement = h.maxMovement; h.path = []; h.plan = [] }
         for (res, amount) in income { resources[res, default: 0] += amount }
         objectsNewDay()
+        sanctuariesNewDay()
         for i in dwellings.indices where dwellings[i].owned {
             dwellings[i].fourteenths += tables?.creature(dwellings[i].creature)?.growth ?? 0
             dwellings[i].available += dwellings[i].fourteenths / 14; dwellings[i].fourteenths %= 14

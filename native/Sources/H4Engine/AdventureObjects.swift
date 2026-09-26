@@ -90,7 +90,12 @@ extension GameState {
         return pool.isEmpty ? nil : pool[rng(pool.count)]
     }
     public func artifactName(_ id: Int, article: Bool = false) -> String {
-        guard id < RuleTables.artifactIds.count, let a = tables?.artifacts[RuleTables.artifactIds[id]] else { return "an artifact" }
+        let b = RuleTables.artifactBase(id)
+        guard b < RuleTables.artifactIds.count, let a = tables?.artifacts[RuleTables.artifactIds[b]] else { return "an artifact" }
+        if let sp = RuleTables.artifactSpell(id), sp < RuleTables.spells.count {
+            let n = article ? a.article : a.name, s = RuleTables.spells[sp].name
+            return n.contains("%spell_name") ? n.replacingOccurrences(of: "%spell_name", with: s) : "\(n) (\(s))"
+        }
         return article ? a.article : a.name
     }
     /// An artifact joins the army: the hero's backpack (the leader's).
@@ -142,7 +147,9 @@ extension GameState {
         case "random_potion":
             if let a = randomPotion() { st.artifacts = [a] }
         case "artifact":
-            if let i = RuleTables.artifactIds.firstIndex(of: p.subtype.lowercased()) { st.artifacts = [i] }
+            if let i = RuleTables.artifactIds.firstIndex(of: p.subtype.lowercased()) {
+                st.artifacts = [(i == 0x7c || i == 0xa6) ? record(for: p)?.spell.map { RuleTables.artifact(i, spell: $0) } ?? i : i]
+            }
         case "medicine_wagon":   // 2 or 3 potions (0x4474e0)
             let n = 2 + (random.next() & 1)
             st.artifacts = (0..<n).compactMap { _ in randomPotion() }
@@ -160,6 +167,8 @@ extension GameState {
             setupTeaching(p, &st)
         case "creature_bank":
             setupBank(p, &st)
+        case "blacksmith", "conservatory", "random_conservatory":
+            setupShop(p, &st)
         case "tavern":
             st.baseMaterial = -1   // (marks a tavern for the daily count)
         default:
@@ -232,7 +241,8 @@ extension GameState {
                                           "teacher", "random_teacher", "school", "shrine", "random_shrine", "subterranean_gate", "gateway",
                                           "teleporter_entrance", "teleporter_exit", "whirlpool", "keymaster_tent", "border_gate", "border_guard",
                                           "tower", "cartographer", "obelisk", "lighthouse", "creature_bank",
-                                          "sign", "ocean_bottle", "prison", "pandoras_box", "seers_hut", "quest_gate", "quest_guard", "tavern", "shipyard"]
+                                          "sign", "ocean_bottle", "prison", "pandoras_box", "seers_hut", "quest_gate", "quest_guard", "tavern", "shipyard",
+                                          "blacksmith", "conservatory", "random_conservatory", "sanctuary", "sea_sanctuary"]
     public func hasVisit(_ p: MapScene.Placed) -> Bool { GameState.visitTypes.contains(p.type) }
 
     func remove(_ p: MapScene.Placed) {
@@ -290,7 +300,7 @@ extension GameState {
         case "artifact", "random_artifact", "random_potion":
             if let a = st.artifacts.first {
                 give(artifact: a, to: hero)
-                if let t = tables?.artifacts[RuleTables.artifactIds[a]]?.pickUp, !t.isEmpty { scripts.messages.append(t) }
+                if let t = tables?.artifacts[RuleTables.artifactIds[RuleTables.artifactBase(a)]]?.pickUp, !t.isEmpty { scripts.messages.append(t) }
             }
             dialogueSound(27); remove(p)
         case "medicine_wagon":
@@ -359,6 +369,10 @@ extension GameState {
             let align = aligns.first { p.subtype.contains($0) } ?? aligns[(p.cellX + p.cellY) % 5]
             if hero.templeAlignment == align { say(p, "pray.empty") } else { hero.templeAlignment = align; say(p, "pray.positive") }
             dialogueSound(11)
+        case "blacksmith", "conservatory", "random_conservatory":
+            visitShop(hero, p, st)
+        case "sanctuary", "sea_sanctuary":
+            visitSanctuary(hero, p)
         case "trading_post":
             marketOpen = 2; dialogueSound(9)
         case "teacher", "random_teacher", "school", "shrine", "random_shrine", "subterranean_gate", "gateway", "teleporter_entrance",

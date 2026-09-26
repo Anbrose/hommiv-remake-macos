@@ -64,6 +64,9 @@ while i < args.count {
 var t0 = Date()
 func lap(_ what: String) { print("\(what): \(Int(Date().timeIntervalSince(t0) * 1000)) ms"); t0 = Date() }
 let archive = try H4Archive(url: URL(fileURLWithPath: args[1]))
+for f in ["x2.h4r", "storm.h4r", "updates.h4r", "x2_override.h4r", "storm_override.h4r"] {
+    if let a = try? H4Archive(url: URL(fileURLWithPath: args[1]).deletingLastPathComponent().appendingPathComponent(f)) { archive.supplement(with: a) }
+}
 let movies = Movies(dataDirectory: URL(fileURLWithPath: args[1]).deletingLastPathComponent())
 let gameSound = GameSound(dataDirectory: URL(fileURLWithPath: args[1]).deletingLastPathComponent())
 if let names = ProcessInfo.processInfo.environment["H4SOUNDCHECK"] {   // debugging aid: which sounds exist and decode
@@ -275,7 +278,9 @@ for m in game.scripts.messages { print("script text: \(m.prefix(100))") }
 var ui: AdventureUI? = nil
 var townScreen: TownScreen? = nil
 var combatScreen: CombatScreen? = nil
-do { ui = try AdventureUI(archive: archive, index: resolver); townScreen = try TownScreen(archive: archive); combatScreen = try CombatScreen(archive: archive); lap("ui loaded") } catch { print("no UI: \(error)") }
+do { ui = try AdventureUI(archive: archive, index: resolver)
+    let dataDir = URL(fileURLWithPath: args[1]).deletingLastPathComponent()
+    ui?.overlays = ["x2.h4r", "updates.h4r"].compactMap { try? H4Archive(url: dataDir.appendingPathComponent($0)) }; townScreen = try TownScreen(archive: archive); combatScreen = try CombatScreen(archive: archive); lap("ui loaded") } catch { print("no UI: \(error)") }
 if let cs = combatScreen, let updates = try? H4Archive(url: URL(fileURLWithPath: args[1]).deletingLastPathComponent().appendingPathComponent("updates.h4r")),
    let d = try? updates.payload("table.combat_grid_colors.h4d") { cs.gridColors = GridColors(data: d) }
 
@@ -361,6 +366,19 @@ if let out = snapshot {
         game.giveExperience(n, to: h); renderer.levelUpChoice = 0
     }
     if ProcessInfo.processInfo.environment["H4MARKET"] != nil { renderer.market = MarketState(k: 3, sell: 1, buy: 0, lots: 5) }   // snapshot: the marketplace
+    if let t = ProcessInfo.processInfo.environment["H4VISIT"], let h = game.heroes.first {   // snapshot: the first object of a type visited
+        if let p = scene.placed.first(where: { $0.type == t || "\($0.type).\($0.subtype)" == t }) {
+            _ = game.debugVisit(hero: h, p)
+            if let o = game.shopOpen { renderer.shop = ShopState(offer: o, panel: renderer.ui?.dialog("Blacksmith.\(o.panel)")); game.shopOpen = nil; print("shop \(o.panel): \(o.items.map { game.artifactName($0) }) \(o.potions.map { game.artifactName($0) })") }
+            if let o = game.sanctuaryOpen { renderer.sanctuary = o; game.sanctuaryOpen = nil; print("sanctuary: \(o.text) enter \(o.canEnter)")
+                if ProcessInfo.processInfo.environment["H4SANCFLOW"] != nil {
+                    game.enterSanctuary(o); print("entered: heroes \(game.heroes.count) gold \(game.resources["Gold"] ?? 0) guests \(game.sanctuaryGuests.keys)")
+                    game.endTurn(); print("next day: gold \(game.resources["Gold"] ?? 0) guests \(game.sanctuaryGuests.count)")
+                    game.leaveSanctuary(o.key); print("left: heroes \(game.heroes.count) at \(h.x),\(h.y) sanctuary at \(p.cellX),\(p.cellY)")
+                    exit(0)
+                } }
+        } else { print("no \(t) here; types: \(Set(scene.placed.map { $0.type }).sorted())"); exit(1) }
+    }
     if ProcessInfo.processInfo.environment["H4HIRE"] != nil { renderer.hire = game.hireOffer(town: game.towns.firstIndex { $0.owned }) }   // snapshot: the tavern
     if ProcessInfo.processInfo.environment["H4BOAT"] != nil, let h = game.heroes.first, let c = game.debugBoard(h) {   // snapshot: a hero at sea
         print("boarded at \(c): sea movement \(game.armyMovement(h)), path to (c+6): \(game.seaPath(from: c, to: (c.0 + 3, c.1 + 3))?.count ?? -1)")
@@ -382,6 +400,11 @@ if let out = snapshot {
         renderer.townHover = ProcessInfo.processInfo.environment["H4HOVER"]   // --town snapshot: pretend the pointer is over this building
         if openBuildList { renderer.townDialog = .buildList }
         if ProcessInfo.processInfo.environment["H4GUILD"] != nil { renderer.townDialog = .mageGuild(page: 0) }
+        if let a = ProcessInfo.processInfo.environment["H4TOWNSHOP"], let h = game.heroes.first {   // snapshot: a town blacksmith (alignment)
+            let o = ShopOffer(key: "town", title: "Blacksmith", panel: a, items: [], potions: [], hero: h)
+            renderer.shop = ShopState(offer: o, panel: renderer.ui?.dialog("Blacksmith.\(a)"))
+            print("town shop \(a): \(renderer.shop!.rows.map { game.artifactName($0.artifact) })")
+        }
         if openRecruit, let i = renderer.townOpen, let slot = townScreen?.hotspot("dwelling_1") { _ = i; renderer.townClick(x: Float(slot.x + 5), y: Float(slot.y + 5)) }
     }
     lap("textures uploaded")
@@ -593,6 +616,8 @@ final class MapView: MTKView {
         let scale = Float(window?.backingScaleFactor ?? 1)
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
         if renderer.puzzle != nil { renderer.puzzleClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
+        if renderer.shop != nil { renderer.shopClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
+        if renderer.sanctuary != nil { renderer.sanctuaryClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.hire != nil { renderer.hireClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.optionsOpen != nil { renderer.optionsClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.spellBook != nil { renderer.spellBookClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }

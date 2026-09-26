@@ -89,7 +89,7 @@ extension GameState {
     /// Drink a potion from the backpack on the map: its spell on the hero, free; the potion is gone.
     @discardableResult
     public func drink(_ h: Hero, backpackIndex k: Int) -> Bool {
-        guard h.backpack.indices.contains(k), let e = (RuleTables.artifactEffects[h.backpack[k]] ?? []).first(where: { $0.type == 0x2e }),
+        guard h.backpack.indices.contains(k), let e = RuleTables.effects(ofArtifact: h.backpack[k]).first(where: { $0.type == 0x2e }),
               e.spell >= 0, e.spell < RuleTables.spells.count, RuleTables.spells[e.spell].has("Adv") else { return false }
         let name = artifactName(h.backpack[k])
         h.backpack.remove(at: k)

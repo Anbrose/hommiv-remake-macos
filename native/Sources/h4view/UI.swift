@@ -108,8 +108,16 @@ final class AdventureUI {
 
     /// Dialog layouts (layers.dialog.*), loaded on demand.
     var dialogs: [String: LayerFile] = [:]
+    /// The expansion and update archives, searched first (the last one wins).
+    var overlays: [H4Archive] = []
+    /// The shop pictures by normalised artifact keyword.
+    var shopNames: [String: String]?
+    func payload(_ name: String) -> Data? {
+        for a in overlays.reversed() { if let d = try? a.payload(name) { return d } }
+        return try? archive.payload(name)
+    }
     func dialog(_ name: String) -> LayerFile? {
-        if dialogs[name] == nil, let d = try? archive.payload("layers.dialog.\(name).h4d") { dialogs[name] = try? LayerFile(data: d) }
+        if dialogs[name] == nil, let d = payload("layers.dialog.\(name).h4d") { dialogs[name] = try? LayerFile(data: d) }
         return dialogs[name]
     }
 

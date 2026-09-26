@@ -30,6 +30,7 @@ public struct SaveGame: Codable {
     public var keys: [String]? = nil
     public var mineOwners: [Int?]? = nil
     public var boats: [Boat]? = nil
+    public var obeliskVisits: [String: Int]? = nil, digSites: [String: [Int]]? = nil, dug: [String]? = nil
     public var usedArtifacts: [Int]? = nil
 
     public struct Stack: Codable { public var creature: String; public var count: Int }
@@ -122,6 +123,7 @@ extension GameState {
         s.enemyHeroes = enemyHeroes.map { SaveGame.state(of: $0) }; s.aiResources = aiResources; s.keys = Array(keys).sorted()
         s.mineOwners = mines.map { $0.owner }
         s.boats = boats
+        s.obeliskVisits = obeliskVisits; s.digSites = digSites; s.dug = Array(dug).sorted()
         return s
     }
 
@@ -179,6 +181,9 @@ extension GameState {
         }
         if let a = s.aiResources { aiResources = a }
         if let k = s.keys { keys = Set(k) }
+        if let o = s.obeliskVisits { obeliskVisits = o }
+        if let d = s.digSites { digSites = d }
+        if let d = s.dug { dug = Set(d) }
         if let bs = s.boats { boats = bs; for b in bs where b.z < passabilities.count { passabilities[b.z].block(b.x, b.y) } }
         if let mo = s.mineOwners { for (i, o) in mo.enumerated() where i < mines.count { mines[i].owner = o } }
     }

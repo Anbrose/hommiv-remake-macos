@@ -366,6 +366,13 @@ if let out = snapshot {
         print("boarded at \(c): sea movement \(game.armyMovement(h)), path to (c+6): \(game.seaPath(from: c, to: (c.0 + 3, c.1 + 3))?.count ?? -1)")
         aim(renderer, at: c)
     }
+    if let n = ProcessInfo.processInfo.environment["H4PUZZLE"].flatMap({ Int($0) }), let h = game.heroes.first,
+       let first = scene.placed.first(where: { $0.type == "obelisk" }) {   // snapshot: n obelisks of the first colour visited
+        for p in scene.placed.filter({ $0.type == "obelisk" && $0.subtype == first.subtype }).prefix(n) { _ = game.debugVisit(hero: h, p) }
+        game.scripts.messages = []
+        renderer.puzzle = first.subtype
+        print("puzzle \(first.subtype): \(game.obeliskVisits[first.subtype] ?? 0)/\(game.obelisksRequired(first.subtype)) site \(game.digSites[first.subtype] ?? [])")
+    }
     if ProcessInfo.processInfo.environment["H4OPTIONS"] != nil { renderer.optionsOpen = renderer.settings }   // snapshot: the options
     if let m = ProcessInfo.processInfo.environment["H4OVERVIEW"] { renderer.overview = KingdomOverview(mode: m == "heroes" ? .heroes : .towns) }   // snapshot: the kingdom overview
     if let k = ProcessInfo.processInfo.environment["H4ARMYPOPUP"].flatMap({ Int($0) }) { renderer.armyPopup = ArmyPopup(hero: 0, selected: k) }   // snapshot: the right-click window
@@ -585,6 +592,7 @@ final class MapView: MTKView {
         let p = convert(e.locationInWindow, from: nil)
         let scale = Float(window?.backingScaleFactor ?? 1)
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
+        if renderer.puzzle != nil { renderer.puzzleClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.hire != nil { renderer.hireClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.optionsOpen != nil { renderer.optionsClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.spellBook != nil { renderer.spellBookClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
@@ -705,6 +713,12 @@ final class MapView: MTKView {
         if !renderer.inCombat, renderer.townOpen == nil, renderer.prompt == nil {
             if e.keyCode == 1 { renderer.openSaveDialog(.save); return }
             if e.keyCode == 31 { renderer.optionsOpen = renderer.settings; return }   // O: the options
+            if e.keyCode == 2, let g = renderer.game, let h = g.heroes.first { g.dig(h); return }   // D: dig for the obelisks' treasure
+            if e.keyCode == 35, let g = renderer.game {   // P: the puzzle map
+                renderer.puzzle = Renderer.obeliskColours.first { (g.obeliskVisits[$0] ?? 0) > 0 }
+                if renderer.puzzle == nil { renderer.prompt = (renderer.text("no_obelisks_visited.dialog", "You have not visited any obelisks."), false, nil) }
+                return
+            }
             if e.keyCode == 37 { renderer.openSaveDialog(.load); return }
         }
         switch e.keyCode {

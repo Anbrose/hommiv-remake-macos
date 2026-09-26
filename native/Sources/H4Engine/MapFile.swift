@@ -24,6 +24,8 @@ public struct MapObject {
     public var text: String? = nil
     /// A prison's hero.
     public var prisoner: MapHero? = nil
+    /// An obelisk marker's radius for the dig site.
+    public var markerRadius: Int? = nil
     /// A spell scroll's or parchment's spell.
     public var spell: Int? = nil
     /// A quest site's texts (0x7ed980: four strings), its reward action and condition.
@@ -434,6 +436,8 @@ public struct MapFile {
             case "mine", "garrison", "creature_dwelling", "shipyard", "lighthouse", "windmill", "weekly_material_generator", "random_weekly_material_generator":
                 // owned objects (0x7d3fb0 / 0x7d7270): u16 version, v1+ u8 owner (6 = none)
                 if let v = try? sr.word(), v >= 1, let ow = try? sr.byte(), ow < 6 { o.owner = ow }
+            case "obelisk_marker":   // 0x7c6a80: u16 version, v1 u16 radius
+                if let v = try? sr.word(), v == 1, let r = try? sr.word() { o.markerRadius = r }
             case "prison":
                 if let v = try? sr.word(), v == 1, let (h, _) = MapFile.parseHero(d, at: sr.position) { o.prisoner = h }
             case "artifact" where cats[1] == "parchment" || cats[1] == "scroll":

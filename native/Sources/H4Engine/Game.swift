@@ -322,6 +322,12 @@ public final class GameState {
     public var isHumanActing: Bool { acting == nil || acting == map.humanColour }
     /// The other players' heroes on the map (armies led by heroes; companions travel with them).
     public var enemyHeroes: [Hero] = []
+    /// Obelisks: visits per colour, the treasures' places once found ([x, y, level]), the colours dug.
+    public var obeliskVisits: [String: Int] = [:]
+    public var digSites: [String: [Int]] = [:]
+    public var dug: Set<String> = []
+    /// The puzzle to show (an obelisk just visited).
+    public var puzzleOpen: String?
     /// Empty ships on the water.
     public var boats: [Boat] = []
     /// A script's fight: what runs when it is won and when it is lost.

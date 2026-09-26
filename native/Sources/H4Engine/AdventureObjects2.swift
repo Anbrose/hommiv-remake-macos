@@ -195,7 +195,7 @@ extension GameState {
         case "tower", "cartographer":
             say(p, "Initial"); dialogueSound(26)
         case "obelisk":
-            say(p, "initial"); dialogueSound(16)
+            visitObelisk(hero, p, &st)
         case "creature_bank":
             visitBank(hero, p, st)
         case "sign", "ocean_bottle":
@@ -389,5 +389,59 @@ extension GameState {
               var e = map.placedEvents.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else { return }
         objectStates[objectKey(p), default: ObjectState()].used = true
         run(event: &e, ScriptContext(current: actingColour, hero: hero))
+    }
+
+    // MARK: obelisks and digging (0x4495c0, 0x449c60, 0x4ac160)
+
+    /// Obelisks of a colour on the map (every level).
+    public func obelisksRequired(_ colour: String) -> Int {
+        scenes.reduce(0) { $0 + $1.placed.filter { $0.type == "obelisk" && $0.subtype == colour }.count }
+    }
+    func visitObelisk(_ hero: Hero, _ p: MapScene.Placed, _ st: inout ObjectState) {
+        let c = p.subtype
+        dialogueSound(16)
+        if dug.contains(c) { say(p, "completed"); return }
+        if st.used { say(p, "Empty"); return }
+        st.used = true
+        obeliskVisits[c, default: 0] += 1
+        if obeliskVisits[c]! >= obelisksRequired(c), digSites[c] == nil { chooseDigSite(c, near: p) }
+        say(p, "initial")
+        puzzleOpen = c
+    }
+    /// The treasure's place: a free land cell (not lava, not river) within a marker's radius, or 4 around the obelisk.
+    func chooseDigSite(_ c: String, near p: MapScene.Placed) {
+        var centres: [(x: Int, y: Int, z: Int, r: Int)] = []
+        for (l, sc) in scenes.enumerated() {
+            for q in sc.placed where q.type == "obelisk_marker" && q.subtype == c {
+                let r = map.objects.first { $0.type == "obelisk_marker" && $0.x == q.cellX && $0.y == q.cellY && $0.level == l }?.markerRadius ?? 4
+                centres.append((q.cellX, q.cellY, l, r))
+            }
+        }
+        if centres.isEmpty { centres = [(p.cellX, p.cellY, level, 4)] }
+        var cands: [(Int, Int, Int)] = []
+        for ce in centres {
+            let h = Int((Double(ce.r) + 0.5) * 0.5)
+            for dx in -h...h { for dy in -h...h {
+                let x = ce.x + dx, y = ce.y + dy
+                guard ce.z < passabilities.count, passabilities[ce.z].isFree(x, y), Double(dx * dx + dy * dy).squareRoot() <= Double(ce.r),
+                      let cell = map.cells[ce.z][x * map.size + y], cell.type != 4, cell.type != 10 else { continue }
+                cands.append((x, y, ce.z))
+            } }
+        }
+        digSites[c] = cands.isEmpty ? [p.cellX, p.cellY, level] : { let s = cands[rng(cands.count)]; return [s.0, s.1, s.2] }()
+    }
+    /// Dig where the hero stands: a whole day's movement; the treasure if it is buried there.
+    public func dig(_ h: Hero) {
+        guard h.movement + 0.001 >= h.maxMovement else { scripts.messages.append(text("dig_denied.dialog", "Sorry, it takes a full day to dig.")); return }
+        guard passability.elevation(h.x, h.y) == 0 else { scripts.messages.append(text("dig_on_bridge.dialog", "You cannot dig while on a bridge.")); return }
+        h.movement = 0
+        sounds.append("miscellaneous.dig")
+        var found = false
+        for (c, s) in digSites where s == [h.x, h.y, h.z] {
+            digSites[c] = nil; dug.insert(c); found = true
+            // the map's rewards are not read yet: a major artifact in their place [G]
+            if let a = randomArtifact(level: "major") { give(artifact: a, to: h) }
+        }
+        scripts.messages.append(found ? text("dig_success.dialog", "The treasure is yours!") : text("dig_failed.dialog", "Nothing here, but a hole."))
     }
 }

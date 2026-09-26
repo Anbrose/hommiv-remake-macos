@@ -139,6 +139,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     var optionsOpen: GameSettings? = nil   // the options dialog, while open (the values being edited)
     var settings = GameSettings.load()
     var hire: HireOffer? = nil             // the tavern's dialog
+    var puzzle: String? = nil              // the puzzle map shown (an obelisk colour)
     var heroShown = 0                     // which of the army's heroes the hero screen shows
     var floaters: [(text: String, x: Int, y: Int, since: Date)] = []
     var buildPage = 0
@@ -632,6 +633,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         out += spellBookQuads()
         out += optionsQuads()
         out += hireQuads()
+        out += puzzleQuads()
         out += levelUpQuads()
         out += choiceQuads()
         out += messageBoxQuads()

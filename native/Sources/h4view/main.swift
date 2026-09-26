@@ -135,6 +135,7 @@ let device = MTLCreateSystemDefaultDevice()!
 // leftmost town) standing at its gate.
 let resolver = RandomResolver(archive: archive)
 let game = GameState(map: map, level: scene.level, scenes: scenes)
+game.fogEnabled = ProcessInfo.processInfo.environment["H4NOFOG"] == nil   // debugging: no shroud
 if let tables = ruleTables { game.tables = tables; lap("rules: \(tables.creatures.count) creatures, \(tables.heroes.count) heroes") }
 let alignments = ["haven": "life", "academy": "order", "asylum": "chaos", "necropolis": "death", "preserve": "nature", "stronghold": "might"]
 func faction(of name: String) -> String { alignments.first { name.lowercased().contains($0.key) }?.value ?? "life" }
@@ -369,6 +370,7 @@ if let out = snapshot {
     if let t = ProcessInfo.processInfo.environment["H4VISIT"], let h = game.heroes.first {   // snapshot: the first object of a type visited
         if let p = scene.placed.first(where: { $0.type == t || "\($0.type).\($0.subtype)" == t }) {
             _ = game.debugVisit(hero: h, p)
+            if ProcessInfo.processInfo.environment["H4AIM"] != nil { aim(renderer, at: (p.cellX, p.cellY)) }
             if let o = game.shopOpen { renderer.shop = ShopState(offer: o, panel: renderer.ui?.dialog("Blacksmith.\(o.panel)")); game.shopOpen = nil; print("shop \(o.panel): \(o.items.map { game.artifactName($0) }) \(o.potions.map { game.artifactName($0) })") }
             if let o = game.sanctuaryOpen { renderer.sanctuary = o; game.sanctuaryOpen = nil; print("sanctuary: \(o.text) enter \(o.canEnter)")
                 if ProcessInfo.processInfo.environment["H4SANCFLOW"] != nil {

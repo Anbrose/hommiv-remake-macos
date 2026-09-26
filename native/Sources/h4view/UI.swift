@@ -264,6 +264,11 @@ final class AdventureUI {
                 let row = Float(py) / Float(size) * Float(n) + Float(n) / 2
                 let x = Int(((row - col) / 2).rounded()), y = Int(((row + col) / 2).rounded())
                 guard x >= 0, x < n, y >= 0, y < n, let c = cells[x * n + y] else { continue }
+                if g.fogState(x, y) == GameState.fogUnexplored {   // unexplored: black (explored and seen look alike)
+                    let o = (py * size + px) * 4
+                    bm.pixels[o] = 0; bm.pixels[o + 1] = 0; bm.pixels[o + 2] = 0; bm.pixels[o + 3] = 255
+                    continue
+                }
                 var rgb = terrainColour(c.type, c.variant)
                 if !g.passability.isFree(x, y), c.type != 0, c.type != 9 { rgb = (rgb.0 / 2 + rgb.0 / 4, rgb.1 / 2 + rgb.1 / 4, rgb.2 / 2 + rgb.2 / 4) }
                 let o = (py * size + px) * 4
@@ -281,12 +286,13 @@ final class AdventureUI {
                 bm.pixels[o] = rgb.0; bm.pixels[o + 1] = rgb.1; bm.pixels[o + 2] = rgb.2; bm.pixels[o + 3] = 255
             } }
         }
-        for m in g.mines where m.z == g.level { let (px, py) = point(m.x, m.y); diamond(px, py, 2, m.owned ? playerColours[0] : (160, 160, 160)) }
-        for d in g.dwellings { let (px, py) = point(d.x, d.y); diamond(px, py, 2, (160, 160, 160)) }
-        for t in g.towns where t.z == g.level { let (px, py) = point(t.x + 3, t.y + 3); diamond(px, py, 6, t.owned ? playerColours[0] : (200, 200, 200)) }
+        func known(_ x: Int, _ y: Int) -> Bool { g.fogState(x, y) != GameState.fogUnexplored }
+        for m in g.mines where m.z == g.level && known(m.x, m.y) { let (px, py) = point(m.x, m.y); diamond(px, py, 2, m.owned ? playerColours[0] : (160, 160, 160)) }
+        for d in g.dwellings where d.z == g.level && known(d.x, d.y) { let (px, py) = point(d.x, d.y); diamond(px, py, 2, (160, 160, 160)) }
+        for t in g.towns where t.z == g.level && known(t.x + 3, t.y + 3) { let (px, py) = point(t.x + 3, t.y + 3); diamond(px, py, 6, t.owned ? playerColours[0] : (200, 200, 200)) }
         for h in g.heroes where h.z == g.level { let (px, py) = point(h.x, h.y); diamond(px, py, 1, playerColours[0]) }
-        for h in g.enemyHeroes where h.z == g.level { let (px, py) = point(h.x, h.y); diamond(px, py, 1, playerColours[min(max(0, h.owner), playerColours.count - 1)]) }
-        for t in g.towns where t.z == g.level && !t.owned && t.owner != nil { let (px, py) = point(t.x + 3, t.y + 3); diamond(px, py, 6, playerColours[min(max(0, t.owner!), playerColours.count - 1)]) }
+        for h in g.enemyHeroes where h.z == g.level && g.isVisible(h) { let (px, py) = point(h.x, h.y); diamond(px, py, 1, playerColours[min(max(0, h.owner), playerColours.count - 1)]) }
+        for t in g.towns where t.z == g.level && !t.owned && t.owner != nil && known(t.x + 3, t.y + 3) { let (px, py) = point(t.x + 3, t.y + 3); diamond(px, py, 6, playerColours[min(max(0, t.owner!), playerColours.count - 1)]) }
         return bm
     }
 

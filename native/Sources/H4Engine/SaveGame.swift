@@ -33,6 +33,8 @@ public struct SaveGame: Codable {
     public var obeliskVisits: [String: Int]? = nil, digSites: [String: [Int]]? = nil, dug: [String]? = nil
     public var usedArtifacts: [Int]? = nil
     public var sanctuaryGuests: [String: HeroState]? = nil, sanctuaryPaid: [String]? = nil
+    /// The shroud per level (one byte a cell, base64).
+    public var fog: [String]? = nil
 
     public struct Stack: Codable { public var creature: String; public var count: Int }
     public struct Cell: Codable { public var x: Int, y: Int }
@@ -126,6 +128,7 @@ extension GameState {
         s.boats = boats
         s.obeliskVisits = obeliskVisits; s.digSites = digSites; s.dug = Array(dug).sorted()
         s.sanctuaryGuests = sanctuaryGuests.mapValues { SaveGame.state(of: $0) }; s.sanctuaryPaid = Array(sanctuaryPaid).sorted()
+        s.fog = fog.map { Data($0).base64EncodedString() }
         return s
     }
 
@@ -188,6 +191,7 @@ extension GameState {
         if let d = s.dug { dug = Set(d) }
         sanctuaryGuests = (s.sanctuaryGuests ?? [:]).mapValues { SaveGame.hero(from: $0) }
         sanctuaryPaid = Set(s.sanctuaryPaid ?? [])
+        if let f = s.fog { fog = f.compactMap { Data(base64Encoded: $0).map { [UInt8]($0) } }; fogLevel = []; updateVision() }
         if let bs = s.boats { boats = bs; for b in bs where b.z < passabilities.count { passabilities[b.z].block(b.x, b.y) } }
         if let mo = s.mineOwners { for (i, o) in mo.enumerated() where i < mines.count { mines[i].owner = o } }
     }

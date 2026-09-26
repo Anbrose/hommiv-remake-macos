@@ -350,6 +350,13 @@ public final class GameState {
     public var keys: Set<String> = []
     /// A hero went through a portal (the view should follow).
     public var jumped = false
+    /// The player's shroud and fog per map level (Fog.swift): 0 unexplored, 1 explored, 2 seen, and
+    /// the vision level of seen cells; off, everything shows.
+    public var fog: [[UInt8]] = []
+    public var fogLevel: [[Int8]] = []
+    public var fogEnabled = true
+    /// The shroud changed (the view redraws it).
+    public var visionChanged = false
     /// A blacksmith's or conservatory's shop to open, a sanctuary's dialog.
     public var shopOpen: ShopOffer?
     public var sanctuaryOpen: SanctuaryOffer?

@@ -193,7 +193,20 @@ extension GameState {
             if keys.contains(p.subtype) { question = (objectText(p, "Accepted") ?? "Open it?", { [weak self] in self?.remove(p) }) }
             else { say(p, "Denied", ["%keymaster_tent_name": tables?.objectText("keymaster_tent", p.subtype, "name") ?? "Keymaster's Tent"]) }
         case "tower", "cartographer":
+            // a lookout explores 24 cells round it; a cartographer water within 36 and land within 24
+            let (w, h) = (p.sprite.footprint.w, p.sprite.footprint.h)
+            if p.type == "tower" { explore(level: level, x: p.cellX, y: p.cellY, w: w, h: h, radius: 24) }
+            else {
+                explore(level: level, x: p.cellX, y: p.cellY, w: w, h: h, radius: 36, terrain: 2)
+                explore(level: level, x: p.cellX, y: p.cellY, w: w, h: h, radius: 24, terrain: 1)
+            }
             say(p, "Initial"); dialogueSound(26)
+        case "hut_of_the_magi":
+            // every eye of the magi of its colour explores 9 cells round it
+            for l in scenes.indices { for e in scenes[l].placed where e.type == "eye_of_the_magi" && e.subtype == p.subtype {
+                explore(level: l, x: e.cellX, y: e.cellY, w: e.sprite.footprint.w, h: e.sprite.footprint.h, radius: 9)
+            } }
+            say(p, "Initial"); dialogueSound(7)
         case "obelisk":
             visitObelisk(hero, p, &st)
         case "creature_bank":

@@ -240,7 +240,7 @@ extension GameState {
                                           "pathfinder", "tree_of_knowledge", "temple", "random_temple", "trading_post",
                                           "teacher", "random_teacher", "school", "shrine", "random_shrine", "subterranean_gate", "gateway",
                                           "teleporter_entrance", "teleporter_exit", "whirlpool", "keymaster_tent", "border_gate", "border_guard",
-                                          "tower", "cartographer", "obelisk", "lighthouse", "creature_bank",
+                                          "tower", "cartographer", "hut_of_the_magi", "obelisk", "lighthouse", "creature_bank",
                                           "sign", "ocean_bottle", "prison", "pandoras_box", "seers_hut", "quest_gate", "quest_guard", "tavern", "shipyard",
                                           "blacksmith", "conservatory", "random_conservatory", "sanctuary", "sea_sanctuary"]
     public func hasVisit(_ p: MapScene.Placed) -> Bool { GameState.visitTypes.contains(p.type) }

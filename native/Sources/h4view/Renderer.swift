@@ -409,6 +409,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     }()
     var minimapTexture: MTLTexture?
     var minimapStamp = -1
+    let shroud = ShroudCache()
+    var visionSignature = 0
     /// The status line shown when the mouse rests on the map: text and canvas position.
     var hover: (text: String, x: Int, y: Int)?
     var iconSheets: [String: [String: UILayer]] = [:]
@@ -1026,12 +1028,12 @@ final class Renderer: NSObject, MTKViewDelegate {
         var pending: [(depth: Float, quads: [Quad])] = []
         if let g = game {
             // empty ships on the water
-            for b in g.boats where b.z == g.level {
+            for b in g.boats where b.z == g.level && g.fogState(b.x, b.y) != GameState.fogUnexplored {
                 let ship = Hero(actor: "", x: b.x, y: b.y, movement: 0)
                 ship.boat = b.alignment; ship.facing = "sw"
                 pending.append((inFront(b.x, b.y, Float((b.x + b.y) * 1000 + (b.y - b.x) + 500)), heroQuads(ship, at: t)))
             }
-            for h in (g.heroes + g.enemyHeroes) where h.z == g.level {
+            for h in (g.heroes + g.enemyHeroes.filter { g.isVisible($0) }) where h.z == g.level {
                 for a in (h.owner == g.map.humanColour && settings.showMovementPath ? g.arrows(for: h) : []) {
                     // arrows sort with the objects (a tree in front hides them) and ride up onto bridges
                     guard let s = arrowSprite(a.name), let f = s.frames.first else { continue }
@@ -1053,6 +1055,12 @@ final class Renderer: NSObject, MTKViewDelegate {
         for p in scene.placed {
             while let first = pending.first, first.depth <= Float(p.depth) { out += first.quads; pending.removeFirst() }
             if Float(p.anchorX) < minX || Float(p.anchorX) > maxX || Float(p.anchorY) < minY || Float(p.anchorY) > maxY { continue }
+            // under the shroud nothing shows; a wandering army only where it is seen now
+            if let g = game, g.fogEnabled {
+                let st = g.fogState(p.cellX + p.sprite.footprint.w - 1, p.cellY + p.sprite.footprint.h - 1)
+                if st == GameState.fogUnexplored && g.fogState(p.cellX, p.cellY) == GameState.fogUnexplored { continue }
+                if p.type == "random_monster" || p.type == "monster" || p.type == "army", g.fogState(p.cellX, p.cellY) != GameState.fogSeen { continue }
+            }
             let (f, sh) = frame(of: p, at: t)
             var ox = p.anchorX + Int(p.sprite.origin.x), oy = p.anchorY + Int(p.sprite.origin.y)
             // a wandering stack walking up to a hero: drawn where it has got to
@@ -1083,6 +1091,7 @@ final class Renderer: NSObject, MTKViewDelegate {
                 }
             }
         }
+        out += shroudQuads()
         if let g = game, showBlocked {   // on top of everything so buildings do not hide their own cells
             let n = g.map.size
             for x in 0..<n { for y in 0..<n where g.map.cells[g.level][x * n + y] != nil && !g.passability.isFree(x, y) {
@@ -1162,6 +1171,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         let now = Date()
         combat?.update(now: now)
         let inTown = townOpen != nil && town != nil
+        refreshShroud()
         let mapList = inTown || inCombat ? [] : quads(at: time)
         let uiList = inCombat ? combatQuads(now: now) : inTown ? townQuads() : uiQuads()
         // where this frame's buttons are (any quad drawn with a layers.button.* picture), for the click sound

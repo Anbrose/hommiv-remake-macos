@@ -833,26 +833,21 @@ final class Renderer: NSObject, MTKViewDelegate {
         // the army in seven gold rings over the banners (creature_circles), each stack's size as a word
         var stacks = [(c, cd.count)]
         for e in cd.extra { stacks.append((e.creature, e.count)) }
-        if let circ = d["creature_circles"] {
-            let pieces = (0..<7).map { $0 == 0 ? "Top_Left" : $0 == 6 ? "Top_Right" : "Top" }
-            let widths = pieces.map { ui.creatureRing($0).map { $0.width } ?? 60 }
-            let scale = Float(circ.width) / Float(widths.reduce(0, +))
-            var cursor = Float(ox + circ.x)
-            let piece0 = ui.creatureRing(pieces[0])
-            for (k, pn) in pieces.enumerated() {
-                guard let ring = ui.creatureRing(pn) else { continue }
-                let x0 = cursor - Float(ring.x) * scale, y0 = Float(oy + circ.y - 6) - Float((piece0?.y ?? 0)) * scale
-                let cx = Int(x0 + 41 * scale), cy = Int(y0 + 41 * scale)
-                if k < stacks.count, let p = ui.creatureIcon(stacks[k].0.keyword) {
-                    out.append(Quad(texture: uiTexture("cicon|\(stacks[k].0.keyword)", { p.bitmap }), x: cx - Int(Float(p.width) * scale) / 2, y: cy - Int(Float(p.height) * scale) / 2, w: Int(Float(p.width) * scale), h: Int(Float(p.height) * scale)))
-                }
-                out.append(Quad(texture: uiTexture("cring|\(pn)", { ring.bitmap }), x: Int(x0 + Float(ring.x) * scale), y: Int(y0 + Float(ring.y) * scale), w: Int(Float(ring.width) * scale), h: Int(Float(ring.height) * scale)))
-                if k < stacks.count {
-                    let word = Renderer.armySizeWord(stacks[k].1, strings)
-                    let f = ui.font(14), w = f.measure(word)
-                    out.append(Quad(texture: uiTexture("dlgtext|14|\(word)|12", { f.render(word, colour: (12, 8, 4)) }), x: cx - w / 2, y: oy + circ.y + circ.height - 22, w: w, h: f.size))
-                }
-                cursor += Float(widths[k]) * scale
+        // (the background has seven circles 60 px apart, centred at x = 53 + 60k, y = 89: each ring
+        // piece is drawn full size on one, its portrait hole (41,41 of its frame) on the centre)
+        let pieces = (0..<7).map { $0 == 0 ? "Left" : $0 == 6 ? "Right" : "Middle" }
+        for (k, pn) in pieces.enumerated() {
+            let cx = ox + 53 + 60 * k, cy = oy + 89
+            if k < stacks.count, let p = ui.creatureIcon(stacks[k].0.keyword) {
+                out.append(Quad(texture: uiTexture("cicon|\(stacks[k].0.keyword)", { p.bitmap }), x: cx - p.width / 2, y: cy - p.height / 2, w: p.width, h: p.height))
+            }
+            if let ring = ui.creatureRing(pn) {
+                out.append(Quad(texture: uiTexture("cring|\(pn)", { ring.bitmap }), x: cx - 41 + ring.x, y: cy - 41 + ring.y, w: ring.width, h: ring.height))
+            }
+            if k < stacks.count {
+                let word = Renderer.armySizeWord(stacks[k].1, strings)
+                let f = ui.font(14), w = f.measure(word)
+                out.append(Quad(texture: uiTexture("dlgtext|14|\(word)|12", { f.render(word, colour: (12, 8, 4)) }), x: cx - w / 2, y: cy + 46, w: w, h: f.size))
             }
         }
         text(cap(c.plural), in: "Level", font: ui.font(20), colour: (12, 8, 4))

@@ -17,6 +17,8 @@ final class CombatScreen {
     var hero: Hero?
     /// The enemy hero army being fought (nil: a wandering stack or a bank's guards).
     var enemy: Hero?
+    /// The town being besieged.
+    var siegeTown: Int?
     var monsterIndex = 0
     var placed: MapScene.Placed?
 
@@ -196,7 +198,7 @@ final class CombatScreen {
     /// A battle between the player's army (attacking, bottom left) and an enemy hero's army.
     func start(game g: GameState, hero h: Hero, enemy e: Hero, terrain: UInt8, variant: UInt8 = 0) {
         guard let t = g.tables else { return }
-        hero = h; enemy = e; placed = nil
+        hero = h; enemy = e; placed = nil; siegeTown = nil
         let seed = g.day * 977 + h.x * 31 + h.y
         fieldName = "generated.\(terrain).\(variant).\(seed)"
         field = generatedField(terrain: terrain, variant: variant, seed: seed, tables: t)
@@ -211,10 +213,48 @@ final class CombatScreen {
         pump()
     }
 
+    /// A siege (heroes4.exe 0x560b50 / 0x62d930): the town's walls from castle.<alignment>.<fort|
+    /// citadel|castle>, its garrison deployed in formation 3 (4 with towers), the attacker as in the field.
+    func startSiege(game g: GameState, hero h: Hero, town i: Int, terrain: UInt8, variant: UInt8 = 0) {
+        guard let t = g.tables else { return }
+        let town = g.towns[i]
+        hero = h; enemy = nil; placed = nil; siegeTown = i
+        let seed = g.day * 977 + h.x * 31 + h.y
+        fieldName = "siege.\(i).\(seed)"
+        field = generatedField(terrain: terrain, variant: variant, seed: seed, tables: t)
+        let level = town.castleLevel
+        if level > 0, var f = field {
+            let names = ["fort", "citadel", "castle"]
+            if let d = payload("castle.\(town.alignment).\(names[level - 1]).h4d") {
+                let pieces = Battlefield.castlePieces(d) { [weak self] name in self?.payload(name) }
+                f.addCastle(pieces, level: level)
+                field = f
+            }
+        }
+        Combatant.abilityKeywords = t.abilityKeywords
+        guard let f = field else { return }
+        strings = t.strings
+        let army: [(alignment: String, undead: Bool)] = town.garrison.compactMap { st in t.creature(st.creature).map { ($0.alignment, Combatant(creature: $0, count: 1).has("undead")) } }
+        var defenders: [Battle.Fighter] = []
+        for (k, st) in town.garrison.enumerated() {
+            guard let cd = t.creature(st.creature) else { continue }
+            var c = Combatant(creature: cd, count: st.count)
+            c.morale = Battle.armyMorale(own: cd.alignment, army: army)
+            defenders.append(Battle.Fighter(stats: c, keyword: cd.keyword, actor: cd.name, size: actor(cd.name)?.size ?? 4, move: cd.move, shots: cd.shots, slot: k))
+        }
+        let form: Battle.Formation = level == 3 ? .castle : level > 0 ? .siege : .loose
+        battle = Battle(field: f, attackers: armyFighters(game: g, h, tables: t), defenders: defenders, seed: seed, formations: (.loose, form))
+        var pieces = (1...6).map { "combat.music.\($0)" }
+        let r = seed % 6; pieces = Array(pieces[r...] + pieces[..<r])
+        sound?.playMusic(first: "combat.start", then: pieces)
+        queue = []; playing = nil; unitPos = [:]; unitState = [:]; resultShownAt = nil; dead = []; dying = []; pendingDeaths = []; hits = []; pendingCount = []; shownPos = [:]; shownCount = [:]; result = nil; showResults = false; floaters = []; effects = []
+        pump()
+    }
+
     /// Set up a battle between a hero's army and a wandering stack.
     func start(game g: GameState, hero h: Hero, monsterAt i: Int, _ p: MapScene.Placed, terrain: UInt8, variant: UInt8 = 0) {
         guard let t = g.tables, let c = t.creature(g.monsters[i].creature) else { return }
-        hero = h; monsterIndex = i; placed = p; enemy = nil
+        hero = h; monsterIndex = i; placed = p; enemy = nil; siegeTown = nil
         let seed = g.day * 977 + h.x * 31 + h.y
         fieldName = "generated.\(terrain).\(variant).\(seed)"
         field = generatedField(terrain: terrain, variant: variant, seed: seed, tables: t)
@@ -404,6 +444,16 @@ final class CombatScreen {
             let c = shownCentre(b.unit(id))
             floaters.append((strings["spell_resisted.combat"] ?? "Resisted", c.0, c.1, now, nil, 0, false))
             playing = Anim(event: e, started: now, duration: min(1.2, effectDuration("resist_spell")))
+        case .gateHit(let id, let dmg, let broken):
+            let u = b.unit(id)
+            unitState[id] = (u.stats.shooter && !b.nextToGate(u) ? "ranged" : "melee", now, true)
+            sound?.actor(u.actor, "melee")
+            if let c = b.field.gateCells.first {
+                let gx = Float(c / Battlefield.size) + 1, gy = Float(c % Battlefield.size) + 5
+                floaters.append(("-\(dmg)", gx, gy, now.addingTimeInterval(0.3), "damage", 0, false))
+            }
+            if broken { floaters.append((strings["gate_destroyed.combat"] ?? "The gate is destroyed!", u.centre.0, u.centre.1, now.addingTimeInterval(0.4), nil, 1, false)) }
+            playing = Anim(event: e, started: now, duration: max(0.5, stateDuration(u.actor, "melee", u.facing)))
         case .summon(let id):
             effects.append(("summon", id, now))
             playing = Anim(event: e, started: now, duration: 0.6)

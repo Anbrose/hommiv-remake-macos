@@ -298,6 +298,8 @@ public final class GameState {
     public var heroes: [Hero] = []
     /// The other players' heroes on the map (armies led by heroes; companions travel with them).
     public var enemyHeroes: [Hero] = []
+    /// A siege waiting for the combat screen: the hero and the town.
+    public var pendingSiege: (hero: Hero, town: Int)?
     /// A battle with an enemy hero army waiting for the combat screen.
     public var pendingHeroBattle: (hero: Hero, enemy: Hero)?
     /// Each adventure object's rolled contents and state, by "level|x|y".
@@ -339,6 +341,10 @@ public final class GameState {
         public var z = 0                                // map level
         /// The mage guild's spells by guild level (1...5), drawn at the start of the game.
         public var guildSpells: [[Int]] = []
+        /// The town's garrison: the creatures that defend it.
+        public var garrison: [Hero.Stack] = []
+        /// 0 no walls, 1 fort, 2 citadel, 3 castle (the siege layout).
+        public var castleLevel: Int { buildings.contains("castle") ? 3 : buildings.contains("citadel") ? 2 : buildings.contains("fort") ? 1 : 0 }
     }
     public struct Mine { public let x: Int, y: Int, name: String, resource: String, amount: Int; public var owned: Bool; public var z = 0 }
     /// A creature dwelling on the map: a week's growth waits at the start; once owned it grows by
@@ -908,6 +914,19 @@ public final class GameState {
                 town.buildings.formUnion(["village hall", "prison"])   // always (0x89a97b)
                 town.owner = settings?.owner
                 town.owned = settings?.owner == map.humanColour
+                // the garrison the editor set (a count of 0: the creature's level budget, as for placed armies)
+                if let g = settings?.garrison, let t = tables {
+                    var rng = GameRandom(seed: p.cellX * 4481 + p.cellY * 7907)
+                    for case let (id, n)? in g where id < RuleTables.creatureIds.count {
+                        guard let c = t.creature(RuleTables.creatureIds[id]) else { continue }
+                        var count = n
+                        if count <= 0 {
+                            let base = Double(GameState.monsterBudget[min(4, max(1, c.level))])
+                            count = max(1, (rng.next() % (Int(base * 0.4) + 1) + Int(base * 0.8)) / max(1, c.experience))
+                        }
+                        town.garrison.append(Hero.Stack(creature: c.keyword, count: count))
+                    }
+                }
                 town.allowed = settings?.allowed.map { RuleTables.buildings($0, alignment: faction) }
                 if let t = tables {
                     for b in t.buildings(for: faction) where town.buildings.contains(b.keyword) {
@@ -983,6 +1002,12 @@ public final class GameState {
         if visitObject(hero: hero, p) { return }
         if let i = monster(for: p) { fight(hero: hero, monsterAt: i, p); return }
         if let i = town(for: p) {
+            if !towns[i].owned, !towns[i].garrison.isEmpty {   // a garrison defends it: a siege (0x896480)
+                runTownEvent(i, slot: 0, hero: hero)                            // "attacked"
+                pendingSiege = (hero, i)
+                hero.target = nil
+                return
+            }
             if !towns[i].owned {
                 let previous = towns[i].owner
                 towns[i].owned = true; towns[i].owner = map.humanColour; log.append("\(towns[i].name) is yours")

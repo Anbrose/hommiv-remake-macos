@@ -46,6 +46,15 @@ extension Renderer {
                 out.append(Quad(texture: cellDiamond("grid|\(c.0)|\(c.1)|\(c.2)|\(alpha)", c.0, c.1, c.2, alpha), x: Int(px - 16 * sc), y: Int(py - 8 * sc), w: Int(32 * sc), h: Int(16 * sc)))
             } }
         }
+        // a citadel's or castle's moat: terrain cells x 50...53 down the whole field (water tiles)
+        if !f.moat.isEmpty, let water = cs.groundPatch(terrain: 0, variant: 0, alt: 1) {
+            for ax in 25...26 { for ay in 0..<(Battlefield.size / 2 + 1) {
+                let (px, py) = CombatScreen.point(Float(2 * ax + 1), Float(2 * ay + 1))
+                if px < -40 || py < -30 || px > 925 || py > 800 { continue }
+                let ti = 22 + (ay % 5)
+                out.append(Quad(texture: uiTexture("moat|\(ti)", { water.tiles[min(ti, water.tiles.count - 1)] }), x: Int(px - 32 * sc), y: Int(py - 16 * sc), w: Int(64 * sc) + 1, h: Int(32 * sc) + 1))
+            } }
+        }
         // the acting unit's reach as the game's purple-grey cells (the "movement shadow" option):
         // every cell its footprint can cover
         if showReach, let cur = b.current, cur.side == 0, !cs.busy, cs.result == nil {
@@ -69,7 +78,17 @@ extension Renderer {
             var q: [Quad] = []
             if let sh = s.shadow(for: fr) { q.append(Quad(texture: texture(for: sh, of: o.name), x: Int(px + Float(s.origin.x + Int32(sh.box.left)) * sc), y: Int(py + Float(s.origin.y + Int32(sh.box.top)) * sc), w: Int(Float(sh.bitmap.width) * sc), h: Int(Float(sh.bitmap.height) * sc))) }
             q.append(Quad(texture: texture(for: fr, of: o.name), x: Int(px + Float(s.origin.x + Int32(fr.box.left)) * sc), y: Int(py + Float(s.origin.y + Int32(fr.box.top)) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc)))
-            drawn.append((py - 1, q))
+            drawn.append((o.w * o.h > 9 ? CombatScreen.point(Float(o.x) + Float(o.w) / 2, Float(o.y) + Float(o.h) / 2).1 : py - 1, q))
+        }
+        // the castle gate, in its state (intact, light_damage, heavy_damage, destroyed)
+        if !f.gateCells.isEmpty {
+            let gx = f.gateCells.map { $0 / Battlefield.size }.min() ?? 0, gy = f.gateCells.map { $0 % Battlefield.size }.min() ?? 0
+            let name = f.gateName.replacingOccurrences(of: ".intact.", with: ".\(b.field.gateState).")
+            if let s = cs.obstacleSprite(name) ?? cs.obstacleSprite(f.gateName), let fr = s.frames.first {
+                let (px, py) = CombatScreen.point(Float(gx), Float(gy))
+                let q = [Quad(texture: texture(for: fr, of: name), x: Int(px + Float(s.origin.x + Int32(fr.box.left)) * sc), y: Int(py + Float(s.origin.y + Int32(fr.box.top)) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc))]
+                drawn.append((CombatScreen.point(Float(gx) + 1, Float(gy) + 5).1, q))
+            }
         }
         // every unit, the dead too: a dead stack stays on the field as the last frame of its
         // die sequence (the combat actor has no other corpse state), under the living
@@ -342,6 +361,7 @@ extension Renderer {
             cs.pump(); return
         }
         guard x < Float(cs.hotspot("battle_scene")?.width ?? 885) else { return }
+        if onGate(b, x: x, y: y), b.nextToGate(cur) || b.canShoot(cur) { b.attackGate(); cs.pump(); return }
         if let target = enemyUnder(b, x: x, y: y) {
             if b.canShoot(cur), !combatMeleeMode { _ = b.shoot(target.id) } else { _ = b.attack(target.id) }
             combatMeleeMode = false
@@ -370,6 +390,14 @@ extension Renderer {
 
     /// Leave the combat screen and apply the result to the map.
     func closeCombat() {
+        if let cs = combat, let b = cs.battle, let g = game, let h = cs.hero, let town = cs.siegeTown {   // a siege
+            let won = b.finished ?? false
+            for (hh, u) in zip([h] + h.companions, b.units.filter { $0.side == 0 && $0.stats.isHero }) { if let c = u.caster { hh.spellPoints = c.spellPoints } }
+            func survivors(_ side: Int) -> [Hero.Stack] { b.units.filter { $0.side == side && !$0.stats.isHero && $0.alive && !$0.summoned }.map { Hero.Stack(creature: $0.keyword, count: $0.stats.count) } }
+            g.finishSiege(hero: h, town: town, won: won, army: survivors(0), garrison: survivors(1), value: b.experience)
+            cs.battle = nil; cs.siegeTown = nil
+            return
+        }
         if let cs = combat, let b = cs.battle, let g = game, let h = cs.hero, let e = cs.enemy {   // an enemy hero's army
             let won = b.finished ?? false
             for (hh, u) in zip([h] + h.companions, b.units.filter { $0.side == 0 && $0.stats.isHero }) { if let c = u.caster { hh.spellPoints = c.spellPoints } }
@@ -417,6 +445,7 @@ extension Renderer {
             if let t = unitUnder(b, x: x, y: y), b.canTarget(spell, by: cur, t) { combatTarget = t.id; return "combat.cast_spell" }
             return "combat.no_cast"
         }
+        if onGate(b, x: x, y: y), b.nextToGate(cur) || b.canShoot(cur) { return "combat.attack_Gate" }
         if let t = enemyUnder(b, x: x, y: y) {
             combatTarget = t.id
             if b.canShoot(cur), !combatMeleeMode { return "combat.shoot" }
@@ -431,5 +460,14 @@ extension Renderer {
         // the pointer's frame is the turns needed: 1, 2, 3, 4+ (layers.cursor.combat.walk / fly)
         cursorFrameIndex = min(4, max(1, Int((cost / Float(max(1, cur.move))).rounded(.up)))) - 1
         return cur.stats.has("flying") ? "combat.fly" : "combat.walk"
+    }
+
+    /// Is the pointer on the unbroken castle gate?
+    func onGate(_ b: Battle, x: Float, y: Float) -> Bool {
+        guard !b.field.gateCells.isEmpty, !b.field.gateDestroyed else { return false }
+        let c = CombatScreen.cell(at: x, y)
+        // the gate stands tall: the cell under the pointer or a few cells in front of it
+        for d in 0...4 where b.field.gateCells.contains(Battlefield.key(c.0 - d, c.1 - d)) { return true }
+        return false
     }
 }

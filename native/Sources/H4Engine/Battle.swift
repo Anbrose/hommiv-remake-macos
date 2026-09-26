@@ -82,10 +82,12 @@ public final class Battle {
         case resisted(unit: Int, spell: Int)
         /// A stack a spell brought onto the field.
         case summon(unit: Int)
+        /// The castle gate struck (and broken).
+        case gateHit(unit: Int, damage: Int, broken: Bool)
     }
 
     public internal(set) var units: [Unit] = []
-    public let field: Battlefield
+    public internal(set) var field: Battlefield
     public private(set) var round = 0
     public internal(set) var order: [Int] = []
     public internal(set) var events: [Event] = [] { didSet { version &+= 1 } }
@@ -151,7 +153,7 @@ public final class Battle {
     }
 
     /// Army formations (t_creature_array +0x2c, set by the army dialog's buttons).
-    public enum Formation: Int { case loose = 0, tight = 1, square = 2 }
+    public enum Formation: Int { case loose = 0, tight = 1, square = 2, siege = 3, castle = 4 }
 
     /// Deployment cells, heroes4.exe 0xaae8b8 (filled by the initializer at 0x6246f0):
     /// [formation][side][army slot] = (x, y). Formations 3 and 4 are the siege ones and 5
@@ -211,9 +213,10 @@ public final class Battle {
             case .square:
                 _ = pull(2, 3, 100); _ = pull(0, 2, 100); _ = pull(4, 2, 100); _ = pull(1, 3, 100)
                 _ = pull(5, 3, 100); _ = pull(6, 3, 100); _ = pull(0, 1, 100); _ = pull(4, 5, 100)
-            case .loose: break
+            case .loose, .siege, .castle: break
             }
         }
+        siegeDeploy()
         for side in 0..<2 { initialHealth[side] = units.filter { $0.side == side }.reduce(0) { $0 + $1.stats.totalHealth } }
         startRound()
     }
@@ -387,11 +390,21 @@ public final class Battle {
         let n = Battlefield.size
         // where the footprint may stand, worked out once per search
         var blocked = [Bool](repeating: false, count: n * n)
+        // a castle's defenders path through their own closed gate (0x60cc00)
+        let throughGate = field.castleLevel > 0 && !field.gateDestroyed && side(of: u) == 1
+        func standOK(_ x: Int, _ y: Int) -> Bool {
+            if field.fits(x, y, size: u.size) { return true }
+            guard throughGate else { return false }
+            for i in 0..<u.size { for j in 0..<u.size where !(field.isOpen(x + i, y + j) || field.gateCells.contains(Battlefield.key(x + i, y + j))) { return false } }
+            return true
+        }
         for x in 0..<n { for y in 0..<n {
-            blocked[x * n + y] = flies ? (x + u.size > n || y + u.size > n) : !(field.fits(x, y, size: u.size) && !overlaps(x, y, u.size, except: u.id))
+            blocked[x * n + y] = flies ? (x + u.size > n || y + u.size > n) : !(standOK(x, y) && !overlaps(x, y, u.size, except: u.id))
         } }
         var fits = [Bool](repeating: false, count: n * n)
-        if !flies { for x in 0..<n { for y in 0..<n { fits[x * n + y] = field.fits(x, y, size: u.size) } } }
+        if !flies { for x in 0..<n { for y in 0..<n { fits[x * n + y] = standOK(x, y) } } }
+        // the moat: a walker with more than 4 cells of move pays a quarter of it for each moat cell (0x6257a0)
+        let moatCost: Float? = !flies && !field.moat.isEmpty && moveCells(u) > 4 ? moveCells(u) / 4 : nil
         var dist = [Float](repeating: .infinity, count: n * n)
         var parent = [Int](repeating: -1, count: n * n)
         dist[u.x * n + u.y] = 0
@@ -442,6 +455,7 @@ public final class Battle {
                 let nx = x + s.dx, ny = y + s.dy
                 guard nx >= 0, ny >= 0, nx < n, ny < n else { continue }
                 var nc = c + s.cost
+                if let m = moatCost, field.moat.contains(Battlefield.key(nx, ny)) { nc = c + max(s.cost, m) }
                 if let f = free, !f.contains(where: { $0 == (s.dx, s.dy) }) { nc += zocCost * s.cost }
                 let nk = nx * n + ny
                 guard nc <= limit + 0.001, !blocked[nk] else { continue }
@@ -527,10 +541,11 @@ public final class Battle {
     public func rangeDivisor(_ a: Unit, _ b: Unit) -> Int {
         let d = Int(Battle.distance(a, b))
         var div: Int
-        if a.stats.has("long_range") { div = 1 }
+        if a.stats.has("long_range") || onTower(a) { div = 1 }
         else if a.stats.has("short_range") { div = d >= 40 ? 4 : d >= 20 ? 2 : 1 }
         else { div = d >= 40 ? 2 : 1 }
-        if field.obstructed(a.centre, b.centre), !a.stats.has("siege_machine") { div *= 2 }
+        let walled = !onTower(a) && field.crossesWall(a.centre, b.centre)
+        if field.obstructed(a.centre, b.centre) || walled || onTower(b), !a.stats.has("siege_machine"), !onTower(a) { div *= 2 }
         return div
     }
 
@@ -551,6 +566,14 @@ public final class Battle {
         let before = b.stats.totalHealth
         var dmg = QuickCombat.damage(a.stats, b.stats, rng: &rng, ranged: ranged, moved: ranged ? 0 : Int(a.moved))
         if ranged { dmg = max(1, dmg / rangeDivisor(a, b)) }
+        // on a tower attack and defense double (0x5ee1d1 / 0x5f1ee7)
+        if onTower(a) { dmg *= 2 }
+        if onTower(b) { dmg = max(1, dmg / 2) }
+        // a melee blow over the wall (0x570350): striking out of the castle x F, in / F, F = 1.25 / 1.5 / 2
+        if !ranged, field.castleLevel > 0, field.crossesWall(a.centre, b.centre) {
+            let f = [1.0, 1.25, 1.5, 2.0][min(3, field.castleLevel)]
+            dmg = max(1, Int((Double(dmg) * (b.x >= a.x ? f : 1 / f)).rounded()))
+        }
         // Stone Gaze (0x5ee990): 250/100/50/20 thousandths of a target of level 1/2/3/4 per
         // attacking creature are turned to stone, once that makes half a creature
         if !secondary, a.stats.has("stone_gaze"), Battle.living(b), !b.stats.has("blind"), !b.stats.has("magic_immunity") {
@@ -834,7 +857,7 @@ public final class Battle {
 
     public func shoot(_ targetId: Int) -> Bool {
         guard finished == nil, let u = current, let t = units.first(where: { $0.id == targetId }), t.alive, side(of: t) != side(of: u) else { return false }
-        guard canShoot(u) else { return attack(targetId) }
+        guard canShoot(u), shotOverWallOK(u, t) else { return attack(targetId) }
         Battle.face(u, towards: t)
         // a shooter that is shot at shoots back (once per round, like melee retaliation);
         // Ranged First Strike shoots first; Shoots Twice fires again after the retaliation
@@ -889,7 +912,25 @@ public final class Battle {
             }
             if let b = best, cast(b.spell, on: b.target) { return }
         }
-        if canShoot(u), let t = enemies.max(by: { QuickCombat.threat($0.stats) < QuickCombat.threat($1.stats) }) { _ = shoot(t.id); return }
+        if field.castleLevel > 0 {   // a siege
+            if canShoot(u), let t = enemies.filter({ shotOverWallOK(u, $0) }).max(by: { QuickCombat.threat($0.stats) < QuickCombat.threat($1.stats) }) { _ = shoot(t.id); return }
+            if let t = enemies.filter({ attackPosition(u, $0) != nil }).max(by: { QuickCombat.threat($0.stats) < QuickCombat.threat($1.stats) }) { _ = attack(t.id); return }
+            if side(of: u) == 1 { defend(); return }   // the garrison holds the walls
+            if !field.gateDestroyed {   // the attacker breaks in through the gate
+                if nextToGate(u) { attackGate(); return }
+                if let g = field.gateCells.first {
+                    let gx = g / Battlefield.size + 2, gy = g % Battlefield.size + 4
+                    var best: (Int, Int)? = nil, bestD = Float.infinity
+                    for (k, _) in reachable(u) {
+                        let x = k / Battlefield.size, y = k % Battlefield.size
+                        let d = Float((x - gx) * (x - gx) + (y - gy) * (y - gy))
+                        if d < bestD { bestD = d; best = (x, y) }
+                    }
+                    if let b = best, !(b.0 == u.x && b.1 == u.y) { _ = move(to: b.0, b.1); return }
+                }
+            }
+        }
+        if canShoot(u), let t = enemies.filter({ shotOverWallOK(u, $0) }).max(by: { QuickCombat.threat($0.stats) < QuickCombat.threat($1.stats) }) { _ = shoot(t.id); return }
         if let t = enemies.filter({ attackPosition(u, $0) != nil }).max(by: { QuickCombat.threat($0.stats) < QuickCombat.threat($1.stats) }) { _ = attack(t.id); return }
         let nearest = enemies.min { Battle.distance(u, $0) < Battle.distance(u, $1) }!
         var best: (Int, Int)? = nil, bestD = Float.infinity
@@ -917,4 +958,58 @@ public final class Battle {
     }
 
     public func takeEvents() -> [Event] { let e = events; events.removeAll(); return e }
+
+    // MARK: sieges
+
+    /// Standing on an arrow tower (a castle's three 7x7 platforms, 0x577960).
+    public func onTower(_ u: Unit) -> Bool {
+        guard !field.towers.isEmpty else { return false }
+        for i in 0..<u.size { for j in 0..<u.size where field.towers.contains(Battlefield.key(u.x + i, u.y + j)) { return true } }
+        return false
+    }
+    /// Can the shot go over the walls (0x56ff60)? From outside only at a stack at most 4 cells
+    /// behind the wall; from inside only by a shooter at most 4 cells behind it; a tower sees all.
+    public func shotOverWallOK(_ a: Unit, _ b: Unit) -> Bool {
+        guard field.castleLevel > 0, !onTower(a), let w = field.wallSteps(a.centre, b.centre) else { return true }
+        return a.x > b.x ? w.total - w.last <= 4 + b.size / 2 : w.first <= 4 + a.size / 2
+    }
+    /// Is the unit next to the unbroken gate?
+    public func nextToGate(_ u: Unit) -> Bool {
+        guard field.castleLevel > 0, !field.gateDestroyed else { return false }
+        for c in field.gateCells {
+            let gx = c / Battlefield.size, gy = c % Battlefield.size
+            if gx >= u.x - 1, gx <= u.x + u.size, gy >= u.y - 1, gy <= u.y + u.size { return true }
+        }
+        return false
+    }
+    /// Strike the gate (t_castle_gate 0x5bfe60): an ordinary blow against a defense of 10, at most
+    /// 50 hit points off it.
+    @discardableResult
+    public func attackGate() -> Bool {
+        guard finished == nil, let u = current, nextToGate(u) || canShoot(u) else { return false }
+        var gate = Combatant(hero: "Gate", level: 1)
+        gate.defense = 10; gate.abilities = ["mechanical"]
+        let ranged = !nextToGate(u) && canShoot(u)
+        var dmg = QuickCombat.damage(u.stats, gate, rng: &rng, ranged: ranged)
+        if ranged { spendShot(u); dmg = max(1, dmg / 2) }
+        let done = field.damageGate(dmg)
+        events.append(.gateHit(unit: u.id, damage: done, broken: field.gateDestroyed))
+        endAction(u)
+        return true
+    }
+    /// Siege deployment (0x62df10 with formations 3 / 4): a defender on a tower stays; shooters,
+    /// heroes and damage casters slide up to the wall; the rest slide to it and step back 4 cells.
+    func siegeDeploy() {
+        guard field.castleLevel > 0 else { return }
+        for u in units where u.side == 1 && !onTower(u) {
+            var steps = 0
+            while steps < 100, field.fits(u.x + 1, u.y, size: u.size), !overlaps(u.x + 1, u.y, u.size, except: u.id) { u.x += 1; steps += 1 }
+            let ranged = u.stats.shooter || u.stats.isHero
+            if !ranged {
+                for back in stride(from: 4, through: 1, by: -1) where field.fits(u.x - back, u.y, size: u.size) && !overlaps(u.x - back, u.y, u.size, except: u.id) {
+                    u.x -= back; break
+                }
+            }
+        }
+    }
 }

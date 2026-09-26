@@ -71,7 +71,7 @@ public struct Battlefield {
     public let backdrop: UILayer?
     public let terrain: UInt8, variant: UInt8
     public struct Obstacle { public let name: String; public let x: Int, y: Int; public let w: Int, h: Int }
-    public private(set) var obstacles: [Obstacle] = []
+    public internal(set) var obstacles: [Obstacle] = []
     var blocked = [Bool](repeating: false, count: Battlefield.size * Battlefield.size)
 
     /// Screen (scene) point of a world point in cell units: x runs down-left, y down-right,
@@ -191,5 +191,108 @@ public struct Battlefield {
             if x >= 0, y >= 0, x < Battlefield.size, y < Battlefield.size, blocked[x * Battlefield.size + y] { return true }
         }
         return false
+    }
+
+    // MARK: sieges (heroes4.exe 0x560b50, castle.<alignment>.<level>.h4d, siege_spec)
+
+    /// 0 an open field, 1 fort, 2 citadel, 3 castle.
+    public var castleLevel = 0
+    public var walls: Set<Int> = [], towers: Set<Int> = [], moat: Set<Int> = [], gateCells: [Int] = []
+    public var gateName = ""
+    /// The gate's hit points (fort 50, citadel 100, castle 150).
+    public var gateHP = 0, gateMax = 0
+    public var gateDestroyed: Bool { gateMax > 0 && gateHP <= 0 }
+    public static func key(_ x: Int, _ y: Int) -> Int { x * size + y }
+
+    /// A castle piece of a layout: combat_object name, top corner (cells), footprint, kind.
+    public struct CastlePiece { public let name: String; public let x: Int, y: Int, w: Int, h: Int; public let blocks: Bool; public let kind: String }
+    /// A layout file: u8 1, u16 count, count x (string16 combat_object name, i32 x, i32 y in world
+    /// units, 16 a cell); `header` gives the combat_object's header bytes (w, h at 2, 3; blocks at
+    /// 7; the kind keyword at 14: castle_wall, castle_gate, castle_tower, special).
+    public static func castlePieces(_ d: Data, header: (String) -> Data?) -> [CastlePiece] {
+        var r = ByteReader(d)
+        guard d.count > 3 else { return [] }
+        _ = r.u8()
+        let n = Int(r.u16())
+        var out: [CastlePiece] = []
+        for _ in 0..<n {
+            guard r.remaining > 2 else { break }
+            let name = r.string16()
+            guard r.remaining >= 8 else { break }
+            let x = Int(Int32(bitPattern: r.u32())), y = Int(Int32(bitPattern: r.u32()))
+            let full = "combat_object.\(name).h4d"
+            guard let h = header(full), h.count > 16 else { continue }
+            let hr = ByteReader(h)
+            let w = Int(hr.byte(at: 2)), hh = Int(hr.byte(at: 3)), blocks = hr.byte(at: 7) != 0
+            let kl = Int(hr.peekU16(at: 14))
+            let kind = 16 + kl <= h.count ? String(bytes: h[(h.startIndex + 16)..<(h.startIndex + 16 + kl)], encoding: .isoLatin1) ?? "" : ""
+            out.append(CastlePiece(name: full, x: x >> 4, y: y >> 4, w: max(1, w), h: max(1, hh), blocks: blocks, kind: kind))
+        }
+        return out
+    }
+
+    /// Put a castle on the field: its pieces (walls block, the gate blocks until broken, towers are
+    /// platforms), the moat of a citadel or castle (terrain cells x 50...53), the field's own
+    /// obstacles cleared from the castle side.
+    public mutating func addCastle(_ pieces: [CastlePiece], level: Int) {
+        castleLevel = level
+        obstacles.removeAll { $0.x < 58 }
+        for i in 0..<Battlefield.size { for j in 0..<Battlefield.size where i < 58 { blocked[i * Battlefield.size + j] = false } }
+        for p in pieces where !p.kind.contains("special") {
+            var cells: [Int] = []
+            for i in 0..<p.w { for j in 0..<p.h where p.x + i < Battlefield.size && p.y + j < Battlefield.size { cells.append(Battlefield.key(p.x + i, p.y + j)) } }
+            if p.kind.contains("gate") {
+                gateCells = cells; gateName = p.name
+            } else if p.kind.contains("tower") && !p.blocks {
+                towers.formUnion(cells)
+            } else if p.blocks {
+                walls.formUnion(cells)
+            }
+            if !p.kind.contains("gate") { obstacles.append(Obstacle(name: p.name, x: p.x, y: p.y, w: p.w, h: p.h)) }
+        }
+        for c in walls { blocked[c] = true }
+        gateMax = [0, 50, 100, 150][min(3, max(0, level))]; gateHP = gateMax
+        for c in gateCells { blocked[c] = true }
+        if level >= 2 { for x in 50...53 { for y in 0..<Battlefield.size { moat.insert(Battlefield.key(x, y)) } } }
+    }
+    /// The gate lost hit points (at most 50 a blow); broken it lets everyone through.
+    public mutating func damageGate(_ n: Int) -> Int {
+        let d = min(n, 50, gateHP)
+        gateHP -= d
+        if gateHP <= 0 { for c in gateCells { blocked[c] = false } }
+        return d
+    }
+    /// The gate's picture now: intact, light_damage, heavy_damage, destroyed (0x5bfffd).
+    public var gateState: String {
+        guard gateMax > 0 else { return "intact" }
+        let k = (4 * gateMax - 3 * (gateMax - gateHP) - 1) / gateMax
+        return gateHP <= 0 ? "destroyed" : ["destroyed", "heavy_damage", "light_damage", "intact"][max(0, min(3, k))]
+    }
+    /// Does the straight line between two cell points cross a wall or the unbroken gate (0x570350)?
+    public func crossesWall(_ a: (Float, Float), _ b: (Float, Float)) -> Bool {
+        guard castleLevel > 0 else { return false }
+        let d = max(abs(b.0 - a.0), abs(b.1 - a.1))
+        let steps = max(1, Int(d * 2))
+        for k in 1..<steps {
+            let t = Float(k) / Float(steps)
+            let x = Int((a.0 + (b.0 - a.0) * t).rounded(.down)), y = Int((a.1 + (b.1 - a.1) * t).rounded(.down))
+            let c = Battlefield.key(x, y)
+            if walls.contains(c) || (!gateDestroyed && gateCells.contains(c)) { return true }
+        }
+        return false
+    }
+    /// Cells a wall or the gate occupies along a line (for shooting over walls): the steps from `a`
+    /// of the first and the last wall cell, or nil.
+    public func wallSteps(_ a: (Float, Float), _ b: (Float, Float)) -> (first: Int, last: Int, total: Int)? {
+        guard castleLevel > 0 else { return nil }
+        let n = max(1, Int(max(abs(b.0 - a.0), abs(b.1 - a.1)).rounded()))
+        var first: Int? = nil, last = 0
+        for i in 1..<max(2, n) {
+            let t = Float(i) / Float(n)
+            let x = Int((a.0 + (b.0 - a.0) * t).rounded(.down)), y = Int((a.1 + (b.1 - a.1) * t).rounded(.down))
+            let c = Battlefield.key(x, y)
+            if walls.contains(c) || (!gateDestroyed && gateCells.contains(c)) { if first == nil { first = i }; last = i }
+        }
+        return first.map { ($0, last, n) }
     }
 }

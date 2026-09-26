@@ -1113,6 +1113,11 @@ final class Renderer: NSObject, MTKViewDelegate {
             cs.start(game: g, hero: pb.hero, monsterAt: pb.monster, pb.placed, terrain: cell?.type ?? 1, variant: cell?.variant ?? 0)
             g.pendingBattle = nil
         }
+        if let g = game, let cs = combat, let ps = g.pendingSiege, cs.battle == nil {
+            let tw = g.towns[ps.town]
+            cs.startSiege(game: g, hero: ps.hero, town: ps.town, terrain: tw.terrain)
+            g.pendingSiege = nil
+        }
         if let g = game, let cs = combat, let pb = g.pendingHeroBattle, cs.battle == nil {
             let cell = g.map.cells[g.level][pb.enemy.x * g.map.size + pb.enemy.y]
             cs.start(game: g, hero: pb.hero, enemy: pb.enemy, terrain: cell?.type ?? 1, variant: cell?.variant ?? 0)

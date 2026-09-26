@@ -65,4 +65,27 @@ extension GameState {
         pendingHeroBattle = nil
         checkScenario(newDay: false)
     }
+
+    /// A siege is over (0x8965e0): won, the town is the player's (a hero is needed, and there is
+    /// one), its garrison gone; lost, the defenders keep their survivors and the army is beaten.
+    public func finishSiege(hero: Hero, town i: Int, won: Bool, army: [Hero.Stack], garrison: [Hero.Stack], value: Int) {
+        clearBattleEffects(hero)
+        if won {
+            hero.army = army
+            share(value, among: [hero] + hero.companions)
+            towns[i].garrison = []
+            let previous = towns[i].owner
+            towns[i].owned = true; towns[i].owner = map.humanColour
+            log.append(text("town_captured_town.misc", "You have captured %town_name.").replacingOccurrences(of: "%town_name", with: towns[i].name))
+            runTownEvent(i, slot: 1, previousOwner: previous, hero: hero)
+        } else {
+            towns[i].garrison = garrison
+            runTownEvent(i, slot: 2, hero: hero)   // "attack repelled"
+            heroes.removeAll { $0 === hero }
+            log.append("\(hero.name)'s army is destroyed at \(towns[i].name)")
+        }
+        refreshMovement(hero)
+        pendingSiege = nil
+        checkScenario(newDay: false)
+    }
 }

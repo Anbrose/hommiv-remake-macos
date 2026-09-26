@@ -327,6 +327,19 @@ if let out = snapshot {
             if ProcessInfo.processInfo.environment["H4RETREAT"] != nil { renderer.askRetreat() } }   // snapshot: the retreat question   // snapshot: open a unit's creature window
         print("battle: round \(cs.battle?.round ?? 0), units \(cs.battle?.units.map { "\($0.stats.name)x\($0.stats.count) morale \($0.stats.morale)@(\($0.x),\($0.y))" }.joined(separator: " ") ?? "")")
     }
+    if let tn = ProcessInfo.processInfo.environment["H4SIEGE"].flatMap({ Int($0) }), let h = game.heroes.first, let cs = combatScreen, tn < game.towns.count {   // snapshot: a siege of a town
+        if game.towns[tn].garrison.isEmpty { game.towns[tn].garrison = [Hero.Stack(creature: "halfling", count: 20), Hero.Stack(creature: "squire", count: 15), Hero.Stack(creature: "crossbowman", count: 12)] }
+        if let lv = ProcessInfo.processInfo.environment["H4SIEGELEVEL"].flatMap({ Int($0) }) {
+            game.towns[tn].buildings.subtract(["fort", "citadel", "castle"])
+            game.towns[tn].buildings.formUnion(["fort", "citadel", "castle"].prefix(lv))
+        }
+        cs.startSiege(game: game, hero: h, town: tn, terrain: 1)
+        if let b = cs.battle {
+            print("siege of \(game.towns[tn].name) level \(game.towns[tn].castleLevel): walls \(b.field.walls.count) gate \(b.field.gateCells.count) hp \(b.field.gateHP) towers \(b.field.towers.count) moat \(b.field.moat.count); units \(b.units.map { "\($0.side):\($0.stats.name)@\($0.x),\($0.y)" })")
+            if ProcessInfo.processInfo.environment["H4SIEGEAUTO"] != nil { b.autoResolve(); print("resolved: attacker won \(b.finished ?? false) in \(b.round) rounds, gate \(b.field.gateHP)") }
+            _ = b.takeEvents(); cs.queue = []; cs.playing = nil
+        }
+    }
     if ProcessInfo.processInfo.environment["H4HEROFIGHT"] != nil, let h = game.heroes.first, let e = game.enemyHeroes.first, let cs = combatScreen {   // snapshot: a battle with the first enemy army
         cs.start(game: game, hero: h, enemy: e, terrain: 1)
         if let b = cs.battle {

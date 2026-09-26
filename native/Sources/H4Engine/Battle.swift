@@ -877,6 +877,18 @@ public final class Battle {
         guard finished == nil, let u = current else { return }
         let enemies = units.filter { $0.alive && $0.id != u.id && side(of: $0) != side(of: u) }
         guard !enemies.isEmpty else { defend(); return }
+        // a caster opens with its best damage spell on the most dangerous stack it can hurt
+        if u.caster != nil {
+            var best: (spell: Int, target: Int, dmg: Int)? = nil
+            for sp in castable(u) where RuleTables.spells[sp].kind == "damage" && !Battle.untargeted(sp) {
+                let p = power(sp, by: u)
+                for t in enemies where canTarget(sp, by: u, t) {
+                    let d = min(t.stats.totalHealth, p * (100 - resistance(t, to: sp)) / 100)
+                    if d > (best?.dmg ?? 0) { best = (sp, t.id, d) }
+                }
+            }
+            if let b = best, cast(b.spell, on: b.target) { return }
+        }
         if canShoot(u), let t = enemies.max(by: { QuickCombat.threat($0.stats) < QuickCombat.threat($1.stats) }) { _ = shoot(t.id); return }
         if let t = enemies.filter({ attackPosition(u, $0) != nil }).max(by: { QuickCombat.threat($0.stats) < QuickCombat.threat($1.stats) }) { _ = attack(t.id); return }
         let nearest = enemies.min { Battle.distance(u, $0) < Battle.distance(u, $1) }!

@@ -15,6 +15,8 @@ final class CombatScreen {
     var fieldName = ""
     /// Who fights: the hero and the monster index, to apply the result on the map.
     var hero: Hero?
+    /// The enemy hero army being fought (nil: a wandering stack or a bank's guards).
+    var enemy: Hero?
     var monsterIndex = 0
     var placed: MapScene.Placed?
 
@@ -167,10 +169,52 @@ final class CombatScreen {
         return Battlefield(terrain: terrain, variant: variant, kinds: obstacleKinds, frequency: tables.obstacleFrequency[key] ?? [:], adjacency: tables.obstacleAdjacency, seed: seed)
     }
 
+    /// A hero's army as fighters: its heroes (with their spell books) in the first slots, then the
+    /// stacks with the heroes' skill bonuses and morale.
+    func armyFighters(game g: GameState, _ h: Hero, tables t: RuleTables) -> [Battle.Fighter] {
+        let heroes = [h] + h.companions
+        let army: [(alignment: String, undead: Bool)] = heroes.map { ($0.alignment, false) } + h.army.compactMap { st in t.creature(st.creature).map { ($0.alignment, Combatant(creature: $0, count: 1).has("undead")) } }
+        let bonus = ArmyBonuses(heroes: heroes)
+        var out: [Battle.Fighter] = []
+        for (k, hh) in heroes.enumerated() {
+            var st = g.heroCombatant(hh)
+            st.magicResistance = [0, 30, 50, 70, 80, 100][min(5, hh.skill("resistance"))]
+            st.morale = Battle.armyMorale(own: hh.alignment, army: army)
+            let model = "hero.\(hh.alignment)_fighter_male", fallback = "hero.\(h.alignment)_fighter_male"
+            let book = Caster(level: hh.level, skills: hh.skills, spells: Array(hh.spells), spellPoints: g.spellPoints(hh))
+            out.append(Battle.Fighter(stats: st, keyword: hh.keyword, actor: actor(model) != nil ? model : fallback, size: actor(model)?.size ?? actor(fallback)?.size ?? 4, move: 24, shots: st.shots, slot: k, caster: book))
+        }
+        for (k, s) in h.army.enumerated() {
+            guard let cd = t.creature(s.creature) else { continue }
+            var st = Combatant(creature: cd, count: s.count)
+            st.morale = Battle.armyMorale(own: cd.alignment, army: army) + g.objectMorale(h, alignment: cd.alignment, undeadOrMechanical: st.has("undead") || st.has("mechanical"))
+            bonus.apply(&st)
+            out.append(Battle.Fighter(stats: st, keyword: cd.keyword, actor: cd.name, size: actor(cd.name)?.size ?? 4, move: cd.move + bonus.moveThirds, shots: cd.shots, slot: k + heroes.count))
+        }
+        return out
+    }
+    /// A battle between the player's army (attacking, bottom left) and an enemy hero's army.
+    func start(game g: GameState, hero h: Hero, enemy e: Hero, terrain: UInt8, variant: UInt8 = 0) {
+        guard let t = g.tables else { return }
+        hero = h; enemy = e; placed = nil
+        let seed = g.day * 977 + h.x * 31 + h.y
+        fieldName = "generated.\(terrain).\(variant).\(seed)"
+        field = generatedField(terrain: terrain, variant: variant, seed: seed, tables: t)
+        Combatant.abilityKeywords = t.abilityKeywords
+        guard let f = field else { return }
+        strings = t.strings
+        battle = Battle(field: f, attackers: armyFighters(game: g, h, tables: t), defenders: armyFighters(game: g, e, tables: t), seed: seed)
+        var pieces = (1...6).map { "combat.music.\($0)" }
+        let r = seed % 6; pieces = Array(pieces[r...] + pieces[..<r])
+        sound?.playMusic(first: "combat.start", then: pieces)
+        queue = []; playing = nil; unitPos = [:]; unitState = [:]; resultShownAt = nil; dead = []; dying = []; pendingDeaths = []; hits = []; pendingCount = []; shownPos = [:]; shownCount = [:]; result = nil; showResults = false; floaters = []; effects = []
+        pump()
+    }
+
     /// Set up a battle between a hero's army and a wandering stack.
     func start(game g: GameState, hero h: Hero, monsterAt i: Int, _ p: MapScene.Placed, terrain: UInt8, variant: UInt8 = 0) {
         guard let t = g.tables, let c = t.creature(g.monsters[i].creature) else { return }
-        hero = h; monsterIndex = i; placed = p
+        hero = h; monsterIndex = i; placed = p; enemy = nil
         let seed = g.day * 977 + h.x * 31 + h.y
         fieldName = "generated.\(terrain).\(variant).\(seed)"
         field = generatedField(terrain: terrain, variant: variant, seed: seed, tables: t)

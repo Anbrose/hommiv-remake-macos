@@ -193,6 +193,32 @@ if let f = ProcessInfo.processInfo.environment["H4HEROAT"] {   // debugging aid:
     }
     exit(0)
 }
+// the other players' heroes: the map's armies of their colours; a player with a town and no
+// placed hero gets one of its town's alignment at the gate
+for o in map.objects where o.type == "hero_army" && o.owner != map.humanColour && !o.heroes.isEmpty && o.level < scenes.count {
+    let owned = game.towns.filter { $0.owner == o.owner }
+    let align = owned.min { abs($0.x - o.x) + abs($0.y - o.y) < abs($1.x - o.x) + abs($1.y - o.y) }?.alignment ?? "might"
+    var all = o.heroes.map { Hero.fromMap($0, alignment: align, x: o.x, y: o.y, tables: game.tables, random: &game.random) }
+    let e = all.removeFirst()
+    e.companions = all; e.owner = o.owner ?? 1; e.z = o.level; e.home = (o.x, o.y)
+    e.army = (o.army ?? []).compactMap { $0 }.compactMap { s in s.creature < RuleTables.creatureIds.count ? Hero.Stack(creature: RuleTables.creatureIds[s.creature], count: s.count) : nil }
+    e.maxMovement = game.armyMovement(e); e.movement = e.maxMovement
+    game.place(enemy: e)
+    lap("enemy \(e.name) level \(e.level) \(e.classKeyword) of player \(e.owner) at (\(o.x),\(o.y)) with \(all.count) more")
+}
+for spec in map.playerSpecs where spec.colour != map.humanColour && !game.enemyHeroes.contains(where: { $0.owner == spec.colour }) {
+    guard let t = game.towns.first(where: { $0.owner == spec.colour }), let p = scenes[t.z].placed.first(where: { $0.category == "castle" && $0.cellX == t.x && $0.cellY == t.y }) else { continue }
+    let back = game.level; game.level = t.z
+    if let cell = game.gateCells(p).first(where: { game.passability.isFree($0.0, $0.1) }) {
+        var mh = MapHero(); mh.level = 1
+        let e = Hero.fromMap(mh, alignment: t.alignment, x: cell.0, y: cell.1, tables: game.tables, random: &game.random)
+        e.owner = spec.colour; e.z = t.z; e.home = cell
+        game.giveStartingArmy(e)
+        game.place(enemy: e)
+        lap("enemy \(e.name) \(e.classKeyword) of player \(e.owner) at \(t.name)")
+    }
+    game.level = back
+}
 if ProcessInfo.processInfo.environment["H4DEBUG"] != nil {
     for o in game.map.objects where o.type == "hero_army" {
         print("hero army of player \(o.owner ?? -1) at (\(o.x),\(o.y)): stacks \(o.army?.compactMap { $0 }.map { "\($0.count)x\($0.creature)" } ?? []) heroes \(o.heroes.map { "lv\($0.level) class \($0.heroClass) portrait \($0.portrait) '\($0.name)' skills \($0.skills.map { "\($0)" } ?? "random") equipped \($0.equipped) backpack \($0.backpack)" })")
@@ -300,6 +326,13 @@ if let out = snapshot {
             if let n = ProcessInfo.processInfo.environment["H4INFO"].flatMap({ Int($0) }), b.units.indices.contains(n) { cs.info = b.units[n].id }
             if ProcessInfo.processInfo.environment["H4RETREAT"] != nil { renderer.askRetreat() } }   // snapshot: the retreat question   // snapshot: open a unit's creature window
         print("battle: round \(cs.battle?.round ?? 0), units \(cs.battle?.units.map { "\($0.stats.name)x\($0.stats.count) morale \($0.stats.morale)@(\($0.x),\($0.y))" }.joined(separator: " ") ?? "")")
+    }
+    if ProcessInfo.processInfo.environment["H4HEROFIGHT"] != nil, let h = game.heroes.first, let e = game.enemyHeroes.first, let cs = combatScreen {   // snapshot: a battle with the first enemy army
+        cs.start(game: game, hero: h, enemy: e, terrain: 1)
+        if let b = cs.battle {
+            print("hero battle: \(b.units.map { "\($0.side):\($0.stats.name)x\($0.stats.count)" })")
+            b.autoResolve(); print("resolved: attacker won \(b.finished ?? false) in \(b.round) rounds")
+        }
     }
     if openHeroScreen { renderer.adventureDialog = .hero(0) }
     if let n = ProcessInfo.processInfo.environment["H4LEVELUP"].flatMap({ Int($0) }), let h = game.heroes.first {   // snapshot: the level-up dialog

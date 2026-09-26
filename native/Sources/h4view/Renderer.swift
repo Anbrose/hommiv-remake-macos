@@ -796,6 +796,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     func cursorKind(mapPoint m: SIMD2<Float>) -> String {
         cursorFrameIndex = nil
         var kind = pointerKind(mapPoint: m)
+        if let g = game, g.enemyAt(cell(at: m).0, cell(at: m).1) != nil { kind = "attack" }   // an enemy army
         // a free cell where a wandering stack would fall on the hero: the danger pointer
         if kind == "move", let g = game, let h = g.heroes.first {
             let c = cell(at: m)
@@ -994,8 +995,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         // heroes are sorted in among the objects by the same depth rule (cell row, then column)
         var pending: [(depth: Float, quads: [Quad])] = []
         if let g = game {
-            for h in g.heroes where h.z == g.level {
-                for a in g.arrows(for: h) {
+            for h in (g.heroes + g.enemyHeroes) where h.z == g.level {
+                for a in (h.owner == g.map.humanColour ? g.arrows(for: h) : []) {
                     // arrows sort with the objects (a tree in front hides them) and ride up onto bridges
                     guard let s = arrowSprite(a.name), let f = s.frames.first else { continue }
                     let raise = g.passability.elevation(a.x, a.y)
@@ -1111,6 +1112,11 @@ final class Renderer: NSObject, MTKViewDelegate {
             let cell = g.map.cells[g.level][pb.hero.x * g.map.size + pb.hero.y]
             cs.start(game: g, hero: pb.hero, monsterAt: pb.monster, pb.placed, terrain: cell?.type ?? 1, variant: cell?.variant ?? 0)
             g.pendingBattle = nil
+        }
+        if let g = game, let cs = combat, let pb = g.pendingHeroBattle, cs.battle == nil {
+            let cell = g.map.cells[g.level][pb.enemy.x * g.map.size + pb.enemy.y]
+            cs.start(game: g, hero: pb.hero, enemy: pb.enemy, terrain: cell?.type ?? 1, variant: cell?.variant ?? 0)
+            g.pendingHeroBattle = nil
         }
         let now = Date()
         combat?.update(now: now)

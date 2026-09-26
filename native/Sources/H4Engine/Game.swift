@@ -207,6 +207,10 @@ public final class Hero {
     public var heroClass = -1
     public var home: (x: Int, y: Int) = (0, 0)   // where a beaten hero regroups
     public var z = 0                              // map level (0 surface, 1 underground)
+    /// The player (colour) the hero serves.
+    public var owner = 0
+    /// An enemy hero this hero is on its way to attack.
+    public var attackTarget: Hero? = nil
     // What adventure objects gave the hero (heroes4.exe's bonus array at hero+0x10: attack,
     // defense, speed and spell points; the Dream Teachers visited at +0x7a0)
     public var attackBonus = 0, defenseBonus = 0, speedBonus = 0, spellPointBonus = 0
@@ -292,6 +296,10 @@ public final class GameState {
         set { passabilities[min(level, passabilities.count - 1)] = newValue }
     }
     public var heroes: [Hero] = []
+    /// The other players' heroes on the map (armies led by heroes; companions travel with them).
+    public var enemyHeroes: [Hero] = []
+    /// A battle with an enemy hero army waiting for the combat screen.
+    public var pendingHeroBattle: (hero: Hero, enemy: Hero)?
     /// Each adventure object's rolled contents and state, by "level|x|y".
     public var objectStates: [String: ObjectState] = [:]
     /// Artifacts already handed out by the random picker (it avoids repeats).
@@ -684,11 +692,7 @@ public final class GameState {
 
     /// Experience for an army: each of its heroes gains it, learning a skill per level reached.
     public func giveExperience(_ n: Int, to hero: Hero) {
-        for h in [hero] + hero.companions {
-            h.experience += n
-            if Hero.level(for: h.experience) > h.level, !levelUpQueue.contains(where: { $0 === h }) { levelUpQueue.append(h) }
-        }
-        nextLevelUp()
+        share(n, among: [hero] + hero.companions)   // by level + 2 (0x641310)
     }
 
     /// The player's heroes still to take levels: each level is a choice in the level-up dialog
@@ -1117,6 +1121,8 @@ public final class GameState {
     /// Click handling: first click plans a path to the cell, a second click on the same cell walks it.
     public func click(hero: Hero, x: Int, y: Int) {
         passability.relief = GameState.terrainRelief(hero)
+        if let e = enemyAt(x, y) { attack(e, with: hero); return }
+        hero.attackTarget = nil
         if hero.isWalking {
             interrupt(hero)
             let from = standingCell(hero)
@@ -1222,6 +1228,11 @@ public final class GameState {
                     h.plan = h.path; h.path = []
                     log.append("\(tables?.creature(monsters[i].creature)?.plural ?? monsters[i].creature) attack \(h.name)!")
                     startCharge(i, at: h)
+                    continue
+                }
+                if h.path.isEmpty, let e = h.attackTarget, GameState.adjacent((h.x, h.y), (e.x, e.y)) {
+                    h.attackTarget = nil
+                    pendingHeroBattle = (h, e)
                     continue
                 }
                 if h.path.isEmpty, let t = h.target,

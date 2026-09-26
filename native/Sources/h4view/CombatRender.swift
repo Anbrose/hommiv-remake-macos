@@ -370,6 +370,17 @@ extension Renderer {
 
     /// Leave the combat screen and apply the result to the map.
     func closeCombat() {
+        if let cs = combat, let b = cs.battle, let g = game, let h = cs.hero, let e = cs.enemy {   // an enemy hero's army
+            let won = b.finished ?? false
+            for (hh, u) in zip([h] + h.companions, b.units.filter { $0.side == 0 && $0.stats.isHero }) { if let c = u.caster { hh.spellPoints = c.spellPoints } }
+            func survivors(_ side: Int) -> [Hero.Stack] { b.units.filter { $0.side == side && !$0.stats.isHero && $0.alive && !$0.summoned }.map { Hero.Stack(creature: $0.keyword, count: $0.stats.count) } }
+            // the loser's casualties: creatures killed x their Experience
+            let loser = won ? 1 : 0
+            let value = b.units.filter { $0.side == loser && !$0.stats.isHero }.reduce(0) { $0 + ($1.initialCount - $1.stats.count) * $1.stats.experience }
+            g.finishHeroBattle(hero: h, enemy: e, won: won, army: survivors(0), enemyArmy: survivors(1), value: value)
+            cs.battle = nil; cs.enemy = nil
+            return
+        }
         guard let cs = combat, let b = cs.battle, let g = game, let h = cs.hero, let p = cs.placed, let t = g.tables else { combat?.battle = nil; return }
         if b.retreated, let town = cs.retreatTown {
             g.retreat(hero: h, monsterAt: cs.monsterIndex, monstersLeft: b.units.first { $0.side == 1 }?.stats.count ?? 0, to: town)

@@ -412,4 +412,5 @@ public struct MapHero {
     /// Worn artifacts by slot (RuleTables.equipSlots), and the backpack.
     public var equipped: [Int?] = [], backpack: [Int] = []
     public var events: [MapEvent] = []
+    public init() {}
 }

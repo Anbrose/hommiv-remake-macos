@@ -25,6 +25,10 @@ public struct SaveGame: Codable {
     public var movedByLevel: [[MapScene.MovedObject]]? = nil
     public var level: Int? = nil
     public var objectStates: [String: ObjectState]? = nil
+    public var enemyHeroes: [HeroState]? = nil
+    public var aiResources: [Int: [String: Int]]? = nil
+    public var keys: [String]? = nil
+    public var mineOwners: [Int?]? = nil
     public var usedArtifacts: [Int]? = nil
 
     public struct Stack: Codable { public var creature: String; public var count: Int }
@@ -49,6 +53,7 @@ public struct SaveGame: Codable {
         public var visitedObjects: [String]?, fountainEffects: [String]?, timedEffects: [String: Int]?
         public var armyLuck: [String: Int]?, armyMorale: [String: Int]?, templeAlignment: String?
         public var spells: [Int]?
+        public var owner: Int?
     }
     public struct TownState: Codable {
         public var x, y: Int
@@ -58,6 +63,7 @@ public struct SaveGame: Codable {
         public var available: [String: Int]
         public var builtToday: Bool
         public var guildSpells: [[Int]]? = nil
+        public var garrison: [Stack]? = nil
     }
     public struct CellFlag: Codable { public var x, y: Int; public var on: Bool }
     public struct CellCount: Codable { public var x, y: Int; public var count: Int; public var owned: Bool? = nil; public var fourteenths: Int? = nil }
@@ -87,24 +93,33 @@ public struct SaveGame: Codable {
 extension GameState {
     /// Everything that changed since the scenario started.
     public func snapshot(mapPath: String) -> SaveGame {
-        SaveGame(mapPath: mapPath, day: day, resources: resources,
-                 heroes: heroes.map { h in
-                     SaveGame.state(of: h)
-                 },
-                 towns: towns.map { .init(x: $0.x, y: $0.y, name: $0.name, owned: $0.owned, owner: $0.owner, buildings: Array($0.buildings).sorted(),
-                                          available: $0.available, builtToday: $0.builtToday, guildSpells: $0.guildSpells) },
-                 mines: mines.map { .init(x: $0.x, y: $0.y, on: $0.owned) },
-                 dwellings: dwellings.map { .init(x: $0.x, y: $0.y, count: $0.available, owned: $0.owned, fourteenths: $0.fourteenths) },
-                 monsters: monsters.map { .init(x: $0.x, y: $0.y, name: $0.name, creature: $0.creature, count: $0.count,
-                                                extra: $0.extra.map { .init(creature: $0.creature, count: $0.count) }, z: $0.z) },
-                 removed: scene.removed, moved: scene.moved,
-                 scripts: .init(numbers: scripts.numbers, flags: scripts.flags, messages: scripts.messages,
-                                victoryText: scripts.victoryText, lossText: scripts.lossText, standardVictoryOn: scripts.standardVictoryOn,
-                                mapEventsEnabled: scripts.mapEvents.map { $0.enabled },
-                                townEventsEnabled: Dictionary(uniqueKeysWithValues: scripts.townEvents.map { ("\($0.key)", $0.value.map { $0.enabled }) })),
-                 outcome: outcome, victoryDays: victoryDays,
-                 removedByLevel: scenes.map { $0.removed }, movedByLevel: scenes.map { $0.moved }, level: level,
-                 objectStates: objectStates, usedArtifacts: Array(usedArtifacts).sorted())
+        let heroStates: [SaveGame.HeroState] = heroes.map { SaveGame.state(of: $0) }
+        var townStates: [SaveGame.TownState] = []
+        for t in towns {
+            let g: [SaveGame.Stack] = t.garrison.map { SaveGame.Stack(creature: $0.creature, count: $0.count) }
+            townStates.append(SaveGame.TownState(x: t.x, y: t.y, name: t.name, owned: t.owned, owner: t.owner, buildings: Array(t.buildings).sorted(),
+                                                 available: t.available, builtToday: t.builtToday, guildSpells: t.guildSpells, garrison: g))
+        }
+        let mineFlags: [SaveGame.CellFlag] = mines.map { SaveGame.CellFlag(x: $0.x, y: $0.y, on: $0.owned) }
+        let dwellingCounts: [SaveGame.CellCount] = dwellings.map { SaveGame.CellCount(x: $0.x, y: $0.y, count: $0.available, owned: $0.owned, fourteenths: $0.fourteenths) }
+        var monsterStates: [SaveGame.MonsterState] = []
+        for m in monsters {
+            let extra: [SaveGame.Stack] = m.extra.map { SaveGame.Stack(creature: $0.creature, count: $0.count) }
+            monsterStates.append(SaveGame.MonsterState(x: m.x, y: m.y, name: m.name, creature: m.creature, count: m.count, extra: extra, z: m.z))
+        }
+        var townEv: [String: [Bool]] = [:]
+        for (k, v) in scripts.townEvents { townEv["\(k)"] = v.map { $0.enabled } }
+        let sc = SaveGame.ScriptSave(numbers: scripts.numbers, flags: scripts.flags, messages: scripts.messages,
+                                     victoryText: scripts.victoryText, lossText: scripts.lossText, standardVictoryOn: scripts.standardVictoryOn,
+                                     mapEventsEnabled: scripts.mapEvents.map { $0.enabled }, townEventsEnabled: townEv)
+        var s = SaveGame(mapPath: mapPath, day: day, resources: resources, heroes: heroStates, towns: townStates, mines: mineFlags,
+                         dwellings: dwellingCounts, monsters: monsterStates, removed: scene.removed, moved: scene.moved, scripts: sc,
+                         outcome: outcome, victoryDays: victoryDays)
+        s.removedByLevel = scenes.map { $0.removed }; s.movedByLevel = scenes.map { $0.moved }; s.level = level
+        s.objectStates = objectStates; s.usedArtifacts = Array(usedArtifacts).sorted()
+        s.enemyHeroes = enemyHeroes.map { SaveGame.state(of: $0) }; s.aiResources = aiResources; s.keys = Array(keys).sorted()
+        s.mineOwners = mines.map { $0.owner }
+        return s
     }
 
     /// Put a saved game's state over this freshly started scenario.
@@ -132,6 +147,7 @@ extension GameState {
             towns[i].name = t.name; towns[i].owned = t.owned; towns[i].owner = t.owner
             towns[i].buildings = Set(t.buildings); towns[i].available = t.available; towns[i].builtToday = t.builtToday
             if let gs = t.guildSpells { towns[i].guildSpells = gs }
+            if let g = t.garrison { towns[i].garrison = g.map { Hero.Stack(creature: $0.creature, count: $0.count) } }
         }
         for m in s.mines { if let i = mines.firstIndex(where: { $0.x == m.x && $0.y == m.y }) { mines[i].owned = m.on } }
         for d in s.dwellings { if let i = dwellings.firstIndex(where: { $0.x == d.x && $0.y == d.y }) { dwellings[i].available = d.count; dwellings[i].owned = d.owned ?? false; dwellings[i].fourteenths = d.fourteenths ?? 0 } }
@@ -153,6 +169,14 @@ extension GameState {
         outcome = s.outcome; victoryDays = s.victoryDays
         if let o = s.objectStates { objectStates = o }
         if let u = s.usedArtifacts { usedArtifacts = Set(u) }
+        if let e = s.enemyHeroes {
+            for h in enemyHeroes { if h.z < passabilities.count { passabilities[h.z].free(h.x, h.y) } }
+            enemyHeroes = []
+            for st in e { place(enemy: SaveGame.hero(from: st)) }
+        }
+        if let a = s.aiResources { aiResources = a }
+        if let k = s.keys { keys = Set(k) }
+        if let mo = s.mineOwners { for (i, o) in mo.enumerated() where i < mines.count { mines[i].owner = o } }
     }
 }
 
@@ -168,6 +192,7 @@ extension SaveGame {
         st.equipped = h.equipped; st.backpack = h.backpack
         st.companions = h.companions.map { state(of: $0) }
         st.z = h.z
+        st.owner = h.owner
         st.bonuses = [h.attackBonus, h.defenseBonus, h.speedBonus, h.spellPointBonus, h.dreamTeachers, h.spellPoints ?? -1, h.manaRestoredToday]
         st.visitedObjects = Array(h.visitedObjects).sorted(); st.fountainEffects = Array(h.fountainEffects).sorted(); st.timedEffects = h.timedEffects
         st.armyLuck = h.armyLuck; st.armyMorale = h.armyMorale; st.templeAlignment = h.templeAlignment
@@ -185,6 +210,7 @@ extension SaveGame {
         h.backpack = st.backpack ?? []
         h.companions = (st.companions ?? []).map { hero(from: $0) }
         h.z = st.z ?? 0
+        h.owner = st.owner ?? 0
         if let b = st.bonuses, b.count >= 7 {
             h.attackBonus = b[0]; h.defenseBonus = b[1]; h.speedBonus = b[2]; h.spellPointBonus = b[3]; h.dreamTeachers = b[4]
             h.spellPoints = b[5] < 0 ? nil : b[5]; h.manaRestoredToday = b[6]

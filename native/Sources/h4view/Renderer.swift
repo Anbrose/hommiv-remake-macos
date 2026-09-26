@@ -792,6 +792,12 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// The quads of the creature dialog: the layout's images, the stack's portrait in the first
     /// circle with its size below, name, level, alignment, abilities and the stat values under
     /// their icons.
+    /// A stack's size as the game words it (strings creature text: few ... thousands).
+    static func armySizeWord(_ n: Int, _ strings: [String: String]) -> String {
+        let bands: [(Int, String)] = [(5, "few"), (10, "several"), (20, "band"), (50, "dozens"), (100, "scores"), (250, "company"), (500, "hundreds"), (1000, "host"), (2000, "legion")]
+        let key = bands.first { n < $0.0 }?.1 ?? "thousands"
+        return strings["\(key).creatures"] ?? key
+    }
     func creatureDialogQuads() -> [Quad] {
         guard let cd = creatureDialog, let ui = ui, let d = ui.dialog("army_right_click") else { return [] }
         let (ox, oy) = Renderer.dialogOrigin
@@ -806,43 +812,64 @@ final class Renderer: NSObject, MTKViewDelegate {
             out.append(Quad(texture: uiTexture("dlgtext|\(font.size)|\(s)", { font.render(s, colour: colour) }), x: ox + l.x + (l.width - w) / 2, y: oy + l.y + (l.height - font.size) / 2, w: w, h: font.size))
         }
         image("Background")
-        image("creature_circles")
+        // (the banners' image carries a dark outline along its top and left edges: left out)
+        if let l = d["creature_circles"] {
+            out.append(Quad(texture: uiTexture("dlg|armyrc|circles-trim", {
+                var b = l.bitmap
+                for y in 0..<b.height { for x in 0..<b.width where y < 3 || x < 3 { b.pixels[(y * b.width + x) * 4 + 3] = 0 } }
+                return b
+            }), x: ox + l.x, y: oy + l.y, w: l.width, h: l.height))
+        }
         image("Skills_Frame")
         for n in ["Damage", "Melee_Attack", "Melee_Defense", "Hit_Points", "Speed", "Movement", "Shots", "Ranged_Attack", "Ranged_Defense", "Spell_Points", "Experience"] { image(n) }
-        image("Army_Released")
-        if let slot = d["Close_Button"], let b = ui.button("close") {   // the button picture lives in layers.button.close
-            out.append(Quad(texture: uiTexture("button|close", { b.bitmap }), x: ox + slot.x + (slot.width - b.width) / 2, y: oy + slot.y + (slot.height - b.height) / 2, w: b.width, h: b.height))
+        // OK only (a neutral army has nothing to ask of)
+        if let slot = d["Close_Button"], let b = ui.button("ok") {
+            out.append(Quad(texture: uiTexture("button|ok|\(b.name)", { b.bitmap }), x: ox + slot.x + (slot.width - b.width) / 2, y: oy + slot.y + (slot.height - b.height) / 2, w: b.width, h: b.height))
         }
         let c = cd.creature
         func cap(_ s: String) -> String { s.prefix(1).uppercased() + s.dropFirst() }
-        text("\(cd.count) \(cd.count == 1 ? cap(c.name) : cap(c.plural))", in: "Title", font: ui.font(16))
-        // the army in the seven columns of the background (dividers every 60 px from x = 22):
-        // the stack and, when it has one, the cheaper escort that fights with it
+        let strings = game?.tables?.strings ?? [:]
+        text(strings["right_click_title.neutral_army"] ?? "Neutral Army", in: "Title", font: ui.font(22), colour: (12, 8, 4))
+        // the army in seven gold rings over the banners (creature_circles), each stack's size as a word
         var stacks = [(c, cd.count)]
         for e in cd.extra { stacks.append((e.creature, e.count)) }
-        for (k, (def, n)) in stacks.prefix(7).enumerated() {
-            let cx = ox + 52 + 60 * k
-            if let p = ui.creatureIcon(def.keyword) {
-                out.append(Quad(texture: uiTexture("cicon|\(def.keyword)", { p.bitmap }), x: cx - p.width / 2, y: oy + 62, w: p.width, h: p.height))
+        if let circ = d["creature_circles"] {
+            let pieces = (0..<7).map { $0 == 0 ? "Top_Left" : $0 == 6 ? "Top_Right" : "Top" }
+            let widths = pieces.map { ui.creatureRing($0).map { $0.width } ?? 60 }
+            let scale = Float(circ.width) / Float(widths.reduce(0, +))
+            var cursor = Float(ox + circ.x)
+            let piece0 = ui.creatureRing(pieces[0])
+            for (k, pn) in pieces.enumerated() {
+                guard let ring = ui.creatureRing(pn) else { continue }
+                let x0 = cursor - Float(ring.x) * scale, y0 = Float(oy + circ.y - 6) - Float((piece0?.y ?? 0)) * scale
+                let cx = Int(x0 + 41 * scale), cy = Int(y0 + 41 * scale)
+                if k < stacks.count, let p = ui.creatureIcon(stacks[k].0.keyword) {
+                    out.append(Quad(texture: uiTexture("cicon|\(stacks[k].0.keyword)", { p.bitmap }), x: cx - Int(Float(p.width) * scale) / 2, y: cy - Int(Float(p.height) * scale) / 2, w: Int(Float(p.width) * scale), h: Int(Float(p.height) * scale)))
+                }
+                out.append(Quad(texture: uiTexture("cring|\(pn)", { ring.bitmap }), x: Int(x0 + Float(ring.x) * scale), y: Int(y0 + Float(ring.y) * scale), w: Int(Float(ring.width) * scale), h: Int(Float(ring.height) * scale)))
+                if k < stacks.count {
+                    let word = Renderer.armySizeWord(stacks[k].1, strings)
+                    let f = ui.font(14), w = f.measure(word)
+                    out.append(Quad(texture: uiTexture("dlgtext|14|\(word)|12", { f.render(word, colour: (12, 8, 4)) }), x: cx - w / 2, y: oy + circ.y + circ.height - 22, w: w, h: f.size))
+                }
+                cursor += Float(widths[k]) * scale
             }
-            let s = "\(n)", w = ui.numberFont.measure(s)
-            out.append(Quad(texture: uiTexture("num|\(s)", { ui.numberFont.render(s, colour: (40, 24, 8)) }), x: cx - w / 2, y: oy + 124, w: w, h: ui.numberFont.size))
         }
-        text("Level \(c.level)", in: "Level", font: ui.dateFont)
-        text(cap(c.alignment), in: "Alignment", font: ui.dateFont)
-        text(c.shortHelp, in: "Stealth", font: ui.numberFont)
-        let ranged = c.shots > 0
-        // the stack's morale from its army's alignments (heroes4.exe 0x640310); none for mechanical or undead
-        var army = [(alignment: c.alignment, undead: Combatant(creature: c, count: 1).has("undead"))]
-        for e in cd.extra { army.append((e.creature.alignment, Combatant(creature: e.creature, count: 1).has("undead"))) }
-        let noMorale = Combatant(creature: c, count: 1).has("mechanical") || army[0].undead
-        let m = noMorale ? 0 : Battle.armyMorale(own: c.alignment, army: army)
-        let moraleText = m > 0 ? "+\(m)" : "\(m)"
-        let values: [(String, String)] = [("Damage_Text", "\(c.damageLow)-\(c.damageHigh)"), ("Melee_Attack_Text", "\(c.attack)"), ("Melee_Defense_Text", "\(c.defense)"),
-                                          ("Hit_Points_Text", "\(c.hitPoints)"), ("Morale_Text", moraleText), ("Speed_Text", "\(c.speed)"), ("Movement_Text", "\(c.move)"),
-                                          ("Shots_Text", "\(c.shots)"), ("Ranged_Attack_Text", ranged ? "\(c.attack)" : "0"), ("Ranged_Defense_Text", "\(c.defense)"),
-                                          ("Spell_Points_Text", "\(c.spellPoints)"), ("Luck_Text", "0"), ("Experience_Text", "\(c.experience)")]
-        for (slot, v) in values { text(v, in: slot, font: ui.numberFont) }
+        text(cap(c.plural), in: "Level", font: ui.font(20), colour: (12, 8, 4))
+        text(cap(c.alignment), in: "Alignment", font: ui.font(20), colour: (12, 8, 4))
+        // its abilities in the five places
+        let skills = iconSheet("skills.creature.52")
+        for (k, ab) in (RuleTables.creatureAbilities[c.keyword.lowercased()] ?? []).prefix(5).enumerated() {
+            if let l = skills[ab.lowercased()], let slot = d["Skill_\(k + 1)"] {
+                out.append(Quad(texture: uiTexture("skill|\(ab)", { l.bitmap }), x: ox + slot.x + (slot.width - l.width) / 2, y: oy + slot.y + (slot.height - l.height) / 2, w: l.width, h: l.height))
+            }
+        }
+        // morale and luck as their (unknown) icons; the numbers are not shown for a neutral army
+        let icons = iconSheet("morale.34")
+        for slot in ["Morale", "Luck"] {
+            guard let l = d[slot], let ic = icons["0 \(slot.lowercased())"] ?? icons.values.first(where: { $0.name.lowercased().hasSuffix(slot.lowercased()) }) else { continue }
+            out.append(Quad(texture: uiTexture("moraleicon|\(ic.name)", { ic.bitmap }), x: ox + l.x + (l.width - ic.width) / 2, y: oy + l.y + (l.height - ic.height) / 2, w: ic.width, h: ic.height))
+        }
         return out
     }
 
@@ -1070,6 +1097,8 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     func quads(at t: Double) -> [Quad] {
         var out = terrain
+        let terrainCount = out.count
+        var shadows: [Quad] = []
         let minX = pan.x - 512, minY = pan.y - 512, maxX = pan.x + viewSize.x / zoom + 512, maxY = pan.y + viewSize.y / zoom + 512
         // heroes are sorted in among the objects by the same depth rule (cell row, then column)
         var pending: [(depth: Float, quads: [Quad])] = []
@@ -1120,15 +1149,17 @@ final class Renderer: NSObject, MTKViewDelegate {
                 ox = Int(sx) + Int(p.sprite.origin.x); oy = Int(sy) - 16 + Int(p.sprite.origin.y)
             }
             if let base = p.sprite.baseFrame, f.name != base.name {   // animated towns: frames are deltas over base_frame
-                if let s = sh { out.append(Quad(texture: texture(for: s, of: p.name), x: ox + s.box.left, y: oy + s.box.top, w: s.bitmap.width, h: s.bitmap.height)) }
+                if let s = sh { shadows.append(Quad(texture: texture(for: s, of: p.name), x: ox + s.box.left, y: oy + s.box.top, w: s.bitmap.width, h: s.bitmap.height)) }
                 out.append(Quad(texture: texture(for: base, of: p.name), x: ox + base.box.left, y: oy + base.box.top, w: base.bitmap.width, h: base.bitmap.height))
                 out.append(Quad(texture: texture(for: f, of: p.name), x: ox + f.box.left, y: oy + f.box.top, w: f.bitmap.width, h: f.bitmap.height))
             } else {
-                if let s = sh { out.append(Quad(texture: texture(for: s, of: p.name), x: ox + s.box.left, y: oy + s.box.top, w: s.bitmap.width, h: s.bitmap.height)) }
+                if let s = sh { shadows.append(Quad(texture: texture(for: s, of: p.name), x: ox + s.box.left, y: oy + s.box.top, w: s.bitmap.width, h: s.bitmap.height)) }
                 out.append(Quad(texture: texture(for: f, of: p.name), x: ox + f.box.left, y: oy + f.box.top, w: f.bitmap.width, h: f.bitmap.height))
             }
         }
         for p in pending { out += p.quads }
+        // the objects' shadows lie on the ground under every object (a wall's blocks do not shade each other)
+        out.insert(contentsOf: shadows, at: terrainCount)
         if let g = game, let ui = ui, let fs = ui.flag(AdventureUI.playerColourNames[0]), !fs.frames.isEmpty {   // the owner's waving flag over towns and mines
             let f = fs.frames[Int(t / 0.12) % fs.frames.count]
             let tex = texture(for: f, of: "flag|red")

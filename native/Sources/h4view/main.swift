@@ -4,7 +4,17 @@ import MetalKit
 import H4Engine
 
 // h4view <Data/heroes4.h4r> <map.h4c> [--level N] [--snapshot out.png]
-let args = CommandLine.arguments
+// the game data: given on the command line (and remembered), else the remembered or usual place
+let args: [String] = {
+    var a = CommandLine.arguments.filter { !$0.hasPrefix("-psn") }   // (Finder adds a process serial number)
+    if a.count >= 2, a[1].hasSuffix(".h4r") { UserDefaults.standard.set(a[1], forKey: "heroes4.h4r"); return a }
+    let known = [UserDefaults.standard.string(forKey: "heroes4.h4r"), ProcessInfo.processInfo.environment["H4DATA"],
+                 NSHomeDirectory() + "/Games/HoMM4/prefix/drive_c/Games/HoMM4/Data/heroes4.h4r"].compactMap { $0 }
+    if let p = known.first(where: { FileManager.default.fileExists(atPath: $0) }) { a.insert(p, at: min(1, a.count)) }
+    return a
+}()
+// no map: the main menu (new game, campaigns, load); it starts the game again with the choice
+if args.count == 2 || (args.count >= 3 && args[2] == "--menu") { runMainMenu(args) }
 guard args.count >= 3 else {
     print("usage: h4view <Data/heroes4.h4r> <map.h4c> [--level N] [--snapshot out.png]")
     exit(2)
@@ -28,6 +38,7 @@ var heroAt: (Int, Int)?   // --hero x,y: put the hero there instead of at the to
 var plan: (Int, Int)?     // --plan x,y (with --snapshot): show the route there without walking
 var inspectAt: (Int, Int)? // --inspect x,y (with --snapshot): the right-click box for that cell
 var movementLeft: Float?  // --movement n: the hero starts with n points left (debug)
+var carryFile: String?    // --carry <file>: the heroes carried over from the campaign's last scenario
 var i = 3
 while i < args.count {
     if args[i] == "--level", i + 1 < args.count { level = Int(args[i + 1]) ?? 0; i += 2 }
@@ -38,6 +49,7 @@ while i < args.count {
     else if args[i] == "--build" { openTown = true; openBuildList = true; i += 1 }
     else if args[i] == "--recruit" { openTown = true; openRecruit = true; i += 1 }
     else if args[i] == "--heroscreen" { openHeroScreen = true; i += 1 }
+    else if args[i] == "--carry", i + 1 < args.count { carryFile = args[i + 1]; i += 2 }
     else if args[i] == "--battle", i + 1 < args.count { let p = args[i + 1].split(separator: ",").compactMap { Int($0) }; if p.count == 2 { battleAt = (p[0], p[1]) }; i += 2 }
     else if args[i] == "--steps", i + 1 < args.count { battleSteps = Int(args[i + 1]) ?? 0; i += 2 }
     else if args[i] == "--results" { battleResults = true; i += 1 }
@@ -110,7 +122,14 @@ if args[2] == "--dump" {   // h4view <h4r> --dump <entry>...: describe sprite en
     exit(0)
 }
 let objNames = Set(archive.names(prefix: "adv_object.").map { String($0.dropFirst("adv_object.".count).dropLast(4)) })
-let map = try MapFile(data: Data(contentsOf: URL(fileURLWithPath: args[2])), objectNames: objNames)
+// "campaign:<id>:<scenario>": a scenario of one of the archives' campaigns
+let campaignRef: (id: Int, index: Int)? = {
+    let p = args[2].split(separator: ":")
+    guard p.count == 3, p[0] == "campaign", let id = Int(p[1]), let k = Int(p[2]) else { return nil }
+    return (id, k)
+}()
+let map = try campaignRef.map { try MapFile(data: CampaignFile.load($0.id, from: archive).scenario($0.index), objectNames: objNames) }
+    ?? MapFile(data: Data(contentsOf: URL(fileURLWithPath: args[2])), objectNames: objNames)
 let masks = try TransitionMasks(data: archive.payload("transition.Transitions.h4d"))
 lap("loaded '\(map.name)'")
 if ProcessInfo.processInfo.environment["H4DEBUG"] != nil {
@@ -146,7 +165,8 @@ let ownedByFirst = map.objects.first { ($0.type == "town" || $0.type == "random_
 if let town = scene.placed.first(where: { p in ownedByFirst.map { p.category == "castle" && p.cellX == $0.x && p.cellY == $0.y } ?? false })
     ?? scene.placed.filter({ $0.category == "castle" }).min(by: { ($0.cellY - $0.cellX) < ($1.cellY - $1.cellX) }) {
     let align = faction(of: town.name)
-    if let i = game.towns.firstIndex(where: { $0.x == town.cellX && $0.y == town.cellY }) { game.towns[i].owned = true; game.towns[i].owner = map.humanColour }
+    // (a campaign scenario gives the player only the towns the map gives)
+    if !(campaignRef != nil && ownedByFirst == nil), let i = game.towns.firstIndex(where: { $0.x == town.cellX && $0.y == town.cellY }) { game.towns[i].owned = true; game.towns[i].owner = map.humanColour }
     // the gate is in the middle of the lower-right wall of right-facing (" R") towns, lower-left otherwise
     let right = town.name.lowercased().hasSuffix(" r.h4d")
     // the heroes the map places for the player (armies with heroes: "Beyond the Lake" starts a
@@ -164,7 +184,7 @@ if let town = scene.placed.first(where: { p in ownedByFirst.map { p.category == 
         game.heroes.append(hero)
         lap("\(hero.name) level \(hero.level) \(hero.classKeyword) at (\(o.x),\(o.y)) skills \(hero.skills) with \(all.map { "\($0.name) level \($0.level) \($0.classKeyword) \($0.skills)" })")
     }
-    if placed.isEmpty, let cell = heroAt ?? game.freeCell(near: town.cellX + (right ? 3 : 6), town.cellY + (right ? 6 : 3)) {
+    if placed.isEmpty, campaignRef == nil, let cell = heroAt ?? game.freeCell(near: town.cellX + (right ? 3 : 6), town.cellY + (right ? 6 : 3)) {
         // a might hero of the town's alignment, picked from the heroes table (the male model exists for every class)
         let cls = RuleTables.classes[align]?.might ?? "knight"
         let candidates = game.tables?.heroes(ofClass: cls).filter { $0.sex == "male" } ?? []
@@ -222,6 +242,16 @@ for spec in map.playerSpecs where spec.colour != map.humanColour && !game.enemyH
         lap("enemy \(e.name) \(e.classKeyword) of player \(e.owner) at \(t.name)")
     }
     game.level = back
+}
+// a campaign scenario: the heroes carried from the last one take their placeholders
+if let ref = campaignRef {
+    game.campaign = ref
+    let carry = carryFile.flatMap { try? Data(contentsOf: URL(fileURLWithPath: $0)) }.flatMap { try? JSONDecoder().decode(Carryover.self, from: $0) } ?? Carryover()
+    game.placeCarried(carry)
+    lap("campaign \(ref.id) scenario \(ref.index + 1): \(game.heroes.map { "\($0.name)@\($0.x),\($0.y) lv\($0.level)" }) carried in")
+    if let out = ProcessInfo.processInfo.environment["H4CARRYOUT"] {   // debugging: write what this scenario would hand on, and stop
+        try? JSONEncoder().encode(game.carryOut()).write(to: URL(fileURLWithPath: out)); print("carry-out written"); exit(0)
+    }
 }
 if ProcessInfo.processInfo.environment["H4DEBUG"] != nil {
     for o in game.map.objects where o.type == "hero_army" {

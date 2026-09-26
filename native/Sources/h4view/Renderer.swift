@@ -437,6 +437,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// A question or notice of the game's own (retreat, surrender): the text, whether it has
     /// Cancel beside OK, and what OK does.
     var prompt: (text: String, cancel: Bool, ok: (() -> Void)?)?
+    var outcomeShown = false
     lazy var cream: MTLTexture = {
         var bm = Bitmap(width: 2, height: 2)
         for i in 0..<4 { bm.pixels[i * 4] = 255; bm.pixels[i * 4 + 1] = 255; bm.pixels[i * 4 + 2] = 224; bm.pixels[i * 4 + 3] = 255 }
@@ -1133,6 +1134,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             g.sounds.removeAll()
             updateMusic()
             if lastAutosaveDay != g.day, mapPath != nil { lastAutosaveDay = g.day; autosave() }   // each new day autosaves
+            if let won = g.outcome, !outcomeShown, prompt == nil, !inCombat { outcomeShown = true; scenarioOver(won: won) }
             // the hero's ride: sound.hero horse.walk loops while a hero walks on the map
             if !inCombat, townOpen == nil, g.heroes.contains(where: { $0.isWalking }) { sound?.startLoop("hero horse.walk", key: "horse") }
             else { sound?.stopLoop("horse") }

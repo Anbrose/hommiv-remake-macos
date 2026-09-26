@@ -10,6 +10,8 @@ public struct MapObject {
     public let level: Int
     /// Owning player (0 = the first player) for towns; nil when unowned or not ownable.
     public var owner: Int? = nil
+    /// A carryover hero placeholder's hero (empty: the next one of its side).
+    public var heroName: String? = nil
     /// A town's name set in the editor ("none" = pick a random one).
     public var customName: String? = nil
     /// A town's editor settings (garrison, built and allowed buildings).
@@ -133,6 +135,11 @@ public struct MapFile {
     /// condition ("be the only player to own towns") is on.
     public let victoryText: String?, lossText: String?
     public let standardVictory: Bool
+    /// A campaign scenario's cut scenes: text, 426x340 splash (layers.Campaign_Splashscreens.426x340.*),
+    /// voice-over (sound.Voice_Over.*); and what carries over to the next scenario.
+    public struct CutScene { public let text: String, image: String, voice: String }
+    public var prologue: CutScene? = nil, epilogue: CutScene? = nil
+    public var carryoverText = ""
     /// The map's own events (timed, triggerable, continuous).
     public let events: [MapEvent]
     /// The colour the human plays: the first player slot a human may take.
@@ -187,17 +194,24 @@ public struct MapFile {
             _ = r.u16()
             let n = Int(r.u8())
             for team in 0..<min(n, 6) { let mask = r.u8(); for p in 0..<6 where mask & (1 << p) != 0 { tm[p] = team } }
-            if r.u8() != 0 { vt = r.string16() }
+            // (0x77a931 / 0x77a9c5: the loss text comes first, then the victory text)
             if r.u8() != 0 { lt = r.string16() }
+            if r.u8() != 0 { vt = r.string16() }
             if version >= 25 { std = r.u8() != 0 }
         }
         teams = tm; victoryText = vt; lossText = lt; standardVictory = std
         // then (0x77aa49) prologue / epilogue flags (v >= 24; a set one carries a block not
         // decoded here), the carryover text (v >= 27), a flag (v >= 29): the map's event lists follow
+        // a cut scene (0x816970): u16 0, the text, the 426x340 splash name, the voice-over name
+        func cutScene() -> CutScene { _ = r.u16(); return CutScene(text: r.string16(), image: r.string16(), voice: r.string16()) }
         var exact = true
-        if version >= 24, r.remaining >= 2 { if r.u8() != 0 { exact = false }; if r.u8() != 0 { exact = false } }
-        if exact, version >= 27, r.remaining >= 2 { _ = r.string16() }
-        if exact, version >= 29, r.remaining >= 1 { _ = r.u8() }
+        if version >= 24, r.remaining >= 2 {
+            if r.u8() != 0 { prologue = cutScene() }
+            if r.u8() != 0 { epilogue = cutScene() }
+        }
+        if version >= 27, r.remaining >= 2 { carryoverText = r.string16() }
+        if version >= 29, r.remaining >= 1 { _ = r.u8() }
+        if r.remaining < 4 { exact = false }
         if exact {
             var sr = ScriptReader(d, at: r.pos)
             if let timed = try? sr.list({ try $0.timedEvent() }), let trig = try? sr.list({ try $0.triggerableEvent(trailer: false) }),
@@ -320,7 +334,7 @@ public struct MapFile {
 
     /// A hero in a creature array (slot kind 1, t_hero's reader 0x72f4e0, versions 8...10):
     /// u16 version, i16 portrait, i8 class, i8 gender (-1: random), u8 level (v5+), four stat
-    /// bytes (v10+; two u16 + two u8 before), string16 name and biography, u8 custom skills +
+    /// bytes (v10+; two u16 + two u8 before), string16 biography and name, u8 custom skills +
     /// 36 i8 levels (v3+), the spells (u8 version: 23 or 24 bytes, v4+), 14 equipped artifact
     /// slots (u8 flag + artifact), the backpack (u16 n + artifacts), then its events (three
     /// standard ones and the timed, triggerable and continuous lists) and u8 (v9+).
@@ -337,8 +351,9 @@ public struct MapFile {
         h.level = Int(r.u8())
         if v >= 10 { guard ok(4) else { return nil }; h.stats = (0..<4).map { _ in Int(r.u8()) } }
         else { guard ok(6) else { return nil }; h.stats = [Int(r.u16()), Int(r.u16()), Int(r.u8()), Int(r.u8())] }
-        guard ok(2) else { return nil }; h.name = r.string16()
+        // (the biography comes first, then the name: the campaigns' named heroes show it)
         guard ok(2) else { return nil }; h.biography = r.string16()
+        guard ok(2) else { return nil }; h.name = r.string16()
         guard ok(1) else { return nil }
         if r.u8() != 0 { guard ok(36) else { return nil }; h.skills = (0..<36).map { _ in Int(Int8(bitPattern: r.u8())) } }
         guard ok(1) else { return nil }
@@ -436,6 +451,8 @@ public struct MapFile {
             case "mine", "garrison", "creature_dwelling", "shipyard", "lighthouse", "windmill", "weekly_material_generator", "random_weekly_material_generator":
                 // owned objects (0x7d3fb0 / 0x7d7270): u16 version, v1+ u8 owner (6 = none)
                 if let v = try? sr.word(), v >= 1, let ow = try? sr.byte(), ow < 6 { o.owner = ow }
+            case "carryover_hero":   // 0x5bf4a0: u16 version; v >= 1 u8 owner, string16 hero name
+                if let v = try? sr.word(), v >= 1, let ow = try? sr.byte(), let nm = try? sr.string() { o.owner = Int(ow); o.heroName = nm }
             case "obelisk_marker":   // 0x7c6a80: u16 version, v1 u16 radius
                 if let v = try? sr.word(), v == 1, let r = try? sr.word() { o.markerRadius = r }
             case "prison":

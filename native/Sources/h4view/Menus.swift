@@ -19,6 +19,7 @@ extension Renderer {
         items.append((text("load_game", "Load Game"), { [weak self] in self?.openSaveDialog(.load) }))
         items.append((text("options.main_menu", "Options"), { [weak self] in guard let self = self else { return }; self.optionsOpen = self.settings }))
         items.append((text("restart_game", "Restart Scenario"), { [weak self] in self?.restartScenario() }))
+        items.append((text("main_menu", "Main Menu"), { [weak self] in guard let self = self, let a = self.archivePath else { return }; self.relaunch([a, "--menu"]) }))
         items.append((text("quit", "Quit"), { NSApp.terminate(nil) }))
         menu = PopupMenu(items: items, x: AdventureUI.mapViewportWidth - PopupMenu.width - 8, y: 20)
     }

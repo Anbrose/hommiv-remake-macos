@@ -165,3 +165,34 @@ extension Renderer {
         return true
     }
 }
+
+extension Renderer {
+    /// The scenario is over (campaign_spec §2.5): a won campaign scenario hands its heroes on and goes
+    /// to the epilogue and the next scenario's screen; anything else back to the main menu.
+    func scenarioOver(won: Bool) {
+        guard let g = game else { return }
+        let text = won ? (g.map.victoryText ?? g.tables?.strings["victory.misc"] ?? "Victory!") : (g.map.lossText ?? g.tables?.strings["defeat.misc"] ?? "You have been defeated.")
+        prompt = (text, false, { [weak self] in
+            guard let self = self, let archive = self.archivePath else { NSApp.terminate(nil); return }
+            var menuArgs = ["--menu"]
+            if won, let c = g.campaign {
+                let file = Renderer.savesDirectory.deletingLastPathComponent().appendingPathComponent("carryover.json")
+                if let d = try? JSONEncoder().encode(g.carryOut()) { try? d.write(to: file) }
+                menuArgs += ["--next", "\(c.id)", "\(c.index)", "--carry", file.path]
+            }
+            self.relaunch([archive] + menuArgs)
+        })
+    }
+    /// Start this program again with other arguments (a new game, the menu).
+    func relaunch(_ all: [String]) {
+        let app = Bundle.main.bundleURL
+        if app.pathExtension == "app" {
+            let cfg = NSWorkspace.OpenConfiguration()
+            cfg.arguments = all; cfg.createsNewApplicationInstance = true
+            NSWorkspace.shared.openApplication(at: app, configuration: cfg) { _, _ in DispatchQueue.main.async { NSApp.terminate(nil) } }
+        } else {
+            let p = Process(); p.executableURL = URL(fileURLWithPath: CommandLine.arguments[0]); p.arguments = all
+            try? p.run(); NSApp.terminate(nil)
+        }
+    }
+}

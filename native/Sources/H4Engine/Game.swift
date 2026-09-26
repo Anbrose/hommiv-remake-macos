@@ -638,6 +638,8 @@ public final class GameState {
 
     /// The town screen to open, set when a hero enters a town; the UI clears it.
     public var enteredTown: Int?
+    /// The campaign being played (its standard id and this scenario's index).
+    public var campaign: (id: Int, index: Int)?
     /// The army that walked into the town now on screen (it is the visiting row, 0x8ac0c0's army).
     public var townVisitor: (town: Int, hero: Hero)?
 

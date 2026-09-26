@@ -29,6 +29,10 @@ public final class Battle {
         public var boundBy: Int? = nil
         /// Hypnotized: its next action is for the other side.
         public var hypnotized = false
+        /// A hero (or spell-casting creature) with its book and spell points.
+        public var caster: Caster? = nil
+        /// Summoned by a spell: gone when the battle ends.
+        public var summoned = false
         public var disabled: Bool { stunned > 0 || frozen > 0 || blind > 0 }
         public var alive: Bool { stats.alive }
         /// Centre of the footprint in cell units.
@@ -45,8 +49,10 @@ public final class Battle {
         public var stats: Combatant; public var keyword: String; public var actor: String; public var size: Int; public var move: Int; public var shots: Int
         /// The army slot (0...6) the stack sits in; it picks the deployment cell.
         public var slot: Int
-        public init(stats: Combatant, keyword: String, actor: String, size: Int, move: Int, shots: Int, slot: Int = -1) {
+        public var caster: Caster? = nil
+        public init(stats: Combatant, keyword: String, actor: String, size: Int, move: Int, shots: Int, slot: Int = -1, caster: Caster? = nil) {
             self.stats = stats; self.keyword = keyword; self.actor = actor; self.size = size; self.move = move; self.shots = shots; self.slot = slot
+            self.caster = caster
         }
     }
 
@@ -68,14 +74,22 @@ public final class Battle {
         case together
         case newRound(Int)
         case finished(attackerWon: Bool)
+        /// A spell cast by `unit` (its cast animation and the spell's sound), then per target:
+        case cast(unit: Int, spell: Int, targets: [Int])
+        /// ...the spell's animation on the target (animation.spell.<keyword>), damage done or healed (negative).
+        case spellHit(unit: Int, spell: Int, damage: Int, killed: Int, left: Int)
+        /// A spell the target resisted.
+        case resisted(unit: Int, spell: Int)
+        /// A stack a spell brought onto the field.
+        case summon(unit: Int)
     }
 
-    public private(set) var units: [Unit] = []
+    public internal(set) var units: [Unit] = []
     public let field: Battlefield
     public private(set) var round = 0
-    public private(set) var order: [Int] = []
-    public private(set) var events: [Event] = [] { didSet { version &+= 1 } }
-    public private(set) var experience = 0
+    public internal(set) var order: [Int] = []
+    public internal(set) var events: [Event] = [] { didSet { version &+= 1 } }
+    public internal(set) var experience = 0
     public private(set) var finished: Bool? = nil
     var rng: GameRandom
 
@@ -175,7 +189,9 @@ public final class Battle {
                     for dx in -r...r { for dy in -r...r where !placed && max(abs(dx), abs(dy)) == r {
                         let x = tx + dx, y = ty + dy
                         if field.fits(x, y, size: f.size), !overlaps(x, y, f.size, except: -1) {
-                            units.append(Unit(id: id, side: side, stats: f.stats, keyword: f.keyword, actor: f.actor, size: f.size, move: f.move, shots: f.shots, x: x, y: y))
+                            let u = Unit(id: id, side: side, stats: f.stats, keyword: f.keyword, actor: f.actor, size: f.size, move: f.move, shots: f.shots, x: x, y: y)
+                            u.caster = f.caster
+                            units.append(u)
                             bySlot[slot] = units.count - 1
                             placed = true
                         }
@@ -312,9 +328,23 @@ public final class Battle {
     /// morale (before the check: when the roll is under the morale), and negated for a unit that
     /// waited. The highest key acts next (0x56f3b0), so waiting units come last, slowest first.
     func turnKey(_ u: Unit) -> Int {
-        var k = u.stats.speed / (u.stats.aged ? 2 : 1) + (u.badMorale ? 0 : 1000)
+        var k = speed(u) + (u.badMorale ? 0 : 1000)
         if u.moraleChecked ? u.goodMorale : u.moraleRoll < morale(u) { k += 1000 }
         return u.waited ? -k : k
+    }
+    /// Speed and move with spells (0x5eda70 / 0x5efba0): Haste or Speed +3 each (not together),
+    /// then Aging halves, and Slow, Fatigue or Bind Flyer halve once.
+    public func speed(_ u: Unit) -> Int {
+        var s = u.stats.speed + (u.stats.under(55) || u.stats.under(104) ? 3 : 0)
+        if u.stats.aged || u.stats.under(1) { s /= 2 }
+        if u.stats.under(105) || u.stats.under(141) || u.stats.under(7) { s /= 2 }
+        return s
+    }
+    public func moveCells(_ u: Unit) -> Float {
+        var m = Float(u.move) + (u.stats.under(55) || u.stats.under(104) ? 3 : 0)
+        if u.stats.aged || u.stats.under(1) { m /= 2 }
+        if u.stats.under(105) || u.stats.under(141) || u.stats.under(7) { m /= 2 }
+        return m
     }
     func turnOrder(_ list: [Unit]) -> [Int] {
         list.sorted { a, b in
@@ -346,7 +376,7 @@ public final class Battle {
     /// The unit's Move: halved by Aging; nothing while Bound.
     func moveBudget(_ u: Unit) -> Float {
         if u.boundBy != nil { return 0 }
-        return Float(u.move) / (u.stats.aged ? 2 : 1)
+        return moveCells(u)
     }
     /// Path costs; Flying (and Teleport) pass over obstacles and creatures, landing only on free cells.
     func explore(_ u: Unit, budget: Float? = nil) -> [Int: Float] {
@@ -392,7 +422,7 @@ public final class Battle {
         let zoc = u.stats.has("ignore_zones_of_control") ? [] : units.filter { e in
             e.alive && e.id != u.id && side(of: e) != side(of: u) && (!flies || e.stats.has("flying"))
         }
-        let zocCost = Float(u.move) / (u.stats.aged ? 2 : 1) / 4
+        let zocCost = moveCells(u) / 4
         var out: [Int: Float] = [:]
         while !heap.isEmpty {
             let (c, k) = pop()

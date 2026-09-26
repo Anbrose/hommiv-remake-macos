@@ -271,6 +271,31 @@ if let out = snapshot {
         if let b = cs.battle { for _ in 0..<battleSteps { b.autoAct() }
             if ProcessInfo.processInfo.environment["H4DEBUG"] != nil { print("battle: round \(b.round) finished \(String(describing: b.finished)) units \(b.units.map { "\($0.keyword):\($0.stats.count)@\($0.x),\($0.y)" })") }
             _ = b.takeEvents(); cs.pump(); if b.finished != nil { cs.result = (b.finished!, b.round); cs.showResults = battleResults }
+            if let sp = ProcessInfo.processInfo.environment["H4CAST"].flatMap({ Int($0) }) {   // snapshot: a hero casts at the first enemy
+                var guardN = 0
+                while b.finished == nil, guardN < 40, !(b.current?.side == 0 && b.current?.caster != nil) { b.autoAct(); guardN += 1 }
+                if let u = b.current { print("caster \(u.stats.name) spells \(u.caster?.spells.map { RuleTables.spells[$0].name } ?? []) castable \(b.castable(u).map { RuleTables.spells[$0].name }) sp \(u.caster?.spellPoints ?? 0)") }
+                if let u = b.current, var c = u.caster { c.spells = Array(0..<RuleTables.spells.count); c.spellPoints = 200; c.skills["chaos"] = 5; c.skills["life"] = 5; c.skills["order"] = 5; c.skills["death"] = 5; c.skills["nature"] = 5; u.caster = c }
+                _ = b.takeEvents()
+                let t = b.units.first { $0.side == 1 && $0.alive }
+                print("cast \(RuleTables.spells[sp].name): \(b.cast(sp, on: t?.id, tables: game.tables)) power \(b.current.map { b.power(sp, by: $0, creatures: game.tables) } ?? 0)")
+                let ev = b.takeEvents()
+                for e in ev { print("  \(e)") }
+                cs.take(ev)
+                for _ in 0..<3 { cs.update(now: Date()) }
+            }
+            if ProcessInfo.processInfo.environment["H4BOOK"] != nil {   // snapshot: the spell book of the first hero, every spell known
+                var guardN = 0
+                while b.finished == nil, guardN < 40, !(b.current?.side == 0 && b.current?.caster != nil) { b.autoAct(); guardN += 1 }
+                if let u = b.current, var c = u.caster { c.spells = Array(0..<RuleTables.spells.count).filter { RuleTables.spells[$0].has("Teach") }; c.spellPoints = 60; c.skills["chaos"] = 3; u.caster = c }
+                _ = b.takeEvents(); cs.queue = []; cs.playing = nil
+                renderer.openCombatBook()
+                if let s = ProcessInfo.processInfo.environment["H4BOOK"], !s.isEmpty, s != "1" { renderer.spellBook?.school = s }
+            }
+            if let fx = ProcessInfo.processInfo.environment["H4FX"] {   // snapshot: an effect on every stack, 0.4 s in
+                cs.queue = []; cs.playing = nil
+                for u in b.units where u.alive { cs.effects.append((fx, u.id, Date().addingTimeInterval(-0.4))) }
+            }
             if let n = ProcessInfo.processInfo.environment["H4INFO"].flatMap({ Int($0) }), b.units.indices.contains(n) { cs.info = b.units[n].id }
             if ProcessInfo.processInfo.environment["H4RETREAT"] != nil { renderer.askRetreat() } }   // snapshot: the retreat question   // snapshot: open a unit's creature window
         print("battle: round \(cs.battle?.round ?? 0), units \(cs.battle?.units.map { "\($0.stats.name)x\($0.stats.count) morale \($0.stats.morale)@(\($0.x),\($0.y))" }.joined(separator: " ") ?? "")")
@@ -446,6 +471,12 @@ final class MapView: MTKView {
     var hoverPending: (mouse: SIMD2<Float>, since: Date)?
     func tickHover() {
         guard let p = hoverPending, Date().timeIntervalSince(p.since) > 0.4, renderer.hover == nil, renderer.townOpen == nil else { return }
+        if renderer.spellBook != nil {
+            if let tip = renderer.spellBookTip(x: p.mouse.x / renderer.uiScale, y: p.mouse.y / renderer.uiScale) {
+                renderer.hover = (tip, Int(p.mouse.x / renderer.uiScale), Int(p.mouse.y / renderer.uiScale))
+            }
+            return
+        }
         if renderer.inCombat {
             if renderer.combat?.info != nil {
                 if let tip = renderer.combatInfoTip(x: p.mouse.x / renderer.uiScale, y: p.mouse.y / renderer.uiScale) {
@@ -491,6 +522,7 @@ final class MapView: MTKView {
         let p = convert(e.locationInWindow, from: nil)
         let scale = Float(window?.backingScaleFactor ?? 1)
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
+        if renderer.spellBook != nil { renderer.spellBookClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.inCombat {
             renderer.combatClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale)
             return
@@ -529,6 +561,9 @@ final class MapView: MTKView {
                 else if ui.hit("move_army_button", x: cx, y: cy) { g.continueMoving(hero) }   // the horse: go on along the kept route
                 else if ui.hit("overview_button", x: cx, y: cy) { renderer.overview = KingdomOverview() }
                 else if ui.hit("Marketplace_button", x: cx, y: cy) { renderer.market = MarketState(k: 3) }
+                else if ui.hit("spell_button", x: cx, y: cy) {   // the hero's book, adventure spells first
+                    renderer.spellBook = SpellBookState(spells: Array(hero.spells), castable: Set(g.adventureSpells(hero)), points: g.spellPoints(hero), combat: false)
+                }
                 else if (ui.hit("underground_button", x: cx, y: cy) || ui.hit("surface_button", x: cx, y: cy)), g.map.levels > 1 {
                     g.level = 1 - g.level   // look at the other level (the hero stays where he is)
                 }
@@ -565,6 +600,8 @@ final class MapView: MTKView {
         let scale = Float(window?.backingScaleFactor ?? 1)
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
         let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale
+        if renderer.spellBook != nil { renderer.spellBook = nil; return }
+        if renderer.casting != nil { renderer.casting = nil; return }   // a right click puts the spell away
         if renderer.inCombat { renderer.combatInspect(x: cx, y: cy); return }
         if renderer.onPopup(cx, cy) || renderer.onDialog(cx, cy).inside { return }
         if renderer.armyPopup != nil { renderer.armyPopup = nil; return }

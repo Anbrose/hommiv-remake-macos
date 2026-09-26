@@ -134,6 +134,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     var overview: KingdomOverview? = nil  // the kingdom overview, when open
     var choicePicked: Int? = nil          // the option chosen in an object's choice
     var market: MarketState? = nil         // the marketplace, when open
+    var spellBook: SpellBookState? = nil   // the spell book, when open
+    var casting: Int? = nil               // a combat spell being aimed
     var heroShown = 0                     // which of the army's heroes the hero screen shows
     var floaters: [(text: String, x: Int, y: Int, since: Date)] = []
     var buildPage = 0
@@ -619,6 +621,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         out += armyPopupQuads()
         out += overviewQuads()
         out += marketQuads()
+        out += spellBookQuads()
         out += levelUpQuads()
         out += choiceQuads()
         out += messageBoxQuads()

@@ -147,12 +147,18 @@ extension Renderer {
         for fx in cs.effects {
             guard let sp = cs.effectSprite(fx.name), !sp.frames.isEmpty else { continue }
             let frames = sp.frames
-            let k = min(frames.count - 1, Int(Double(frames.count) * now.timeIntervalSince(fx.since) / cs.effectDuration(fx.name)))
-            let fr = frames[max(0, k)]
+            let info = cs.effectInfo[fx.name]
+            // the file's frame order at its pace; the anchor point of the frame canvas on the stack's centre
+            let order = info?.order.isEmpty == false ? info!.order : Array(frames.indices)
+            let step = Int(now.timeIntervalSince(fx.since) * 1000) / max(1, info?.ms ?? 83)
+            let fr = frames[max(0, min(frames.count - 1, order[min(order.count - 1, step)]))]
             let width = frames.map { $0.box.right }.max() ?? fr.box.right, height = frames.map { $0.box.bottom }.max() ?? fr.box.bottom
             let u = b.unit(fx.unit)
-            let (px, py) = CombatScreen.point(u.centre.0, u.centre.1)
-            out.append(Quad(texture: texture(for: fr, of: "spell.\(fx.name)"), x: Int(px) - width / 2 + fr.box.left, y: Int(py) - height + fr.box.top + 8, w: fr.bitmap.width, h: fr.bitmap.height))
+            // the reference point is the footprint's leftmost corner on screen, level with its centre
+            let corners = [(Float(u.x), Float(u.y)), (Float(u.x + u.size), Float(u.y)), (Float(u.x), Float(u.y + u.size)), (Float(u.x + u.size), Float(u.y + u.size))].map { CombatScreen.point($0.0, $0.1) }
+            let px = corners.map { $0.0 }.min() ?? 0, py = CombatScreen.point(u.centre.0, u.centre.1).1
+            let anchor = info.map { $0.anchor.0 != 0 || $0.anchor.1 != 0 ? $0.anchor : (width / 2, height - 8) } ?? (width / 2, height - 8)
+            out.append(Quad(texture: texture(for: fr, of: "spell.\(fx.name)"), x: Int(px) - anchor.0 + fr.box.left, y: Int(py) - anchor.1 + fr.box.top, w: fr.bitmap.width, h: fr.bitmap.height))
         }
         // damage numbers
         // floating messages: large white numbers with the message icon to their right, rising
@@ -182,7 +188,7 @@ extension Renderer {
             let health = "\(cur.stats.hitPoints - cur.stats.wounds)/\(cur.stats.hitPoints)"
             out += centred(health, in: cs.hotspot("Health_Text"), at: 0, 0, font: ui.numberFont)
             out += centred("\(cur.shots)", in: cs.hotspot("Shots_Text"), at: 0, 0, font: ui.numberFont)
-            out += centred("0", in: cs.hotspot("Spell_Points_Text"), at: 0, 0, font: ui.numberFont)
+            out += centred("\(cur.caster?.spellPoints ?? 0)", in: cs.hotspot("Spell_Points_Text"), at: 0, 0, font: ui.numberFont)
         }
         for (hs, name) in [("cast_spell", "cast_spell"), ("defend", "defend"), ("wait", "wait"), ("melee", "melee"), ("auto_attack", "auto"), ("combat_options", "options"), ("retreat", "retreat"), ("surrender", "surrender")] {
             guard let slot = cs.hotspot(hs) else { continue }
@@ -194,6 +200,7 @@ extension Renderer {
         out += combatInfoQuads()
         out += hoverQuads()
         if cs.showResults { out += combatResultQuads() }
+        out += spellBookQuads()
         if prompt != nil { out += messageBoxQuads() }
         return out
     }
@@ -313,6 +320,14 @@ extension Renderer {
             closeCombat(); return
         }
         guard !cs.busy, cs.result == nil, let cur = b.current, cur.side == 0 else { return }
+        if let spell = casting {   // aiming a spell: a stack it can land on, anything else cancels
+            casting = nil
+            if x < 885, let t = unitUnder(b, x: x, y: y), b.canTarget(spell, by: cur, t) { b.cast(spell, on: t.id, tables: g.tables); cs.pump() }
+            return
+        }
+        if let slot = cs.hotspot("cast_spell"), x >= Float(slot.x), x < Float(slot.x + slot.width), y >= Float(slot.y), y < Float(slot.y + slot.height) {
+            sound?.play("miscellaneous.button"); openCombatBook(); return
+        }
         for (hs, action) in [("defend", "defend"), ("wait", "wait"), ("auto_attack", "auto"), ("retreat", "retreat"), ("surrender", "surrender"), ("melee", "melee")] {
             guard let slot = cs.hotspot(hs), x >= Float(slot.x), x < Float(slot.x + slot.width), y >= Float(slot.y), y < Float(slot.y + slot.height) else { continue }
             switch action {
@@ -361,7 +376,9 @@ extension Renderer {
             cs.battle = nil; return
         }
         let won = b.finished ?? false
-        let army = b.units.filter { $0.side == 0 && !$0.stats.isHero && $0.alive }.map { Hero.Stack(creature: $0.keyword, count: $0.stats.count) }
+        // the heroes keep the spell points they have left; summoned stacks go
+        for (hh, u) in zip([h] + h.companions, b.units.filter { $0.side == 0 && $0.stats.isHero }) { if let c = u.caster { hh.spellPoints = c.spellPoints } }
+        let army = b.units.filter { $0.side == 0 && !$0.stats.isHero && $0.alive && !$0.summoned }.map { Hero.Stack(creature: $0.keyword, count: $0.stats.count) }
         let left = b.units.first { $0.side == 1 }?.stats.count ?? 0
         g.finishBattle(hero: h, monsterAt: cs.monsterIndex, p, won: won, army: army, monstersLeft: left, experience: b.experience, rounds: b.round)
         _ = t
@@ -384,7 +401,11 @@ extension Renderer {
     /// Which combat cursor fits the cell under the pointer.
     func combatCursor(x: Float, y: Float) -> String {
         combatTarget = nil
-        guard let cs = combat, let b = cs.battle, cs.info == nil, prompt == nil, !cs.busy, cs.result == nil, let cur = b.current, cur.side == 0, x < 885 else { return "combat.normal" }
+        guard let cs = combat, let b = cs.battle, cs.info == nil, prompt == nil, spellBook == nil, !cs.busy, cs.result == nil, let cur = b.current, cur.side == 0, x < 885 else { return "combat.normal" }
+        if let spell = casting {
+            if let t = unitUnder(b, x: x, y: y), b.canTarget(spell, by: cur, t) { combatTarget = t.id; return "combat.cast_spell" }
+            return "combat.no_cast"
+        }
         if let t = enemyUnder(b, x: x, y: y) {
             combatTarget = t.id
             if b.canShoot(cur), !combatMeleeMode { return "combat.shoot" }

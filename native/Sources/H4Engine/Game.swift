@@ -473,6 +473,7 @@ public final class GameState {
     /// How much Pathfinding takes off rough terrain (in cells: 0.25, 0.5, then all of it; never
     /// below the plain cost; heroes4.exe's table [0, 25, 50, 100, 100, 100] of 100 a cell).
     public static func terrainRelief(_ h: Hero) -> Float {
+        if h.timedEffects["spell.pathfinding"] != nil { return 100 }   // the Pathfinding spell: no penalty at all
         let pf = ([h] + h.companions).map { $0.skill("pathfinding") }.max() ?? 0
         return [0, 0.25, 0.5, 1, 1, 1][pf]
     }

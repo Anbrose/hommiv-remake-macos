@@ -27,6 +27,11 @@ public struct Combatant {
     public var weakened = false        // Weakness: 25% less damage
     public var aged = false            // Aging: 25% less damage, defense -20%, speed and move halved
     public var bound = false           // Binding: half damage, cannot move
+    /// Spells on the stack (spell ids, RuleTables.spells), each as heroes4.exe's stat getters apply it.
+    public var effects: Set<Int> = []
+    public func under(_ spell: Int) -> Bool { effects.contains(spell) }
+    /// Base magic resistance in percent (creature: "50% Magic Resistance"; hero: the Resistance skill).
+    public var magicResistance = 0
 
     public var alive: Bool { count > 0 }
     public var totalHealth: Int { count * hitPoints - wounds }
@@ -38,6 +43,9 @@ public struct Combatant {
         name = c.name; self.count = count; hitPoints = c.hitPoints; damageLow = c.damageLow; damageHigh = c.damageHigh
         attack = c.attack; defense = c.defense; speed = c.speed; experience = c.experience
         level = c.level; alignment = c.alignment
+        if let r = c.shortHelp.range(of: #"(\d+)% Magic Resistance"#, options: .regularExpression) {
+            magicResistance = Int(c.shortHelp[r].prefix { $0.isNumber }) ?? 0
+        }
         if let list = RuleTables.creatureAbilities[c.keyword.lowercased()] {
             abilities = Set(list)
         } else {   // not one of the exe's creatures: the table's display names
@@ -103,14 +111,14 @@ public struct GameRandom {
 public enum QuickCombat {
     /// The rolled base damage of a stack (before attack/defense).
     public static func rollBase(_ a: Combatant, rng: inout GameRandom) -> Int {
-        let high = a.cursed ? a.damageLow : a.damageHigh   // Curse: minimum damage
+        let (low, high) = a.spellDamage
         if a.count >= 10 {
             var sum = 0
-            for _ in 0..<10 { sum += rng.roll(a.damageLow, high) }
+            for _ in 0..<10 { sum += rng.roll(low, high) }
             return sum * a.count / 10
         }
         var sum = 0
-        for _ in 0..<max(0, a.count) { sum += rng.roll(a.damageLow, high) }
+        for _ in 0..<max(0, a.count) { sum += rng.roll(low, high) }
         return sum
     }
 
@@ -134,7 +142,23 @@ public enum QuickCombat {
         if a.weakened { attack *= 0.75 }
         if a.aged { attack *= 0.75 }
         if a.bound { attack *= 0.5 }
+        // spells on the attacker (0x5ee170): Bloodlust +25% melee, Precision +25% ranged, Prayer
+        // +25%; Weakness and Aging -25% (above), Unholy Song -20%, Choking Gas -15%
+        if !ranged, a.under(13) { attack *= 1.25 }
+        if ranged, a.under(115) { attack *= 1.25 }
+        if a.under(114) { attack *= 1.25 }
+        if a.under(185), !a.weakened { attack *= 0.75 }
+        if a.under(34) { attack *= 0.8 }
+        if a.under(50) { attack *= 0.85 }
         var defense = Float(max(1, b.defense)) * (b.defending ? 2 : 1)
+        // and on the target (0x5f1ed0): Blur +50% against shots, Defender +50% when defending,
+        // Spiritual Armor and Stoneskin +25%, Acid / Disrupting Ray / Unholy Song -20%, Choking Gas -15%
+        if ranged, b.under(109) { defense *= 1.5 }
+        if b.defending, b.under(31) { defense *= 1.5 }
+        if b.under(58) { defense *= 1.25 }
+        if b.under(151) { defense *= 1.25 }
+        for sp in [0, 128, 34] where b.under(sp) { defense *= 0.8 }
+        if b.under(50) { defense *= 0.85 }
         if b.has("insubstantial") { defense *= 2 }
         if ranged, b.has("skeletal") { defense *= 2 }
         if b.aged { defense *= 0.8 }
@@ -155,7 +179,7 @@ public enum QuickCombat {
 
     /// The damage range shown before an attack ("Attack X for N-M damage").
     public static func damageRange(_ a: Combatant, _ b: Combatant, ranged: Bool) -> (Int, Int) {
-        (damage(a, b, base: a.damageLow * a.count, ranged: ranged), damage(a, b, base: (a.cursed ? a.damageLow : a.damageHigh) * a.count, ranged: ranged))
+        (damage(a, b, base: a.spellDamage.0 * a.count, ranged: ranged), damage(a, b, base: a.spellDamage.1 * a.count, ranged: ranged))
     }
     public struct Result {
         public let attackerWon: Bool
@@ -194,4 +218,20 @@ public enum QuickCombat {
     }
 
     static func threat(_ u: Combatant) -> Float { Float(u.count) * Float(u.damageLow + u.damageHigh) / 2 * Float(u.attack) }
+}
+
+extension Combatant {
+    /// The damage range with spells (0x5edfc0 / 0x5ee110 / 0x5ee020): Bless rolls the maximum,
+    /// Curse the minimum; Dragon Strength doubles, Strength and Giant Strength add a quarter.
+    public var spellDamage: (Int, Int) {
+        var lo = under(10) ? damageHigh : damageLow, hi = (cursed || under(23)) ? damageLow : damageHigh
+        if under(23) { lo = damageLow }
+        func adj(_ d: Int, _ isMax: Bool) -> Int {
+            var d = d
+            if under(33) { d *= 2 }
+            for sp in [153, 51] where under(sp) { d += isMax ? (d + 3) / 4 : d / 4 }
+            return d
+        }
+        return (adj(lo, false), adj(hi, true))
+    }
 }

@@ -56,15 +56,50 @@ final class CombatScreen {
     var idleRandom = GameRandom(seed: 0x563870)
     var strings: [String: String] = [:]
     var effectSprites: [String: Sprite] = [:]
+    var effectInfo: [String: (ms: Int, order: [Int], anchor: (Int, Int))] = [:]
     func effectSprite(_ name: String) -> Sprite? {
-        if effectSprites[name] == nil, let d = payload("animation.spell.\(name).h4d") { effectSprites[name] = try? Sprite(data: d) }
+        if effectSprites[name] == nil, let d = payload("animation.spell.\(name).h4d") {
+            effectSprites[name] = try? Sprite(data: d)
+            effectInfo[name] = CombatScreen.animationTrailer(d)
+        }
         return effectSprites[name]
     }
-    /// How long an effect runs: its frames' durations (1/60 s each unit), about 1 s without them.
+    /// An animation file's trailer (animation.*): u16 2, u16 ms per frame, u32 n, n x u32 frame
+    /// order, u8, u8, i32 x, i32 y -- the point of the frame placed on the target.
+    static func animationTrailer(_ d: Data) -> (ms: Int, order: [Int], anchor: (Int, Int))? {
+        let b = [UInt8](d)
+        func u16(_ o: Int) -> Int { Int(b[o]) | Int(b[o + 1]) << 8 }
+        func i32(_ o: Int) -> Int { Int(Int32(bitPattern: UInt32(b[o]) | UInt32(b[o + 1]) << 8 | UInt32(b[o + 2]) << 16 | UInt32(b[o + 3]) << 24)) }
+        for n in 1...400 {
+            let p = b.count - 10 - 4 * n - 8
+            guard p >= 0 else { break }
+            if u16(p) == 2, i32(p + 4) == n {
+                let order = (0..<n).map { i32(p + 8 + 4 * $0) }
+                guard order.allSatisfy({ $0 >= 0 && $0 < 400 }) else { continue }
+                return (u16(p + 2), order, (i32(b.count - 8), i32(b.count - 4)))
+            }
+        }
+        return nil
+    }
+    /// How long an effect runs: its frames at the file's pace (ms per frame).
     func effectDuration(_ name: String) -> Double {
         guard let s = effectSprite(name) else { return 1 }
-        let t = s.frames.reduce(0) { $0 + max(1, $1.speed) }
-        return t > s.frames.count ? Double(t) / 60 : Double(s.frames.count) / 12
+        if let t = effectInfo[name], t.ms > 0 { return Double(t.order.count * t.ms) / 1000 }
+        return Double(s.frames.count) / 12
+    }
+
+    /// The spell's animation (animation.spell.<keyword>, the archive's aliases included), if any.
+    func spellAnimation(_ s: SpellDef) -> String? {
+        for n in [s.keyword, s.name.lowercased(), s.name] where effectSprite(n) != nil { return n }
+        return nil
+    }
+    /// sound.spell.<keyword> (or the name as the sound files spell it).
+    @discardableResult
+    func playSpellSound(_ s: SpellDef) -> Bool {
+        for n in [s.keyword, s.name.lowercased(), s.keyword.replacingOccurrences(of: "fireball", with: "fire ball")] where sound?.has("spell.\(n)") == true {
+            sound?.play("spell.\(n)"); return true
+        }
+        return false
     }
 
     static let sceneScale: Float = 0.75
@@ -160,9 +195,11 @@ final class CombatScreen {
         var attackers: [Battle.Fighter] = []
         for (k, hh) in heroes.enumerated() {
             var heroStats = g.heroCombatant(hh)
+            heroStats.magicResistance = [0, 30, 50, 70, 80, 100][min(5, hh.skill("resistance"))]
             heroStats.morale = Battle.armyMorale(own: hh.alignment, army: heroArmy)
             let model = "hero.\(hh.alignment)_fighter_male"
-            attackers.append(Battle.Fighter(stats: heroStats, keyword: hh.keyword, actor: actor(model) != nil ? model : classActor, size: actor(model)?.size ?? actor(classActor)?.size ?? 4, move: 24, shots: heroStats.shots, slot: k))
+            let book = Caster(level: hh.level, skills: hh.skills, spells: Array(hh.spells), spellPoints: g.spellPoints(hh))
+            attackers.append(Battle.Fighter(stats: heroStats, keyword: hh.keyword, actor: actor(model) != nil ? model : classActor, size: actor(model)?.size ?? actor(classActor)?.size ?? 4, move: 24, shots: heroStats.shots, slot: k, caster: book))
         }
         for (k, s) in h.army.enumerated() { if let cd = t.creature(s.creature) { var f = fighter(cd, s.count, army: heroArmy, bonus: bonus); f.slot = k + heroes.count; attackers.append(f) } }
         // a wandering stack has no hero: it splits against the attacker's stacks (0x62da90)
@@ -312,6 +349,30 @@ final class CombatScreen {
             shownCount[id] = left
             blowMessages(damage: dmg, killed: killed, at: c, since: now, side: b.unit(id).side)
             playing = Anim(event: e, started: now, duration: min(1.2, effectSprite(name) != nil ? effectDuration(name) : 0.4))
+        case .cast(let id, let spell, _):
+            // the caster's cast_spell state, the spell's sound
+            let u = b.unit(id)
+            let def = RuleTables.spells[spell]
+            unitState[id] = ("cast_spell", now, true)
+            if !playSpellSound(def) { sound?.actor(u.actor, "cast_spell") }
+            playing = Anim(event: e, started: now, duration: max(0.3, min(1.2, stateDuration(u.actor, "cast_spell", u.facing))))
+        case .spellHit(let id, let spell, let dmg, let killed, let left):
+            let def = RuleTables.spells[spell]
+            let name = spellAnimation(def)
+            if let n = name { effects.append((n, id, now)) }
+            let c = shownCentre(b.unit(id))
+            shownCount[id] = left
+            if dmg > 0 { blowMessages(damage: dmg, killed: killed, at: c, since: now, side: b.unit(id).side); unitState[id] = ("flinch", now, true) }
+            else if dmg < 0 { floaters.append(("+\(-dmg)", c.0, c.1, now, nil, 0, false)) }
+            playing = Anim(event: e, started: now, duration: name.map { min(1.4, effectDuration($0)) } ?? 0.35)
+        case .resisted(let id, _):
+            effects.append(("resist_spell", id, now))
+            let c = shownCentre(b.unit(id))
+            floaters.append((strings["spell_resisted.combat"] ?? "Resisted", c.0, c.1, now, nil, 0, false))
+            playing = Anim(event: e, started: now, duration: min(1.2, effectDuration("resist_spell")))
+        case .summon(let id):
+            effects.append(("summon", id, now))
+            playing = Anim(event: e, started: now, duration: 0.6)
         case .wait, .newRound:
             break
         case .finished(let won):

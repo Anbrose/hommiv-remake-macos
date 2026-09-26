@@ -82,6 +82,8 @@ public final class RuleTables {
     /// (parchments, scrolls, potions, items, treasures, minor, major, total).
     public struct BankDef { public var guards: [(creature: String, initial: Int, perDay: Double)] = []; public var initial: [Int] = [], added: [Int] = [], maxima: [Int] = [] }
     public let banks: [String: BankDef]
+    /// table.Spells help texts by keyword.
+    public let spellHelp: [String: String]
     public static let skillLevelNames = ["basic", "advanced", "expert", "master", "grandmaster"]
     /// Creature ability display names ("Normal Melee", "No Obstacle Penalty") -> the game's
     /// keywords ("normal_melee", "siege_machine"), from table.creature_abilities.
@@ -223,6 +225,12 @@ public final class RuleTables {
             }
         }
         banks = bk
+        var sh: [String: String] = [:]
+        if let d = try? archive.payload("table.Spells.h4d") {
+            let t = RuleTable(data: d)
+            for row in t.rows where !row.isEmpty && !row[0].isEmpty { sh[row[0].lowercased()] = t.value(row, "Help Text") }
+        }
+        spellHelp = sh
         var ak: [String: String] = [:], info: [String: (name: String, help: String)] = [:]
         if let d = try? archive.payload("table.creature_abilities.h4d") {
             for row in RuleTable(data: d).rows where row.count >= 2 && !row[0].isEmpty {

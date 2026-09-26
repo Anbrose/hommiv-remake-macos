@@ -8,6 +8,7 @@ enum TownDialog {
     case buildDetail(RuleTables.BuildingDef)   // layers.dialog.buy_building_detail: one building, Buy/Cancel
     case recruit(creature: String, count: Int) // layers.dialog.recruit: a dwelling's creature with a slider
     case mageGuild(page: Int)                  // layers.dialog.mage_guild.book: the guild's spells, two levels a spread
+    case castle                                // layers.dialog.Castle_Screen: every built dwelling's creatures
 }
 
 extension Renderer {
@@ -44,14 +45,21 @@ extension Renderer {
         if ui.materials[size] == nil, let d = try? ui.archive.payload("layers.icons.materials.\(size).h4d") { ui.materials[size] = try? LayerFile(data: d) }
         return ui.materials[size]?.layers.first { $0.name.lowercased() == resource.lowercased() || ($0.name.lowercased() == "gem" && resource == "Gems") }
     }
-    /// The requirement chain of a building as text.
-    func requirements(of b: RuleTables.BuildingDef) -> String {
-        let chain: [String: String] = ["town hall": "village hall", "city hall": "town hall", "citadel": "fort", "castle": "citadel",
-                                       "mage guild 2": "mage guild 1", "mage guild 3": "mage guild 2", "mage guild 4": "mage guild 3", "mage guild 5": "mage guild 4"]
-        guard let ui = ui, let g = game, let i = townOpen, let req = chain[b.keyword], let t = g.tables else { return "" }
-        _ = ui
-        let name = t.buildings(for: g.towns[i].alignment).first { $0.keyword == req }?.name ?? req
-        return "Requires: \(name)"
+    /// The detail dialog's requirement line (0x5a40e9): built, not owner, requirements, resources,
+    /// built today, else "all met".
+    func buildDetailText(_ b: RuleTables.BuildingDef) -> String {
+        guard let g = game, let i = townOpen else { return "" }
+        let t = g.towns[i], strings = g.tables?.strings ?? [:]
+        guard let id = g.buildingId(t.alignment, b.keyword) else { return "" }
+        let state = g.buildState(t, id)
+        switch state {
+        case 1: return (strings["built_building.dialog"] ?? "The %building has already been built.").replacingOccurrences(of: "%building", with: b.name)
+        case 5: return strings["town.buy_building_not_owner"] ?? "You do not own this town."
+        case 4: return strings["not_enough_resources_to_build.dialog"] ?? "You do not have enough resources to build this structure."
+        case 3 where g.requirementText(t, id) == (strings["all_requirements_met.town_build"] ?? "All requirements for this building have been met."):
+            return strings["already_built_for_day.dialog"] ?? "You've already built in this town for the day."
+        default: return g.requirementText(t, id)
+        }
     }
 
     // MARK: drawing
@@ -63,6 +71,8 @@ extension Renderer {
         let town = g.towns[i]
         var out: [Quad] = []
         switch dlg {
+        case .castle:
+            return castleQuads()
         case .mageGuild(let page):
             // the book: levels 1 and 2 on the first spread, 3, 4 and 5 on the second; a level not
             // built shows its places empty
@@ -85,36 +95,38 @@ extension Renderer {
             }
             return out
         case .buildList:
+            // the 20 places (town_spec 1.2): each shows the next step of its chain in its state's bar
             guard let d = ui.dialog("buy_building") else { return [] }
             let ox = (AdventureUI.width - 800) / 2, oy = (AdventureUI.height - 600) / 2
-            out += dialogImages(d, key: "buy", at: ox, oy, skip: ["Gold Bar", "Gray Bar", "Green Bar", "Red Bar", "Cannot Build"])
-            out += centred("Build in \(town.name)", in: d["Title"], at: ox, oy, font: ui.dateFont)
-            let all = t.buildings(for: town.alignment).filter { !$0.cost.isEmpty || $0.keyword == "prison" }
-            let perPage = Renderer.buildCell.cols * Renderer.buildCell.rows
-            let pages = max(1, (all.count + perPage - 1) / perPage)
-            buildPage = min(buildPage, pages - 1)
-            let list = Array(all.dropFirst(buildPage * perPage).prefix(perPage))
-            if pages > 1 {   // page number under the title; the wheel or the arrow keys turn pages
-                let s = "Page \(buildPage + 1) of \(pages)"
-                let w = ui.numberFont.measure(s)
-                out.append(Quad(texture: uiTexture("num|\(s)", { ui.numberFont.render(s, colour: (40, 24, 8)) }), x: ox + 400 - w / 2, y: oy + 578, w: w, h: ui.numberFont.size))
-            }
+            out += dialogImages(d, key: "buy", at: ox, oy, skip: ["Gold Bar", "Gray Bar", "Green Bar", "Red Bar", "Cannot Build", "Frame", "thumbnail", "Building_Text"])
+            out += centred(g.tables?.strings["town_hall.title"] ?? "Town Hall", in: d["Title"], at: ox, oy, font: ui.dateFont)
             let thumbs = ui.thumbnails(town.alignment)
+            let frame = d["Frame"].map { ($0.x, $0.y, $0.width, $0.height) } ?? (33, 31, 183, 67)
             buildCells = []
-            for (k, b) in list.enumerated() {
-                let cx = ox + 33 + (k % Renderer.buildCell.cols) * Renderer.buildCell.w, cy = oy + 31 + (k / Renderer.buildCell.cols) * Renderer.buildCell.h
-                let built = town.buildings.contains(b.keyword)
-                let can = g.canBuild(b, in: town)
-                let affordable = b.cost.allSatisfy { g.resources[$0.key, default: 0] >= $0.value }
-                let bar = built ? "Gold Bar" : can ? "Green Bar" : affordable ? "Gray Bar" : "Red Bar"
-                if let th = thumbs?.layers.first(where: { $0.name.lowercased() == b.name.lowercased() || $0.name.lowercased() == b.keyword }) {
-                    out.append(Quad(texture: uiTexture("thumb|\(town.alignment)|\(th.name)", { th.bitmap }), x: cx + 6, y: cy + 5, w: th.width, h: th.height))
+            let list = g.buildList(town)
+            for r in 0..<5 {
+                let inRow = list.filter { $0.slot / 4 == r }
+                guard !inRow.isEmpty, let row = d["row \(r + 1)"] ?? d["Row \(r + 1)"] else { continue }
+                let step = frame.2 + (row.width - 4 * frame.2) / 3
+                let xoff = (row.width - (inRow.count - 1) * step - frame.2) / 2
+                for e in inRow {
+                    guard let def = g.buildingDef(town, e.b) else { continue }
+                    // (the row is centred on its tiles; each keeps its own column)
+                    let col = inRow.count < 4 ? inRow.firstIndex { $0.slot == e.slot }! : e.slot % 4
+                    let cx = ox + row.x + xoff + col * step, cy = oy + row.y
+                    func place(_ l: UILayer?) -> (Int, Int)? { l.map { (cx + $0.x - frame.0, cy + $0.y - frame.1) } }
+                    if let f = d["Frame"], let p = place(f) { out.append(Quad(texture: uiTexture("dlg|buy|Frame", { f.bitmap }), x: p.0, y: p.1, w: f.width, h: f.height)) }
+                    if let th = thumbs?.layers.first(where: { $0.name.lowercased() == def.name.lowercased() || $0.name.lowercased() == def.keyword }), let p = place(d["thumbnail"]) {
+                        out.append(Quad(texture: uiTexture("thumb|\(town.alignment)|\(th.name)", { th.bitmap }), x: p.0, y: p.1, w: th.width, h: th.height))
+                    }
+                    let bar = [1: "Gold Bar", 2: "Gray Bar", 6: "Green Bar"][e.state] ?? "Red Bar"
+                    if let bl = d[bar], let p = place(bl) { out.append(Quad(texture: uiTexture("dlg|buy|\(bl.name)", { bl.bitmap }), x: p.0, y: p.1, w: bl.width, h: bl.height)) }
+                    if (2...4).contains(e.state), let x = d["Cannot Build"], let p = place(x) { out.append(Quad(texture: uiTexture("dlg|buy|cannot", { x.bitmap }), x: p.0, y: p.1, w: x.width, h: x.height)) }
+                    if let bt = d["Building_Text"], let p = place(bt) {
+                        out += centred(def.name, in: UILayer(name: "", kind: 1, x: p.0 - ox, y: p.1 - oy, width: bt.width, height: bt.height, bitmap: Bitmap(width: 1, height: 1)), at: ox, oy, font: ui.numberFont)
+                    }
+                    buildCells.append(((cx, cy, frame.2, 101), def, e.b, e.state))
                 }
-                if let bl = d[bar] { out.append(Quad(texture: uiTexture("dlg|buy|\(bl.name)", { bl.bitmap }), x: cx + (bl.x - 33), y: cy + (bl.y - 31), w: bl.width, h: bl.height)) }
-                if !built, !can, let x = d["Cannot Build"] { out.append(Quad(texture: uiTexture("dlg|buy|cannot", { x.bitmap }), x: cx + (x.x - 33), y: cy + (x.y - 31), w: x.width, h: x.height)) }
-                let w = ui.numberFont.measure(b.name)
-                out.append(Quad(texture: uiTexture("num|\(b.name)", { ui.numberFont.render(b.name, colour: (40, 24, 8)) }), x: cx + (183 - w) / 2, y: cy + 78, w: w, h: ui.numberFont.size))
-                buildCells.append(((cx, cy, Renderer.buildCell.w, Renderer.buildCell.h), b))
             }
             for r in ui.resourceNames {   // the treasury along the bottom
                 out += centred(String(g.resources[r] ?? 0), in: d["\(r)_Number"] ?? d["\(r)_number"], at: ox, oy, font: ui.numberFont)
@@ -132,8 +144,7 @@ extension Renderer {
             }
             out += centred(b.name, in: d["Structure_Name"], at: ox, oy, font: ui.dateFont)
             out += paragraph(b.help, in: d["description"], at: ox, oy, font: ui.numberFont)
-            let req = requirements(of: b)
-            out += paragraph(town.buildings.contains(b.keyword) ? "Already built." : req.isEmpty ? "" : req, in: d["Requirements"], at: ox, oy, font: ui.numberFont)
+            out += paragraph(buildDetailText(b), in: d["Requirements"], at: ox, oy, font: ui.numberFont)
             let costs = ui.resourceNames.filter { b.cost[$0] != nil }
             let slots = costs.count <= 3 ? Array(1...max(1, costs.count)) : Array(1...costs.count)
             for (k, r) in costs.enumerated() where k < 7 {
@@ -144,7 +155,7 @@ extension Renderer {
                 let enough = g.resources[r, default: 0] >= b.cost[r]!
                 out += centred(String(b.cost[r]!), in: d["Resource_\(n)_Text"], at: ox, oy, font: ui.numberFont, colour: enough ? (40, 24, 8) : (180, 30, 30))
             }
-            if let buy = d["Buy_Button"], let img = ui.button("buy", state: g.canBuild(b, in: town) ? "Released" : "disabled") ?? ui.button("buy", state: "Disabled") {
+            if g.canBuild(b, in: town), let buy = d["Buy_Button"], let img = ui.button("buy") {   // no Buy unless it can be built now
                 out.append(Quad(texture: uiTexture("button|buy|\(img.name)", { img.bitmap }), x: ox + buy.x + (buy.width - img.width) / 2, y: oy + buy.y + (buy.height - img.height) / 2, w: img.width, h: img.height))
             }
         case .recruit(let creature, let count):
@@ -211,6 +222,8 @@ extension Renderer {
     func townDialogClick(x: Float, y: Float) -> Bool {
         guard let dlg = townDialog, let ui = ui, let g = game, let i = townOpen, let hero = g.heroes.first else { return false }
         switch dlg {
+        case .castle:
+            castleClick(x: x, y: y); return true
         case .mageGuild(let page):
             let ox = (AdventureUI.width - 800) / 2, oy = (AdventureUI.height - 600) / 2
             guard let d = ui.dialog("mage_guild.book") else { townDialog = nil; return true }
@@ -223,6 +236,7 @@ extension Renderer {
             let ox = (AdventureUI.width - 800) / 2, oy = (AdventureUI.height - 600) / 2
             if let d = ui.dialog("buy_building"), inside(d["OK_Button"], at: ox, oy, x, y) { townDialog = nil; return true }
             for cell in buildCells where x >= Float(cell.rect.0) && x < Float(cell.rect.0 + cell.rect.2) && y >= Float(cell.rect.1) && y < Float(cell.rect.1 + cell.rect.3) {
+                if cell.state == 2 { prompt = (g.tables?.strings["disabled_building.dialog"] ?? "This building has been disabled.", false, nil); return true }
                 townDialog = .buildDetail(cell.building); return true
             }
             if x < Float(ox) || x >= Float(ox + 800) || y < Float(oy) || y >= Float(oy + 600) { townDialog = nil }
@@ -243,7 +257,7 @@ extension Renderer {
             let affordable = c.gold > 0 ? g.resources["Gold", default: 0] / c.gold : available
             let most = min(available, affordable)
             if inside(d["Buy_Button"], at: ox, oy, x, y) {
-                if count > 0, count <= most, g.add(creature, count, to: hero) {
+                if count > 0, count <= most, g.addToGarrison(i, creature, count) {
                     g.towns[i].available[creature, default: 0] -= count
                     g.resources["Gold", default: 0] -= count * c.gold
                     g.log.append("recruited \(count) \(count == 1 ? c.name : c.plural) for \(count * c.gold) gold")

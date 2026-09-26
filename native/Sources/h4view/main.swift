@@ -362,7 +362,7 @@ if let out = snapshot {
             b.autoResolve(); print("resolved: attacker won \(b.finished ?? false) in \(b.round) rounds")
         }
     }
-    if openHeroScreen { renderer.adventureDialog = .hero(0) }
+    if openHeroScreen { renderer.adventureDialog = .hero(0); renderer.heroShown = ProcessInfo.processInfo.environment["H4SLOT"].flatMap { Int($0) } ?? 0 }
     if let n = ProcessInfo.processInfo.environment["H4LEVELUP"].flatMap({ Int($0) }), let h = game.heroes.first {   // snapshot: the level-up dialog
         game.giveExperience(n, to: h); renderer.levelUpChoice = 0
     }
@@ -401,9 +401,16 @@ if let out = snapshot {
     if openChest, let h = game.heroes.first { game.chestOffer = (h, 1500, 1000); renderer.adventureDialog = .chest; renderer.chestChoice = true }
     if openTown {
         renderer.townOpen = game.towns.firstIndex { $0.owned }
+        if let i = renderer.townOpen, let h = game.heroes.first { game.townVisitor = (i, h) }   // the hero by the gate walked in
         renderer.townHover = ProcessInfo.processInfo.environment["H4HOVER"]   // --town snapshot: pretend the pointer is over this building
         if openBuildList { renderer.townDialog = .buildList }
         if ProcessInfo.processInfo.environment["H4GUILD"] != nil { renderer.townDialog = .mageGuild(page: 0) }
+        if ProcessInfo.processInfo.environment["H4CASTLE"] != nil { renderer.townDialog = .castle }   // snapshot: the creature screen
+        if let b = ProcessInfo.processInfo.environment["H4BALLOON"]?.split(separator: ",").compactMap({ Float($0) }), b.count == 2 { renderer.townBalloon = ((b[0], b[1]), .distantPast) }   // snapshot: the help balloon there
+        if ProcessInfo.processInfo.environment["H4GARRISON"] != nil, let i = renderer.townOpen { let o = game.hireOffer(town: i)   // snapshot: a hero hired into the garrison
+            let h = game.hire(o, with: nil); print("hired \(h?.name ?? "-"): garrison \(game.garrisonSlots(i).count), visiting \(game.visitingArmy(town: i)?.name ?? "none")")
+            renderer.townSelected = (0, 0)
+        }
         if let a = ProcessInfo.processInfo.environment["H4TOWNSHOP"], let h = game.heroes.first {   // snapshot: a town blacksmith (alignment)
             let o = ShopOffer(key: "town", title: "Blacksmith", panel: a, items: [], potions: [], hero: h)
             renderer.shop = ShopState(offer: o, panel: renderer.ui?.dialog("Blacksmith.\(a)"))
@@ -558,6 +565,7 @@ final class MapView: MTKView {
             name = renderer.cursorKind(mapPoint: renderer.pan + mouse / renderer.zoom)
         }
         renderer.townHover = renderer.townOpen != nil && renderer.townDialog == nil ? renderer.townBuilding(at: cx, mouse.y / renderer.uiScale)?.name : nil
+        renderer.townBalloon = renderer.townOpen != nil ? ((cx, mouse.y / renderer.uiScale), Date()) : nil   // the help balloon waits for the pointer to rest
         if let i = renderer.cursorFrameIndex, let s = cursors?.set(name) {
             cursorName = name; cursorFrame = min(i, s.frames.count - 1); s.frames[cursorFrame].set()
         } else if name != cursorName { cursorName = name; cursorFrame = 0; cursors?.set(name)?.frames.first?.set() }
@@ -608,13 +616,23 @@ final class MapView: MTKView {
         let p = convert(e.locationInWindow, from: nil)
         let scale = Float(window?.backingScaleFactor ?? 1)
         renderer.pressSound(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale)
+        if renderer.townOpen != nil { renderer.townPress(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale) }
     }
     override func mouseDragged(with e: NSEvent) {
         dragged += abs(Float(e.deltaX)) + abs(Float(e.deltaY))
+        if renderer.townOpen != nil { return }
         renderer.pan -= SIMD2(Float(e.deltaX), Float(e.deltaY)) / renderer.zoom
     }
     override func mouseUp(with e: NSEvent) {
-        guard dragged < 4, let g = renderer.game, let hero = g.heroes.first else { return }
+        let p0 = convert(e.locationInWindow, from: nil), sc = Float(window?.backingScaleFactor ?? 1)
+        if renderer.townOpen != nil, renderer.townDrag != nil {   // a drop in the town's army rows
+            let x = Float(p0.x) * sc / renderer.uiScale, y = Float(bounds.height - p0.y) * sc / renderer.uiScale
+            if dragged >= 4 { renderer.townDrop(x: x, y: y, split: e.modifierFlags.contains(.shift)); return }
+            renderer.townDrag = nil
+        }
+        guard dragged < 4, let g = renderer.game else { return }
+        // (with every hero in a garrison there is no army to act for: a stand-in)
+        let hero = g.heroes.first ?? Hero(actor: "", x: -1, y: -1, movement: 0)
         // window point -> map pixel -> cell (rounding x and y separately picks the diamond under the cursor)
         let p = convert(e.locationInWindow, from: nil)
         let scale = Float(window?.backingScaleFactor ?? 1)
@@ -682,6 +700,11 @@ final class MapView: MTKView {
                         let i = owned[row]
                         if e.clickCount >= 2 { renderer.townOpen = i } else { renderer.centre(onTown: i) }
                     }
+                }
+                else if e.clickCount >= 2, let k = AdventureUI.armySlots.firstIndex(where: { abs(cx - Float($0.0)) < 28 && abs(cy - Float($0.1)) < 28 }),
+                        let a = g.heroes.first, k < 1 + a.companions.count + a.army.count {
+                    // a stack of the selected army: the army screen on it (0x4af170)
+                    renderer.adventureDialog = .hero(0); renderer.heroShown = k
                 }
                 else if ui.hit("Hero_List", x: cx, y: cy) {   // a portrait: one click centres the map on the hero, a double click opens the hero screen
                     for (i, (hx, hy)) in AdventureUI.heroSlots.enumerated() where i < g.heroes.count && abs(cx - Float(hx)) < 30 && abs(cy - Float(hy)) < 30 {
@@ -763,7 +786,7 @@ final class MapView: MTKView {
         case 2: if renderer.inCombat, renderer.prompt == nil, let b = renderer.combat?.battle, !(renderer.combat?.busy ?? true), b.finished == nil { b.defend(); renderer.combat?.pump() } // D = defend
         case 53:   // Escape closes a dialog, then leaves the town
             if renderer.townDialog != nil { renderer.townDialog = nil }
-            else if renderer.townOpen != nil { renderer.townOpen = nil }
+            else if renderer.townOpen != nil { renderer.closeTown() }
             else if case .hero? = renderer.adventureDialog { renderer.adventureDialog = nil }
         default: break
         }

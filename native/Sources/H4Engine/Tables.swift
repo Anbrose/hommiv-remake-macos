@@ -62,6 +62,8 @@ public final class RuleTables {
         /// creature keyword for dwellings ("Generates Squires."), else nil
         public let creature: String?
     }
+    /// table.Interface's help texts: "window.item" (lower-cased) -> balloon and right-click texts.
+    public var interfaceTexts: [String: (balloon: String, rightClick: String)] = [:]
     /// buildings per town section: "Life Town" -> [BuildingDef] (in the table's order)
     public let buildings: [String: [BuildingDef]]
     /// The Adventure Object texts: "major|minor|keyword" (all lower-cased) -> text, e.g.
@@ -245,6 +247,13 @@ public final class RuleTables {
         }
         abilityKeywords = ak
         abilityInfo = info
+        var ui: [String: (balloon: String, rightClick: String)] = [:]
+        if let d = try? archive.payload("table.Interface.h4d") {   // Window, Item, Balloon Text, Right Click Text
+            for row in RuleTable(data: d).rows where row.count >= 3 && !row[0].isEmpty && !row[1].isEmpty {
+                ui["\(row[0].lowercased()).\(row[1].lowercased())"] = (row[2], row.count > 3 ? row[3] : "")
+            }
+        }
+        interfaceTexts = ui
         var freq: [String: [String: String]] = [:], adj: [String: [String: String]] = [:]
         if let d = try? archive.payload("table.combat_obstacles.h4d") {
             let rows = RuleTable(data: d).rows

@@ -410,6 +410,8 @@ public final class GameState {
         public var tavernDays = 0
         /// The town's garrison: the creatures that defend it.
         public var garrison: [Hero.Stack] = []
+        /// Heroes stationed in the town (they take garrison slots and defend it).
+        public var garrisonHeroes: [Hero] = []
         /// 0 no walls, 1 fort, 2 citadel, 3 castle (the siege layout).
         public var castleLevel: Int { buildings.contains("castle") ? 3 : buildings.contains("citadel") ? 2 : buildings.contains("fort") ? 1 : 0 }
     }
@@ -632,6 +634,8 @@ public final class GameState {
 
     /// The town screen to open, set when a hero enters a town; the UI clears it.
     public var enteredTown: Int?
+    /// The army that walked into the town now on screen (it is the visiting row, 0x8ac0c0's army).
+    public var townVisitor: (town: Int, hero: Hero)?
 
     /// The last name component of a sprite entry: "adv_object.castle.Haven.Village R.h4d" -> "Village".
     static func shortName(_ entry: String) -> String {
@@ -728,13 +732,8 @@ public final class GameState {
 
     /// Can the town build this now? One building per day; halls and walls in order; mage guilds in order.
     public func canBuild(_ b: RuleTables.BuildingDef, in t: Town) -> Bool {
-        guard !t.buildings.contains(b.keyword), !t.builtToday, !b.cost.isEmpty || b.keyword == "prison" else { return false }
-        if let a = t.allowed, !a.contains(b.keyword) { return false }   // the map's town settings
-        for (r, v) in b.cost where resources[r, default: 0] < v { return false }
-        let chain: [String: String] = ["town hall": "village hall", "city hall": "town hall", "citadel": "fort", "castle": "citadel",
-                                       "mage guild 2": "mage guild 1", "mage guild 3": "mage guild 2", "mage guild 4": "mage guild 3", "mage guild 5": "mage guild 4"]
-        if let req = chain[b.keyword], !t.buildings.contains(req) { return false }
-        return true
+        guard let id = buildingId(t.alignment, b.keyword) else { return false }
+        return buildState(t, id) == 6
     }
 
     public func build(_ b: RuleTables.BuildingDef, in i: Int) {
@@ -1104,7 +1103,7 @@ public final class GameState {
                 runTownEvent(i, slot: 3, hero: hero)                            // "visited"
             }
             learnFromGuild(hero, town: i)
-            enteredTown = i
+            enteredTown = i; townVisitor = (i, hero)
             hero.target = nil
             return
         }

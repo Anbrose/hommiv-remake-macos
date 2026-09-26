@@ -70,6 +70,7 @@ public struct SaveGame: Codable {
         public var builtToday: Bool
         public var guildSpells: [[Int]]? = nil
         public var garrison: [Stack]? = nil
+        public var garrisonHeroes: [HeroState]? = nil
     }
     public struct CellFlag: Codable { public var x, y: Int; public var on: Bool }
     public struct CellCount: Codable { public var x, y: Int; public var count: Int; public var owned: Bool? = nil; public var fourteenths: Int? = nil }
@@ -104,7 +105,8 @@ extension GameState {
         for t in towns {
             let g: [SaveGame.Stack] = t.garrison.map { SaveGame.Stack(creature: $0.creature, count: $0.count) }
             townStates.append(SaveGame.TownState(x: t.x, y: t.y, name: t.name, owned: t.owned, owner: t.owner, buildings: Array(t.buildings).sorted(),
-                                                 available: t.available, builtToday: t.builtToday, guildSpells: t.guildSpells, garrison: g))
+                                                 available: t.available, builtToday: t.builtToday, guildSpells: t.guildSpells, garrison: g,
+                                                 garrisonHeroes: t.garrisonHeroes.map { SaveGame.state(of: $0) }))
         }
         let mineFlags: [SaveGame.CellFlag] = mines.map { SaveGame.CellFlag(x: $0.x, y: $0.y, on: $0.owned) }
         let dwellingCounts: [SaveGame.CellCount] = dwellings.map { SaveGame.CellCount(x: $0.x, y: $0.y, count: $0.available, owned: $0.owned, fourteenths: $0.fourteenths) }
@@ -158,6 +160,7 @@ extension GameState {
             towns[i].buildings = Set(t.buildings); towns[i].available = t.available; towns[i].builtToday = t.builtToday
             if let gs = t.guildSpells { towns[i].guildSpells = gs }
             if let g = t.garrison { towns[i].garrison = g.map { Hero.Stack(creature: $0.creature, count: $0.count) } }
+            towns[i].garrisonHeroes = (t.garrisonHeroes ?? []).map { SaveGame.hero(from: $0) }
         }
         for m in s.mines { if let i = mines.firstIndex(where: { $0.x == m.x && $0.y == m.y }) { mines[i].owned = m.on } }
         for d in s.dwellings { if let i = dwellings.firstIndex(where: { $0.x == d.x && $0.y == d.y }) { dwellings[i].available = d.count; dwellings[i].owned = d.owned ?? false; dwellings[i].fourteenths = d.fourteenths ?? 0 } }

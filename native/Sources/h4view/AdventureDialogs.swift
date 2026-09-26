@@ -86,15 +86,19 @@ extension Renderer {
         case .hero(let i):
             guard i < g.heroes.count, let d = ui.dialog("army.layout") else { return [] }
             let leader = g.heroes[i], army = [leader] + leader.companions
-            let h = army[min(heroShown, army.count - 1)]
             let ox = (AdventureUI.width - 800) / 2, oy = (AdventureUI.height - 600) / 2
+            // a creature stack chosen in the rings: the screen's creature mode (0x534640)
+            if heroShown >= army.count, heroShown - army.count < leader.army.count {
+                out += creatureModeQuads(leader, stack: leader.army[heroShown - army.count], d, ox, oy)
+            } else {
+            let h = army[min(heroShown, army.count - 1)]
             // not drawn: text-area masks (name_text, creature_text: outlines only), the other states of
             // the buttons, the creature-only abilities frame, and the two-row ring backdrop (a hero
             // outside a town shows one row); the formation buttons show the army's (loose) pressed
             out += dialogImages(d, key: "herodlg", at: ox, oy, skip: ["Ring_Pressed", "Move_Army_Up", "Move_Army_Down", "Move_Tombstone_up", "loose_Released", "loose_Disabled",
                                                                     "tight_Pressed", "tight_Disabled", "square_Pressed", "square_Disabled", "Up_Disabled", "name_text", "creature_text",
                                                                     "Double_Ring_Background", "Abilities_Frame", "Army_Up_Highlighted", "Army_Up_Pressed", "Army_Down_Highlighted",
-                                                                    "Army_Down_Pressed", "SpellBook_Highlighted", "SpellBook_Pressed", "Ranged", "Ranged_Text"])
+                                                                    "Army_Down_Pressed", "SpellBook_Highlighted", "SpellBook_Pressed", "Ranged", "Ranged_Text", "dismiss"])
             // skills, the class picture with the worn artifacts, the backpack
             out += heroThingsQuads(h, d, ox, oy)
             if let slot = d["creature_portrait"], let p = ui.portrait(keyword: h.keyword, alignment: h.alignment, size: 82) {
@@ -111,6 +115,7 @@ extension Renderer {
                                               ("Ranged_Attack_Text", "\(s.ranged)"), ("Ranged_Defense_Text", "\(s.defense)"), ("Speed_Text", "\(s.speed)"), ("Move_Text", "\(s.move)"),
                                               ("Experience_Text", "\(h.experience)"), ("Spell_Points_Text", "\(s.spellPoints)"), ("Shots_Text", "\(s.shots)"), ("Morale_Text", moraleText), ("Luck_Text", "0")]
             for (slot, v) in values { out += centred(v, in: d[slot], at: ox, oy, font: ui.numberFont) }
+            }
             // the army: one row of creature_rings pieces (Left, Middle x5, Right) tiled by width in
             // Single_Ring_Background, as t_creature_array_window lays them out; labels last
             if let row = d["Single_Ring_Background"] {
@@ -155,17 +160,17 @@ extension Renderer {
             let ox = (AdventureUI.width - 800) / 2, oy = (AdventureUI.height - 600) / 2
             // a hero's ring shows that hero
             if let d = ui.dialog("army.layout"), let row = d["Single_Ring_Background"], i < g.heroes.count {
-                let n = 1 + g.heroes[i].companions.count
+                let n = 1 + g.heroes[i].companions.count + g.heroes[i].army.count
                 var cursor = ox + row.x
-                for k in 0..<n {
-                    guard let piece = ui.creatureRing(k == 0 ? "Left" : "Middle") else { break }
+                for k in 0..<min(7, n) {
+                    guard let piece = ui.creatureRing(k == 0 ? "Left" : k == 6 ? "Right" : "Middle") else { break }
                     let cx = cursor - piece.x + 41, cy = oy + row.y - 1 + 41
                     if abs(x - Float(cx)) < 38, abs(y - Float(cy)) < 38 { heroShown = k; return true }
                     cursor += piece.width
                 }
             }
             // an artifact: worn ones come off into the backpack, backpack ones are put on where they fit
-            if let d = ui.dialog("army.layout"), i < g.heroes.count {
+            if let d = ui.dialog("army.layout"), i < g.heroes.count, heroShown <= g.heroes[i].companions.count {
                 let army = [g.heroes[i]] + g.heroes[i].companions
                 let h = army[min(heroShown, army.count - 1)]
                 if let hit = heroArtifactHit(h, d, ox, oy, x: x, y: y) {

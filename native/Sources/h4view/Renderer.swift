@@ -139,13 +139,16 @@ final class Renderer: NSObject, MTKViewDelegate {
     var optionsOpen: GameSettings? = nil   // the options dialog, while open (the values being edited)
     var settings = GameSettings.load()
     var hire: HireOffer? = nil             // the tavern's dialog
+    var townSpare: [ArmySlot] = []            // the town's visiting row when no army stands at the gate
+    var townSelected: (row: Int, k: Int)? = nil
+    var townDrag: (row: Int, k: Int)? = nil
     var shop: ShopState? = nil             // a blacksmith's or conservatory's shop
     var sanctuary: SanctuaryOffer? = nil   // a sanctuary's dialog
     var puzzle: String? = nil              // the puzzle map shown (an obelisk colour)
     var heroShown = 0                     // which of the army's heroes the hero screen shows
     var floaters: [(text: String, x: Int, y: Int, since: Date)] = []
     var buildPage = 0
-    var buildCells: [(rect: (Int, Int, Int, Int), building: RuleTables.BuildingDef)] = []
+    var buildCells: [(rect: (Int, Int, Int, Int), building: RuleTables.BuildingDef, id: Int, state: Int)] = []
     /// The town's army display (hotspot Army_Display, 500,583 - 967,717): heroes4.exe
     /// (t_creature_array_window, 0x644855) tiles the creature_rings pieces edge to edge, each
     /// advancing by its own width (Top_Left 70, Top 59, Top_Right 70), the second row one piece
@@ -190,6 +193,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     var uiTextures: [String: MTLTexture] = [:]
     /// The town building under the pointer (its layout layer name).
     var townHover: String?
+    /// Where the pointer rests on the town screen and since when (the help balloon after a second).
+    var townBalloon: (at: (Float, Float), since: Date)?
 
     /// Quads of the town screen (replaces the map and the adventure chrome).
     /// Buildings with levels show only their highest built level (the halls, the walls, the guilds).
@@ -345,18 +350,9 @@ final class Renderer: NSObject, MTKViewDelegate {
                 out.append(Quad(texture: uiTexture("cring|\(o.piece)", { ring.bitmap }), x: o.x + ring.x, y: o.y + ring.y, w: ring.width, h: ring.height))
             }
         }
-        if let h = g.heroes.first {
-            var slots: [(UILayer?, String?)] = [(ui.portrait(keyword: h.keyword, alignment: h.alignment), nil)]
-            slots += h.army.map { (ui.creatureIcon($0.creature), String($0.count)) }
-            for (k, (icon, _)) in slots.prefix(7).enumerated() {
-                let cx = rows[1][k].x + 41, cy = rows[1][k].y + 41
-                if let icon = icon { out.append(Quad(texture: uiTexture("icon|\(icon.name)", { icon.bitmap }), x: cx - icon.width / 2, y: cy - icon.height / 2, w: icon.width, h: icon.height)) }
-            }
-            for (k, (_, count)) in slots.prefix(7).enumerated() {
-                ringLabel(&out, ui: ui, cx: rows[1][k].x + 41, cy: rows[1][k].y + 41, count: count, hero: k == 0)
-            }
-        }
+        out += townRowQuads()
         out += townDialogQuads()
+        out += townBalloonQuads()
         out += shopQuads()
         out += hireQuads()
         return out
@@ -366,7 +362,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     func townClick(x: Float, y: Float) {
         guard let ts = town, let g = game, let i = townOpen else { return }
         if townDialog != nil { _ = townDialogClick(x: x, y: y); return }
-        if ts.hit(ts.hotspot("OK_Button"), x, y) { townOpen = nil; return }
+        if ts.hit(ts.hotspot("OK_Button"), x, y) { closeTown(); return }
+        if townRowsClick(x: x, y: y) { return }
         let t = g.towns[i]
         if let tables = g.tables {
             let dwellings = tables.buildings(for: t.alignment).filter { $0.creature != nil && t.buildings.contains($0.keyword) }
@@ -381,7 +378,13 @@ final class Renderer: NSObject, MTKViewDelegate {
             if y < 546, let lay = ts.layout(t.alignment) {
                 if let top = townBuilding(at: x, y) {
                     if top.name.lowercased().hasPrefix("mage guild") { townDialog = .mageGuild(page: 0); return }
-                    if top.name.lowercased() == "blacksmith", let hero = g.heroes.first {   // the town's blacksmith: its alignment's wares
+                    if ["fort", "citadel", "castle"].contains(top.name.lowercased()) {   // the creature screen (0x8b8310)
+                        if castleCreatures().isEmpty { prompt = (g.tables?.strings["town.castle_no_dwellings"] ?? "You must build a creature dwelling before you can recruit creatures.", false, nil) }
+                        else { townDialog = .castle }
+                        return
+                    }
+                    if ["village hall", "town hall", "city hall"].contains(top.name.lowercased()) { townDialog = .buildList; return }
+                    if top.name.lowercased() == "blacksmith", let hero = g.visitingArmy(town: i) ?? g.towns[i].garrisonHeroes.first {   // the town's blacksmith: its alignment's wares
                         let o = ShopOffer(key: "town|\(i)", title: text("blacksmith", "Blacksmith"), panel: t.alignment.capitalized, items: [], potions: [], hero: hero)
                         shop = ShopState(offer: o, panel: ui?.dialog("Blacksmith.\(o.panel)")); sound?.play("dialogue.marketplace")
                         return

@@ -306,6 +306,20 @@ final class CombatScreen {
         for e in events {
             if case .move(let id, _, let from, _) = e, unitPos[id] == nil, shownPos[id] == nil { shownPos[id] = (Float(from.0), Float(from.1)) }
             if case .die(let id) = e { pendingDeaths.insert(id) }
+            // a stack keeps the count it had until the blow or spell that cuts it lands on screen
+            switch e {
+            case .melee(_, let t, _, let k, let l), .shoot(_, let t, _, let k, let l), .effect(let t, _, _, let k, let l), .spellHit(let t, _, _, let k, let l):
+                if shownCount[t] == nil { shownCount[t] = l + k }
+            default: break
+            }
+            // the unit whose action this is stays the active one until it has played out
+            if acting == nil {
+                switch e {
+                case .move(let id, _, _, _), .melee(let id, _, _, _, _), .shoot(let id, _, _, _, _), .cast(let id, _, _), .gateHit(let id, _, _), .defend(let id), .wait(let id), .morale(let id, _):
+                    acting = id
+                default: break
+                }
+            }
         }
         queue += events
     }
@@ -346,7 +360,7 @@ final class CombatScreen {
             begin(e, now: now)
         }
         if playing == nil { pump() }
-        if playing == nil, queue.isEmpty { shownPos.removeAll(); shownCount.removeAll() }
+        if playing == nil, queue.isEmpty { shownPos.removeAll(); shownCount.removeAll(); acting = nil }
         landHits(now)
         if fidgeting == nil, now >= nextFidget {
             let waiting = b.units.filter { $0.alive && unitState[$0.id] == nil && unitPos[$0.id] == nil && !$0.disabled }
@@ -481,6 +495,10 @@ final class CombatScreen {
     }
 
     var busy: Bool { playing != nil || !queue.isEmpty }
+    /// The unit whose action is playing (the screen shows it as the active one meanwhile).
+    var acting: Int?
+    /// The unit the screen shows as active: the one acting while its action plays, then the battle's.
+    var shownCurrent: Int? { busy ? acting : battle?.current?.id }
 
     /// Start a blow's animation; returns how long it lasts. The blow lands on the attack state's hit
     /// frame (combat_actor): the target turns to the attacker and flinches then (unless it dies of

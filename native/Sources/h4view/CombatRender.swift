@@ -108,7 +108,7 @@ extension Renderer {
             if targeted, let ring = arrowSprite("target_shadow.\(shadowSize)", prefix: "combat_object"), let fr = ring.frames.first {
                 q.append(Quad(texture: texture(for: fr, of: "target_shadow.\(shadowSize)"), x: Int(tx + Float(ring.origin.x + Int32(fr.box.left)) * sc), y: Int(ty + Float(ring.origin.y + Int32(fr.box.top)) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc)))
             }
-            if b.current?.id == u.id, cs.result == nil, let ring = arrowSprite("active_shadow.\(shadowSize)", prefix: "combat_object"), let fr = ring.frames.first {
+            if cs.shownCurrent == u.id, cs.result == nil, let ring = arrowSprite("active_shadow.\(shadowSize)", prefix: "combat_object"), let fr = ring.frames.first {
                 q.append(Quad(texture: texture(for: fr, of: "active_shadow.\(shadowSize)"), x: Int(tx + Float(ring.origin.x + Int32(fr.box.left)) * sc), y: Int(ty + Float(ring.origin.y + Int32(fr.box.top)) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc)))
             }
             let st = cs.unitState[u.id]
@@ -136,7 +136,7 @@ extension Renderer {
                 // the label above the head: a waving banner in the owner's colour with the stack
                 // size, the acting unit's taller "selected" one; heroes show health and mana bars
                 if shownAlive, let sheet = cs.labels(u.side == 0 ? AdventureUI.playerColourNames[0].lowercased() : "gray") {
-                    let selected = b.current?.id == u.id && cs.result == nil
+                    let selected = cs.shownCurrent == u.id && cs.result == nil
                     let k = Int(now.timeIntervalSince1970 * 8) % (selected ? 8 : 4) + 1
                     if let l = sheet[selected ? "selected_\(k)" : "frame_\(k)"] {
                         // the sheet's origin sits 44 px above the sprite's top; the text box is the sheet's "text" hotspot
@@ -197,7 +197,7 @@ extension Renderer {
         for l in cs.frame.layers where l.isImage && l.name != "Ring_Released" && l.name != "creature_icon" {   // creature_icon is only a placeholder box
             out.append(Quad(texture: uiTexture("combatframe|\(l.name)", { l.bitmap }), x: l.x, y: l.y, w: l.width, h: l.height))
         }
-        if let cur = b.current, cs.result == nil {
+        if let cur = cs.shownCurrent.map({ b.unit($0) }), cs.result == nil {
             // the portrait centred in the ring, the ring over it
             if let ring = cs.hotspot("Ring_Released") {
                 let icon = cur.stats.isHero ? ui.portrait(keyword: cur.keyword, alignment: cs.hero?.alignment ?? "life") : ui.creatureIcon(cur.keyword)

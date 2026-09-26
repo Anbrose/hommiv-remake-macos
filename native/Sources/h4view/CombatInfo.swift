@@ -63,7 +63,9 @@ extension Renderer {
         // the morale picture only when morale struck this round
         if u.goodMorale { image("Good_Morale") } else if u.badMorale { image("Bad_Morale") }
         // the large portrait (layers.icons.creatures.82) centred in the ring
-        if let p = ui.creatureIcon(u.keyword, size: 82) ?? ui.creatureIcon(u.keyword), let r = d["Portrait_Ring"] {
+        // (a hero: its portrait, the alignment from its model "hero.<alignment>_...")
+        let heroAlign = u.actor.hasPrefix("hero.") ? String(u.actor.dropFirst(5).prefix { $0 != "_" }) : "life"
+        if let p = u.stats.isHero ? ui.portrait(keyword: u.keyword, alignment: heroAlign, size: 82) : ui.creatureIcon(u.keyword, size: 82) ?? ui.creatureIcon(u.keyword), let r = d["Portrait_Ring"] {
             out.append(Quad(texture: uiTexture("cicon82|\(u.keyword)", { p.bitmap }), x: ox + r.x + (r.width - p.width) / 2, y: oy + r.y + (r.height - p.height) / 2, w: p.width, h: p.height))
         }
         image("Portrait_Ring")

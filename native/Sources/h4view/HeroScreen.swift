@@ -132,3 +132,46 @@ extension Renderer {
         return nil
     }
 }
+
+extension Renderer {
+    /// The army screen's creature mode (creature_info_spec §1): the creature's portrait, "N name",
+    /// its abilities and long help, the stats -- attack and defense raised by the army's best
+    /// Offense / Defense and worn items, speed by Tactics -- and the army's morale.
+    func creatureModeQuads(_ leader: Hero, stack st: Hero.Stack, _ d: LayerFile, _ ox: Int, _ oy: Int) -> [Quad] {
+        guard let g = game, let ui = ui, let c = g.tables?.creature(st.creature) else { return [] }
+        var out = dialogImages(d, key: "herodlg", at: ox, oy, skip: ["Ring_Pressed", "Move_Army_Up", "Move_Army_Down", "Move_Tombstone_up", "loose_Released", "loose_Disabled",
+                                                               "tight_Pressed", "tight_Disabled", "square_Pressed", "square_Disabled", "Up_Disabled", "name_text", "creature_text",
+                                                               "Double_Ring_Background", "Skill_Frame", "Army_Up_Highlighted", "Army_Up_Pressed", "Army_Down_Highlighted",
+                                                               "Army_Down_Pressed", "SpellBook_Highlighted", "SpellBook_Pressed", "SpellBook_Released", "Ranged", "Ranged_Text",
+                                                               "skill_row_2", "skill_row_3", "skill_row_4", "skill_row_5", "Experience", "Experience_Text"])
+        if let slot = d["creature_portrait"], let p = ui.creatureIcon(st.creature, size: 82) {
+            out.append(Quad(texture: uiTexture("cicon82|\(st.creature)", { p.bitmap }), x: ox + slot.x + (slot.width - p.width) / 2, y: oy + slot.y + (slot.height - p.height) / 2, w: p.width, h: p.height))
+        }
+        out += centred("\(st.count) \(st.count == 1 ? c.name : c.plural)", in: d["name_text"], at: ox, oy, font: ui.dateFont)
+        let skills = iconSheet("skills.creature.52")
+        for (k, a) in (RuleTables.creatureAbilities[c.keyword.lowercased()] ?? []).prefix(4).enumerated() {
+            if let l = skills[a.lowercased()], let slot = d["skill_\(k + 1)"] {
+                out.append(Quad(texture: uiTexture("skill|\(a)", { l.bitmap }), x: ox + slot.x + (slot.width - l.width) / 2, y: oy + slot.y + (slot.height - l.height) / 2, w: l.width, h: l.height))
+            }
+        }
+        out += paragraph(c.longHelp, in: d["creature_text"], at: ox, oy, font: ui.numberFont)
+        let bonus = ArmyBonuses(heroes: [leader] + leader.companions)
+        func tenths(_ v: Int, _ pct: Int) -> String {   // shown with a decimal when the bonus leaves one (ftol(v x 10 + 0.5))
+            let t = Int((Double(v * (100 + pct)) / 10 + 0.5))
+            return t % 10 == 0 ? "\(t / 10)" : String(format: "%.1f", Double(t) / 10)
+        }
+        let ranged = c.shots > 0
+        let army: [(alignment: String, undead: Bool)] = ([leader] + leader.companions).map { ($0.alignment, false) } + leader.army.compactMap { s in
+            g.tables?.creature(s.creature).map { ($0.alignment, Combatant(creature: $0, count: 1).has("undead")) } }
+        let noMorale = Combatant(creature: c, count: 1).has("undead") || Combatant(creature: c, count: 1).has("mechanical")
+        let m = noMorale ? 0 : Battle.armyMorale(own: c.alignment, army: army) + bonus.morale
+        let values: [(String, String)] = [("Damage_Text", "\(c.damageLow)-\(c.damageHigh)"), ("Hit_Points_Text", "\(c.hitPoints)"),
+                                          ("Melee_Attack_Text", tenths(c.attack, bonus.attackPercent)), ("Melee_Defense_Text", tenths(c.defense, bonus.defensePercent)),
+                                          ("Ranged_Attack_Text", ranged ? tenths(c.attack, bonus.attackPercent) : "N/A"), ("Ranged_Defense_Text", tenths(c.defense, bonus.defensePercent)),
+                                          ("Speed_Text", "\(c.speed + bonus.speed)"), ("Move_Text", "\(Int(leader.movement))/\(Int(leader.maxMovement))"),
+                                          ("Spell_Points_Text", c.spellPoints > 0 ? "\(c.spellPoints)" : ""), ("Shots_Text", ranged ? "\(c.shots)" : "N/A"),
+                                          ("Morale_Text", m > 0 ? "+\(m)" : "\(m)"), ("Luck_Text", "\(bonus.luck)")]
+        for (slot, v) in values { out += centred(v, in: d[slot], at: ox, oy, font: ui.numberFont) }
+        return out
+    }
+}

@@ -87,7 +87,9 @@ extension GameState {
         h.owner = map.humanColour; h.z = z; h.home = (x, y)
         h.maxMovement = armyMovement(h); h.movement = h.maxMovement
         resources["Gold", default: 0] -= price
+        // an adventure tavern's hero joins the visiting army; a town's goes into the garrison (0x63faa0)
         if o.town == nil, let v = visitor { v.companions.append(h) }
+        else if let ti = o.town, towns[ti].owner == map.humanColour || towns[ti].owned { towns[ti].garrisonHeroes.append(h) }
         else { heroes.append(h) }
         if let ti = o.town { towns[ti].tavernDays = 7 }
         if let key = o.tavernKey { objectStates[key, default: ObjectState()].used = true; objectStates[key]?.countdown = 0 }

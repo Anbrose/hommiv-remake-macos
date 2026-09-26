@@ -1103,9 +1103,8 @@ final class Renderer: NSObject, MTKViewDelegate {
             while let first = pending.first, first.depth <= Float(p.depth) { out += first.quads; pending.removeFirst() }
             if Float(p.anchorX) < minX || Float(p.anchorX) > maxX || Float(p.anchorY) < minY || Float(p.anchorY) > maxY { continue }
             // under the shroud nothing shows; a wandering army only where it is seen now
+            // (other objects are drawn and the shroud laid over them cell by cell, as the original does)
             if let g = game, g.fogEnabled {
-                let st = g.fogState(p.cellX + p.sprite.footprint.w - 1, p.cellY + p.sprite.footprint.h - 1)
-                if st == GameState.fogUnexplored && g.fogState(p.cellX, p.cellY) == GameState.fogUnexplored { continue }
                 if p.type == "random_monster" || p.type == "monster" || p.type == "army", let i = g.monster(for: p), !g.monsterSeen(i) { continue }
             }
             // a wandering stack stands in the turning dashed ring (animation.highlight_ring), centred under its feet

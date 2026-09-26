@@ -35,3 +35,50 @@ extension GameState {
         floaters.append((s.name, h.x, h.y))
     }
 }
+
+/// Mage guilds (heroes4.exe 0x89b010): each town draws its spells when the game starts from its
+/// own school and the two next to it on the wheel life-order-death-chaos-nature -- per guild level
+/// 1...5 its own 3/3/2/2/1 and each neighbour's 2/2/2/1/1 -- a High Priority spell first, then the
+/// spells other towns use least, at random. A hero in the town learns every spell of the guild
+/// levels built that the school skill allows (0x72db40), free.
+extension GameState {
+    public func setupGuilds() {
+        let wheel = ["life", "order", "death", "chaos", "nature"]
+        var used = [Int](repeating: 0, count: RuleTables.spells.count)
+        for i in towns.indices {
+            guard let own = wheel.firstIndex(of: towns[i].alignment) else { continue }   // might: no guild
+            var levels = [[Int]](repeating: [], count: 5)
+            for lv in 1...5 {
+                for (school, rel) in [(own, 0), ((own + 1) % 5, 1), ((own + 4) % 5, 1)] {
+                    var quota = rel == 0 ? [3, 3, 2, 2, 1][lv - 1] : [2, 2, 2, 1, 1][lv - 1]
+                    let cands = RuleTables.spells.indices.filter { RuleTables.spells[$0].school == wheel[school] && RuleTables.spells[$0].level == lv && RuleTables.spells[$0].has("Teach") }
+                    var chosen: [Int] = []
+                    let hi = cands.filter { RuleTables.spells[$0].has("HiPri") }
+                    if quota > 0, !hi.isEmpty { let s = hi[rng(hi.count)]; chosen.append(s); used[s] += 1; quota -= 1 }
+                    while quota > 0 {
+                        let left = cands.filter { !chosen.contains($0) }
+                        guard let least = left.map({ used[$0] }).min() else { break }
+                        let pool = left.filter { used[$0] == least }
+                        let s = pool[rng(pool.count)]; chosen.append(s); used[s] += 1; quota -= 1
+                    }
+                    levels[lv - 1] += chosen
+                }
+            }
+            towns[i].guildSpells = levels
+        }
+    }
+    /// The spells of the guild levels the town has built.
+    public func guildSpells(_ t: Town) -> [Int] {
+        (1...5).filter { t.buildings.contains("mage guild \($0)") }.flatMap { t.guildSpells.count >= $0 ? t.guildSpells[$0 - 1] : [] }
+    }
+    /// A hero in a town learns what its guild teaches him.
+    @discardableResult
+    public func learnFromGuild(_ h: Hero, town i: Int) -> [Int] {
+        var learned: [Int] = []
+        for hh in [h] + h.companions {
+            for s in guildSpells(towns[i]) where !hh.spells.contains(s) && hh.canLearn(s) { hh.spells.insert(s); learned.append(s) }
+        }
+        if !learned.isEmpty { log.append("learned " + Set(learned).map { RuleTables.spells[$0].name }.sorted().joined(separator: ", ")) }
+        return learned
+    }
+}

@@ -372,6 +372,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             // a built building in the view: a dwelling recruits, the hall (or anything else) builds
             if y < 546, let lay = ts.layout(t.alignment) {
                 if let top = townBuilding(at: x, y) {
+                    if top.name.lowercased().hasPrefix("mage guild") { townDialog = .mageGuild(page: 0); return }
                     if let b = tables.buildings(for: t.alignment).first(where: { $0.keyword == top.name.lowercased() }), let c = b.creature, let def = tables.creature(c) {
                         let most = min(t.available[c] ?? 0, def.gold > 0 ? g.resources["Gold", default: 0] / def.gold : 99)
                         townDialog = .recruit(creature: c, count: most)

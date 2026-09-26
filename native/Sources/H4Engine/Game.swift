@@ -329,6 +329,8 @@ public final class GameState {
         public var builtToday = false
         public var terrain: UInt8 = 1
         public var z = 0                                // map level
+        /// The mage guild's spells by guild level (1...5), drawn at the start of the game.
+        public var guildSpells: [[Int]] = []
     }
     public struct Mine { public let x: Int, y: Int, name: String, resource: String, amount: Int; public var owned: Bool; public var z = 0 }
     /// A creature dwelling on the map: a week's growth waits at the start; once owned it grows by
@@ -957,6 +959,7 @@ public final class GameState {
             } else {
                 runTownEvent(i, slot: 3, hero: hero)                            // "visited"
             }
+            learnFromGuild(hero, town: i)
             enteredTown = i
             hero.target = nil
             return

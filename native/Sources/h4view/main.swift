@@ -136,6 +136,7 @@ if let tables = ruleTables { game.tables = tables; lap("rules: \(tables.creature
 let alignments = ["haven": "life", "academy": "order", "asylum": "chaos", "necropolis": "death", "preserve": "nature", "stronghold": "might"]
 func faction(of name: String) -> String { alignments.first { name.lowercased().contains($0.key) }?.value ?? "life" }
 game.registerObjects(townFactions: Dictionary(scenes.flatMap { $0.placed }.filter { $0.category == "castle" }.map { ($0.name, faction(of: $0.name)) }, uniquingKeysWith: { a, _ in a }))
+game.setupGuilds()    // each town's mage guild spells
 game.setupObjects()   // chests, piles, generators: their contents are rolled as the game starts
 let ownedByFirst = map.objects.first { ($0.type == "town" || $0.type == "random_town") && $0.owner == map.humanColour && $0.level == scene.level }
 if let town = scene.placed.first(where: { p in ownedByFirst.map { p.category == "castle" && p.cellX == $0.x && p.cellY == $0.y } ?? false })
@@ -312,6 +313,7 @@ if let out = snapshot {
         renderer.townOpen = game.towns.firstIndex { $0.owned }
         renderer.townHover = ProcessInfo.processInfo.environment["H4HOVER"]   // --town snapshot: pretend the pointer is over this building
         if openBuildList { renderer.townDialog = .buildList }
+        if ProcessInfo.processInfo.environment["H4GUILD"] != nil { renderer.townDialog = .mageGuild(page: 0) }
         if openRecruit, let i = renderer.townOpen, let slot = townScreen?.hotspot("dwelling_1") { _ = i; renderer.townClick(x: Float(slot.x + 5), y: Float(slot.y + 5)) }
     }
     lap("textures uploaded")

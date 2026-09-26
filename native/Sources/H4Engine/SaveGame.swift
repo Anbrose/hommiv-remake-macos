@@ -57,6 +57,7 @@ public struct SaveGame: Codable {
         public var buildings: [String]
         public var available: [String: Int]
         public var builtToday: Bool
+        public var guildSpells: [[Int]]? = nil
     }
     public struct CellFlag: Codable { public var x, y: Int; public var on: Bool }
     public struct CellCount: Codable { public var x, y: Int; public var count: Int; public var owned: Bool? = nil; public var fourteenths: Int? = nil }
@@ -91,7 +92,7 @@ extension GameState {
                      SaveGame.state(of: h)
                  },
                  towns: towns.map { .init(x: $0.x, y: $0.y, name: $0.name, owned: $0.owned, owner: $0.owner, buildings: Array($0.buildings).sorted(),
-                                          available: $0.available, builtToday: $0.builtToday) },
+                                          available: $0.available, builtToday: $0.builtToday, guildSpells: $0.guildSpells) },
                  mines: mines.map { .init(x: $0.x, y: $0.y, on: $0.owned) },
                  dwellings: dwellings.map { .init(x: $0.x, y: $0.y, count: $0.available, owned: $0.owned, fourteenths: $0.fourteenths) },
                  monsters: monsters.map { .init(x: $0.x, y: $0.y, name: $0.name, creature: $0.creature, count: $0.count,
@@ -130,6 +131,7 @@ extension GameState {
             guard let i = towns.firstIndex(where: { $0.x == t.x && $0.y == t.y }) else { continue }
             towns[i].name = t.name; towns[i].owned = t.owned; towns[i].owner = t.owner
             towns[i].buildings = Set(t.buildings); towns[i].available = t.available; towns[i].builtToday = t.builtToday
+            if let gs = t.guildSpells { towns[i].guildSpells = gs }
         }
         for m in s.mines { if let i = mines.firstIndex(where: { $0.x == m.x && $0.y == m.y }) { mines[i].owned = m.on } }
         for d in s.dwellings { if let i = dwellings.firstIndex(where: { $0.x == d.x && $0.y == d.y }) { dwellings[i].available = d.count; dwellings[i].owned = d.owned ?? false; dwellings[i].fourteenths = d.fourteenths ?? 0 } }

@@ -162,7 +162,7 @@ public enum QuickCombat {
         if b.has("insubstantial") { defense *= 2 }
         if ranged, b.has("skeletal") { defense *= 2 }
         if b.aged { defense *= 0.8 }
-        let ratio = max(0.05, attack / defense)
+        let ratio = min(20, max(0.05, attack / defense))   // clamped to 0.05...20 (0x650e30)
         var d = Int((Float(base) * ratio).rounded())
         let ward = ["life": "life_protection", "death": "death_protection", "chaos": "chaos_protection"][a.alignment]
         if let w = ward, b.has(w) { d = d * 100 / 150 }

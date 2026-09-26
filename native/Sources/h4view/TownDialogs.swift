@@ -7,6 +7,7 @@ enum TownDialog {
     case buildList                         // layers.dialog.buy_building: every building of the town as a thumbnail
     case buildDetail(RuleTables.BuildingDef)   // layers.dialog.buy_building_detail: one building, Buy/Cancel
     case recruit(creature: String, count: Int) // layers.dialog.recruit: a dwelling's creature with a slider
+    case mageGuild(page: Int)                  // layers.dialog.mage_guild.book: the guild's spells, two levels a spread
 }
 
 extension Renderer {
@@ -62,6 +63,27 @@ extension Renderer {
         let town = g.towns[i]
         var out: [Quad] = []
         switch dlg {
+        case .mageGuild(let page):
+            // the book: levels 1 and 2 on the first spread, 3, 4 and 5 on the second; a level not
+            // built shows its places empty
+            guard let d = ui.dialog("mage_guild.book"), let bg = d["Book_Pages"] else { return [] }
+            let ox = (AdventureUI.width - 800) / 2, oy = (AdventureUI.height - 600) / 2
+            out.append(Quad(texture: uiTexture("dlg|mgbook|bg", { bg.bitmap }), x: ox, y: oy, w: bg.width, h: bg.height))
+            for lv in (page == 0 ? [1, 2] : [3, 4, 5]) {
+                if let b = d["Level_\(lv)_Spells_Background"] { out.append(Quad(texture: uiTexture("dlg|mgbook|lvbg\(lv)", { b.bitmap }), x: ox + b.x, y: oy + b.y, w: b.width, h: b.height)) }
+                else if lv == 3 || lv == 4, let b = d["Level_\(lv == 3 ? 1 : 2)_Spells_Background"] { out.append(Quad(texture: uiTexture("dlg|mgbook|lvbg\(lv == 3 ? 1 : 2)", { b.bitmap }), x: ox + b.x, y: oy + b.y, w: b.width, h: b.height)) }
+                out += centred("Level \(lv) Spells", in: d["level_\(lv)_spells"], at: ox, oy, font: ui.dateFont)
+                guard town.buildings.contains("mage guild \(lv)"), town.guildSpells.count >= lv else { continue }
+                for (k, sp) in town.guildSpells[lv - 1].enumerated() {
+                    guard let f = d["level_\(lv)_frame_\(k + 1)"] else { continue }
+                    let def = RuleTables.spells[sp]
+                    if let icon = spellIcon(def.name) ?? spellIcon(def.keyword) {
+                        out.append(Quad(texture: uiTexture("spellicon|\(icon.name)", { icon.bitmap }), x: ox + f.x + (f.width - icon.width) / 2, y: oy + f.y + (f.height - icon.height) / 2, w: icon.width, h: icon.height))
+                    }
+                    out += centred(def.name, in: UILayer(name: "", kind: 1, x: f.x - 30, y: f.y + 62, width: 120, height: 16, bitmap: Bitmap(width: 1, height: 1)), at: ox, oy, font: ui.numberFont)
+                }
+            }
+            return out
         case .buildList:
             guard let d = ui.dialog("buy_building") else { return [] }
             let ox = (AdventureUI.width - 800) / 2, oy = (AdventureUI.height - 600) / 2
@@ -189,6 +211,14 @@ extension Renderer {
     func townDialogClick(x: Float, y: Float) -> Bool {
         guard let dlg = townDialog, let ui = ui, let g = game, let i = townOpen, let hero = g.heroes.first else { return false }
         switch dlg {
+        case .mageGuild(let page):
+            let ox = (AdventureUI.width - 800) / 2, oy = (AdventureUI.height - 600) / 2
+            guard let d = ui.dialog("mage_guild.book") else { townDialog = nil; return true }
+            if inside(d["Next_Page"], at: ox, oy, x, y) { townDialog = .mageGuild(page: 1) }
+            else if inside(d["Previous_Page"], at: ox, oy, x, y) { townDialog = .mageGuild(page: 0) }
+            else if inside(d["close_button"], at: ox, oy, x, y) || x < Float(ox) || x > Float(ox + 800) || y < Float(oy) || y > Float(oy + 600) { townDialog = nil }
+            _ = page
+            return true
         case .buildList:
             let ox = (AdventureUI.width - 800) / 2, oy = (AdventureUI.height - 600) / 2
             if let d = ui.dialog("buy_building"), inside(d["OK_Button"], at: ox, oy, x, y) { townDialog = nil; return true }

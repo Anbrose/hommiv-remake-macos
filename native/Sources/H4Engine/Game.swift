@@ -971,7 +971,9 @@ public final class GameState {
             } else if p.category == "mine" {
                 let short = p.name.replacingOccurrences(of: "adv_object.mine.", with: "").replacingOccurrences(of: ".h4d", with: "").replacingOccurrences(of: " R", with: "")
                 if let (res, amount) = RuleTables.mineIncome[short] {
-                    mines.append(Mine(x: p.cellX, y: p.cellY, name: p.name, resource: res, amount: amount, owned: false))
+                    // a mine the map gives a player (its record's owner byte)
+                    let rec = map.objects.first { $0.type == "mine" && $0.x == p.cellX && $0.y == p.cellY && $0.level == level }
+                    mines.append(Mine(x: p.cellX, y: p.cellY, name: p.name, resource: res, amount: amount, owned: rec?.owner == map.humanColour, owner: rec?.owner))
                 }
             } else if p.category == "Random creatures", let t = tables, p.name.hasPrefix("actor_sequence.") {
                 // "actor_sequence.<creature>.wait.<facing>.h4d" -> the creature; the stack size follows its level
@@ -1014,7 +1016,9 @@ public final class GameState {
                 var short = p.name.replacingOccurrences(of: "adv_object.creature generators.", with: "").replacingOccurrences(of: ".h4d", with: "").lowercased()
                 if short.hasSuffix(" r") { short.removeLast(2) }
                 if let kw = t.dwellingCreature[short], let c = t.creature(kw) {
-                    dwellings.append(Dwelling(x: p.cellX, y: p.cellY, name: p.name, creature: c.keyword, available: c.growth))
+                    var dw = Dwelling(x: p.cellX, y: p.cellY, name: p.name, creature: c.keyword, available: c.growth)
+                    dw.owned = map.objects.first { $0.type == "creature_dwelling" && $0.x == p.cellX && $0.y == p.cellY && $0.level == level }?.owner == map.humanColour
+                    dwellings.append(dw)
                 }
             }
         }

@@ -148,10 +148,12 @@ extension GameState {
             st.artifacts = (0..<n).compactMap { _ in randomPotion() }
         case "windmill":   // 4..6 crystal, sulfur, mercury or gems a week (0x478720)
             st.material = 3 + rng(4); st.amount = 4 + rng(3)
+            st.owner = record(for: p)?.owner
         case "weekly_material_generator", "random_weekly_material_generator":
             let subs = ["water_wheel", "woodcutters_cottage", "miners_guild", "crystal_garden", "imp_pit", "apprentices_lab", "leprechaun"]
             let m = subs.firstIndex(of: p.subtype) ?? (1 + rng(6))
             rollStock(&st, material: m)
+            st.owner = record(for: p)?.owner
         case "tree_of_knowledge":
             st.price = random.next() & 1
         case "teacher", "random_teacher", "school", "shrine", "random_shrine":

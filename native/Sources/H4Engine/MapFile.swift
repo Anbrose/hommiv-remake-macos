@@ -431,6 +431,9 @@ public struct MapFile {
             switch cats[0] {
             case "sign", "ocean_bottle", "event_trigger", "pandoras_box":
                 if let v = try? sr.word(), v == 1, let t = try? sr.string() { o.text = t }
+            case "mine", "garrison", "creature_dwelling", "shipyard", "lighthouse", "windmill", "weekly_material_generator", "random_weekly_material_generator":
+                // owned objects (0x7d3fb0 / 0x7d7270): u16 version, v1+ u8 owner (6 = none)
+                if let v = try? sr.word(), v >= 1, let ow = try? sr.byte(), ow < 6 { o.owner = ow }
             case "prison":
                 if let v = try? sr.word(), v == 1, let (h, _) = MapFile.parseHero(d, at: sr.position) { o.prisoner = h }
             case "artifact" where cats[1] == "parchment" || cats[1] == "scroll":

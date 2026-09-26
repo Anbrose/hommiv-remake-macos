@@ -32,6 +32,7 @@ public struct ScriptNode {
     public func node(_ i: Int) -> ScriptNode? { if i < args.count, case .node(let v) = args[i] { return v }; return nil }
     public func nodes(_ i: Int) -> [ScriptNode] { if i < args.count, case .nodes(let v) = args[i] { return v }; return [] }
     public func ints(_ i: Int) -> [Int] { if i < args.count, case .ints(let v) = args[i] { return v }; return [] }
+    public func army(_ i: Int) -> [(creature: Int, count: Int)?] { if i < args.count, case .army(let v) = args[i] { return v }; return [] }
 }
 
 /// A map event: where it came from and when it fires.
@@ -132,7 +133,11 @@ public struct ScriptReader {
             if kind == 0xff { out.append(nil); continue }
             guard kind == 0 else { throw ScriptError(message: "hero in a script army") }
             let v = try u16(), id = try i16(), n = try i16()
-            if v >= 1 { guard try u16() == 0 else { throw ScriptError(message: "stack extras") } }
+            if v >= 1 {   // a stack may carry artifacts (0x653760: u16 n + n artifacts)
+                let k = try u16()
+                guard k <= 100 else { throw ScriptError(message: "stack artifacts \(k)") }
+                for _ in 0..<k { _ = try artifact() }
+            }
             out.append(id >= 0 ? (id, n) : nil)
         }
         return out
@@ -183,6 +188,37 @@ public struct ScriptReader {
         for _ in 0..<7 { _ = try i32() }
         return (a, message)
     }
+    /// A versioned boolean (0x4112a0): u16 version, the expression.
+    public mutating func versionedBoolean() throws -> ScriptNode {
+        version = try u16()
+        guard version <= 3 else { throw ScriptError(message: "bool version \(version)") }
+        return try boolean()
+    }
+    /// A versioned action (0x410930): u16 version, the action.
+    public mutating func versionedAction() throws -> ScriptNode {
+        version = try u16()
+        guard version <= 3 else { throw ScriptError(message: "script version \(version)") }
+        return try action()
+    }
+    public mutating func string() throws -> String { try str() }
+    public mutating func word() throws -> Int { try u16() }
+    public mutating func long() throws -> Int { try i32() }
+    public mutating func byte() throws -> Int { try u8() }
+    public mutating func skip(_ n: Int) throws { try need(n); rd.pos += n }
+    public mutating func seek(_ p: Int) { rd.pos = p }
+    /// A placed event of the map's list (0x726f90): u16 version, the script, v1+ u8 players and
+    /// u8 flags, string16 name -- what a Pandora's box or an event trigger runs.
+    public mutating func placedEvent() throws -> MapEvent {
+        let v = try u16()
+        guard v <= 1 else { throw ScriptError(message: "placed event \(v)") }
+        let s = try script()
+        let players = v >= 1 ? try u8() : 0, flags = v >= 1 ? try u8() : 0
+        let name = try str()
+        var e = MapEvent(kind: .triggerable, name: name, action: s.action, players: players, flags: flags)
+        e.message = s.message
+        return e
+    }
+
     /// A standard (built-in) event (0x7d2fd0): u16 version, script, u8 players, u8 flags.
     public mutating func builtinEvent(slot: Int) throws -> MapEvent {
         _ = try u16()

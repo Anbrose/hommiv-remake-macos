@@ -20,6 +20,15 @@ public struct MapObject {
     public var heroes: [MapHero] = []
     /// A random monster's size range in peasants (min, max), when the editor set one.
     public var monsterRange: (min: Int, max: Int)? = nil
+    /// A sign's or bottle's message; the name of an event trigger's or Pandora's box's event.
+    public var text: String? = nil
+    /// A prison's hero.
+    public var prisoner: MapHero? = nil
+    /// A spell scroll's or parchment's spell.
+    public var spell: Int? = nil
+    /// A quest site's texts (0x7ed980: four strings), its reward action and condition.
+    public var questTexts: [String] = []
+    public var questAction: ScriptNode? = nil, questCondition: ScriptNode? = nil, questAction2: ScriptNode? = nil
 
     /// The town part of a town record as heroes4.exe reads it (0x417990, versions 6...8):
     /// u16 version, u8 owner (6 = none), string16 name, u8 custom garrison + creature array,
@@ -129,6 +138,8 @@ public struct MapFile {
     /// Map difficulty (0 easy ... 4 impossible), the byte after the name.
     public let difficulty: Int
     public let objects: [MapObject]
+    /// The map's placed events (0x4d0200): what Pandora's boxes and event triggers run, by name.
+    public private(set) var placedEvents: [MapEvent] = []
     /// cells[level][x * size + y]; nil outside the playable diamond
     public let cells: [[Cell?]]
 
@@ -200,6 +211,26 @@ public struct MapFile {
             throw H4Error.corrupt("map: terrain not found")
         }
         objects = MapFile.parseObjects(d, end: terrainPos, names: objectNames) + MapFile.parseArmies(d, end: terrainPos, size: size)
+        // the placed-event list lies before the objects; found where a whole list reads and its
+        // names are those of the map's boxes and triggers
+        let wanted = Set(objects.filter { $0.type == "pandoras_box" || $0.type == "event_trigger" }.compactMap { $0.text?.lowercased() })
+        if !wanted.isEmpty {
+            let b = [UInt8](d.prefix(terrainPos))
+            var best: (Int, [MapEvent]) = (0, [])
+            var p = headerEnd
+            while p + 4 < b.count {
+                defer { p += 1 }
+                let n = Int(b[p]) | Int(b[p + 1]) << 8
+                guard n > 0, n <= 200, b[p + 3] == 0, b[p + 2] <= 1 else { continue }
+                var sr = ScriptReader(d, at: p + 2)
+                var evs: [MapEvent] = []
+                for _ in 0..<n { guard let e = try? sr.placedEvent() else { break }; evs.append(e) }
+                guard evs.count == n else { continue }
+                let k = evs.filter { wanted.contains($0.name.lowercased()) }.count
+                if k > best.0 { best = (k, evs); if k == wanted.count { break } }
+            }
+            placedEvents = best.1
+        }
         var grids: [[Cell?]] = []
         for lv in 0..<levels {
             var g = [Cell?](repeating: nil, count: size * size)
@@ -270,7 +301,16 @@ public struct MapFile {
             }
             guard kind == 0, rd.remaining >= 6 else { return nil }
             let v = rd.u16(), id = Int(Int16(bitPattern: rd.u16())), n = Int(Int16(bitPattern: rd.u16()))
-            if v >= 1 { guard rd.remaining >= 2, rd.u16() == 0 else { return nil } }
+            if v >= 1 {   // the stack's artifacts (0x653760)
+                guard rd.remaining >= 2 else { return nil }
+                let k = Int(rd.u16())
+                guard k <= 100 else { return nil }
+                for _ in 0..<k {
+                    guard rd.remaining >= 2 else { return nil }
+                    let a = rd.u16()
+                    if a == 0x7c || a == 0xa6 { guard rd.remaining >= 2 else { return nil }; _ = rd.u16() }
+                }
+            }
             out.append(id >= 0 ? (id, n) : nil)
         }
         return out
@@ -385,6 +425,32 @@ public struct MapFile {
             if cats[0] == "town" || cats[0] == "random_town" {
                 let t = MapObject.parseTownBody(&rd, random: cats[0] == "random_town")
                 o.town = t; o.owner = t?.owner; o.customName = t?.name
+            }
+            // the class's own body (vtable slot 36, objbodies_spec)
+            var sr = ScriptReader(d, at: rd.pos)
+            switch cats[0] {
+            case "sign", "ocean_bottle", "event_trigger", "pandoras_box":
+                if let v = try? sr.word(), v == 1, let t = try? sr.string() { o.text = t }
+            case "prison":
+                if let v = try? sr.word(), v == 1, let (h, _) = MapFile.parseHero(d, at: sr.position) { o.prisoner = h }
+            case "artifact" where cats[1] == "parchment" || cats[1] == "scroll":
+                if let v = try? sr.word(), v == 1, let sp = try? sr.long() { o.spell = sp }
+            case "quest_gate", "quest_guard", "seers_hut":
+                if let v = try? sr.word(), v >= 1 {
+                    let texts = (0..<4).compactMap { _ in try? sr.string() }
+                    if texts.count == 4 {
+                        o.questTexts = texts
+                        o.questAction = try? sr.versionedAction()
+                        o.questCondition = try? sr.versionedBoolean()
+                        if cats[0] != "quest_gate", let t = try? sr.string() {
+                            o.questTexts.append(t)
+                            if v >= 2, let a = try? sr.versionedAction() { o.questAction2 = a }
+                            if cats[0] == "seers_hut", let t2 = try? sr.string() { o.questTexts.append(t2) }
+                            if cats[0] == "seers_hut", v == 1, let a = try? sr.versionedAction() { o.questAction2 = a }
+                        }
+                    }
+                }
+            default: break
             }
             if cats[0] == "random_monster", let next = starts.first(where: { $0 > p }) {
                 // version 4 records end with i32 min, i32 max (0x7f3710), just before the next

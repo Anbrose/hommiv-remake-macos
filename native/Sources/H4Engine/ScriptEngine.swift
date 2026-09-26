@@ -114,9 +114,12 @@ extension GameState {
         case "if":
             if let cond = n.node(0), truth(cond, c) { if let a = n.node(1) { exec(a, c, &removed) } }
             else if let a = n.node(2) { exec(a, c, &removed) }
-        case "ask":   // a yes/no question: shown, answered yes
-            scripts.messages.append(n.text(0))
-            if let a = n.node(1) { exec(a, c, &removed) }
+        case "ask":   // a yes/no question: yes runs the first action (the box waits for the answer)
+            let yes = n.node(1)
+            question = (n.text(0), { [weak self] in
+                guard let self = self, let a = yes else { return }
+                var r = false; self.exec(a, c, &r)
+            })
         case "text":
             if !n.text(0).isEmpty { scripts.messages.append(n.text(0)) }
             for a in n.nodes(1) { exec(a, c, &removed) }
@@ -160,6 +163,38 @@ extension GameState {
             if let t = c.town, let b = RuleTables.buildingIds[towns[t].alignment]?[n.int(0)] { towns[t].buildings.insert(b) }
         case "change_owner":
             if let t = c.town { towns[t].owner = n.int(0) < 6 ? n.int(0) : nil; towns[t].owned = towns[t].owner == human }
+        case "combat":   // a fight with the script's army; then its win or lose action
+            let stacks = n.army(1).compactMap { $0 }.filter { $0.creature >= 0 && $0.creature < RuleTables.creatureIds.count && $0.count > 0 }
+            guard let h = c.hero ?? heroes.first, let lead = stacks.first else { return }
+            var m = Monster(x: h.x, y: h.y, name: "script", creature: RuleTables.creatureIds[lead.creature], count: lead.count,
+                            extra: stacks.dropFirst().map { (RuleTables.creatureIds[$0.creature], $0.count) })
+            m.z = h.z; m.bank = "script"
+            monsters.append(m)
+            scriptBattle = (n.node(2), n.node(3), c)
+            if let p = scene.placed.first(where: { $0.cellX == h.x && $0.cellY == h.y }) ?? scene.placed.first { fight(hero: h, monsterAt: monsters.count - 1, p) }
+        case "give_artifact":
+            guard let h = c.hero ?? heroes.first else { return }
+            for a in n.ints(1) { give(artifact: a, to: h) }
+        case "rem_artifact":
+            guard let h = c.hero ?? heroes.first else { return }
+            for a in n.ints(1) { if let k = h.backpack.firstIndex(of: a) { h.backpack.remove(at: k) } else if let k = h.equipped.firstIndex(of: a) { h.equipped[k] = nil } }
+        case "give_spell":
+            if let h = c.hero ?? heroes.first, n.int(1) < RuleTables.spells.count { h.spells.insert(n.int(1)) }
+        case "give_skill", "inc_skill":   // (hero, skill, level): learn it at the level, or one level more
+            guard let h = c.hero ?? heroes.first, n.int(1) < 36 else { return }
+            let lv = n.keyword == "give_skill" ? min(4, n.int(2)) : min(4, h.skill(id: n.int(1)))
+            h.learn(n.int(1), level: lv); h.grantSchoolSpells(random: &random); h.reconsiderClass()
+        case "inc_level":
+            guard let h = c.hero ?? heroes.first else { return }
+            for _ in 0..<max(0, n.int(1)) { giveExperience(max(0, Hero.experienceTable[min(70, h.level + 1)] - h.experience), toOnly: h) }
+        case "inc_luck", "dec_luck":
+            if let h = c.hero ?? heroes.first { h.armyLuck["script", default: 0] += (n.keyword == "inc_luck" ? 1 : -1) * n.int(1) }
+        case "inc_morale", "dec_morale":
+            if let h = c.hero ?? heroes.first { h.armyMorale["script", default: 0] += (n.keyword == "inc_morale" ? 1 : -1) * n.int(1) }
+        case "inc_mana", "dec_mana":
+            if let h = c.hero ?? heroes.first { h.spellPoints = max(0, spellPoints(h) + (n.keyword == "inc_mana" ? 1 : -1) * n.int(1)) }
+        case "inc_move":
+            if let h = c.hero ?? heroes.first { h.movement = max(0, h.movement + Float(n.int(1))) }
         case "no_op": break
         default:
             if ProcessInfo.processInfo.environment["H4DEBUG"] != nil { print("script: '\(n.keyword)' not run") }

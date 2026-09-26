@@ -298,6 +298,8 @@ public final class GameState {
     public var heroes: [Hero] = []
     /// The other players' heroes on the map (armies led by heroes; companions travel with them).
     public var enemyHeroes: [Hero] = []
+    /// A script's fight: what runs when it is won and when it is lost.
+    public var scriptBattle: (win: ScriptNode?, lose: ScriptNode?, context: ScriptContext)?
     /// A siege waiting for the combat screen: the hero and the town.
     public var pendingSiege: (hero: Hero, town: Int)?
     /// A battle with an enemy hero army waiting for the combat screen.
@@ -798,6 +800,16 @@ public final class GameState {
         clearBattleEffects(hero)
         hero.army = army
         refreshMovement(hero)
+        if monsters[i].bank == "script", let sb = scriptBattle {   // a script's fight: its win or lose action
+            monsters.remove(at: i)
+            scriptBattle = nil
+            if won { giveExperience(experience, to: hero) }
+            else { hero.x = hero.home.x; hero.y = hero.home.y; hero.movement = 0; hero.path = []; hero.plan = [] }
+            var r = false
+            if let a = won ? sb.win : sb.lose { exec(a, sb.context, &r) }
+            hero.target = nil; pendingBattle = nil
+            return
+        }
         if let key = monsters[i].bank {   // a creature bank: the object stays
             if won { giveExperience(experience, to: hero); bankDefeated(hero, p, key: key) }
             else {
@@ -1275,6 +1287,7 @@ public final class GameState {
                 h.movement -= stepCost
                 h.path.removeFirst()
                 h.progress = 0
+                stepped(h, onto: h.x, h.y)
                 // stepping into a wandering stack's guard radius where it notices the hero: it falls on
                 // him and the walk ends there (unless he is on his way to fight that very stack)
                 if let i = threat(to: h, at: h.x, h.y), !(h.target.map { $0.x == monsters[i].x && $0.y == monsters[i].y } ?? false) {

@@ -198,6 +198,32 @@ extension GameState {
             say(p, "initial"); dialogueSound(16)
         case "creature_bank":
             visitBank(hero, p, st)
+        case "sign", "ocean_bottle":
+            // the map's own text (a bottle is read once and gone); the sign passes sound id 20 (0x46db80)
+            let t = record(for: p)?.text
+            scripts.messages.append(t?.isEmpty == false ? t! : objectText(p, "help") ?? "")
+            dialogueSound(20)
+            if p.type == "ocean_bottle" { remove(p) }
+        case "prison":
+            // the prisoner joins the army if there is room (0x467b00)
+            guard let mh = record(for: p)?.prisoner else { remove(p); return true }
+            let slots = 1 + hero.companions.count + hero.army.count
+            let name = mh.name.isEmpty ? "the prisoner" : mh.name
+            guard slots < Hero.armySlots else { say(p, "Denied", ["%hero_name": name]); return true }
+            let freed = Hero.fromMap(mh, alignment: hero.alignment, x: hero.x, y: hero.y, tables: tables, random: &random)
+            freed.owner = hero.owner; freed.z = hero.z
+            hero.companions.append(freed)
+            say(p, "Initial", ["%hero_name": freed.name])
+            dialogueSound(25)
+            remove(p)
+        case "pandoras_box":
+            // the map's placed event of that name: its message, question, guards and rewards
+            if let name = record(for: p)?.text, var e = map.placedEvents.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
+                run(event: &e, ScriptContext(current: map.humanColour, hero: hero))
+            }
+            remove(p)
+        case "seers_hut", "quest_gate", "quest_guard":
+            visitQuest(hero, p, &st)
         case "lighthouse":
             if st.owner == map.humanColour { say(p, "empty") } else { st.owner = map.humanColour; st.countdown = -1; say(p, "initial") }
         default:
@@ -320,5 +346,40 @@ extension GameState {
         guard let st = objectStates[objectKey(p)] else { return "-" }
         let t = bankTreasure(p, st)
         return "guards \(zip(st.guardCreatures, st.guardCounts).map { "\($0.1) \($0.0)" }) worth \(st.worth) treasure \(t.materials) artifacts \(t.artifacts.map { artifactName($0) })"
+    }
+
+    /// The map record of a placed object.
+    func record(for p: MapScene.Placed) -> MapObject? {
+        map.objects.first { $0.x == p.cellX && $0.y == p.cellY && $0.level == level && $0.type == p.type }
+    }
+    /// A quest (0x7ee2a0): the first visit shows the proposal; when the condition holds the quest is
+    /// done -- a gate or guard lets the army through (it is gone), a hut gives its reward -- else
+    /// the "not yet" text. Texts: name, objective, proposal, not yet; then the completion text.
+    func visitQuest(_ hero: Hero, _ p: MapScene.Placed, _ st: inout ObjectState) {
+        guard let r = record(for: p), r.questTexts.count >= 4 else { say(p, "help"); return }
+        dialogueSound(17)
+        if st.used { scripts.messages.append(r.questTexts.count > 5 ? r.questTexts[5] : (objectText(p, "completed") ?? r.questTexts[1])); return }
+        let c = ScriptContext(current: map.humanColour, hero: hero)
+        let first = st.countdown == 0
+        st.countdown = 1
+        if first, !r.questTexts[2].isEmpty { scripts.messages.append(r.questTexts[2]) }
+        if let cond = r.questCondition, truth(cond, c) {
+            st.used = true
+            if r.questTexts.count > 4, !r.questTexts[4].isEmpty { scripts.messages.append(r.questTexts[4]) }
+            var removed = false
+            if let a = r.questAction2 { exec(a, c, &removed) }
+            if let a = r.questAction { exec(a, c, &removed) }
+            if p.type != "seers_hut" { remove(p) }
+        } else if !first {
+            scripts.messages.append(r.questTexts[3])
+        }
+    }
+    /// An event trigger on a cell the army stepped onto: its placed event runs once.
+    func stepped(_ hero: Hero, onto x: Int, _ y: Int) {
+        guard let p = scene.placed.first(where: { $0.type == "event_trigger" && $0.cellX == x && $0.cellY == y }),
+              let name = record(for: p)?.text, objectStates[objectKey(p)]?.used != true,
+              var e = map.placedEvents.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else { return }
+        objectStates[objectKey(p), default: ObjectState()].used = true
+        run(event: &e, ScriptContext(current: map.humanColour, hero: hero))
     }
 }

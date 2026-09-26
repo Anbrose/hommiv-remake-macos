@@ -266,6 +266,8 @@ public final class Hero {
     /// The wandering stacks the player could see when this walk began (a walk stops when it
     /// finds its way runs into the guard zone of one not seen before).
     var knownThreats: Set<Int>? = nil
+    /// Where each hero and stack of the army stands in its row's seven places (TownArmies).
+    public var rowKeys: [String?] = []
     /// The cell the player clicked for the planned route (it may end short, at a gateway).
     public var planGoal: (Int, Int)? = nil
     public var progress: Float = 0
@@ -412,6 +414,8 @@ public final class GameState {
         public var garrison: [Hero.Stack] = []
         /// Heroes stationed in the town (they take garrison slots and defend it).
         public var garrisonHeroes: [Hero] = []
+        /// Where each garrison stack and hero stands in the row's seven places (TownArmies).
+        public var rowKeys: [String?] = []
         /// 0 no walls, 1 fort, 2 citadel, 3 castle (the siege layout).
         public var castleLevel: Int { buildings.contains("castle") ? 3 : buildings.contains("citadel") ? 2 : buildings.contains("fort") ? 1 : 0 }
     }

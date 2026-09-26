@@ -86,23 +86,45 @@ extension Renderer {
         let (ox, oy) = castleOrigin
         if inside(d["close_button"], at: ox, oy, x, y) { townDialog = nil; return }
         let creatures = castleCreatures()
-        if inside(d["purchase_all_button"], at: ox, oy, x, y) {   // Buy All (0x5c6d00): everything affordable, dwelling by dwelling
-            var bought = 0
+        if inside(d["purchase_all_button"], at: ox, oy, x, y) {
+            // Buy All (0x5c6d00): what can be afforded of every dwelling, with room in the garrison;
+            // the list is shown to confirm ("Do you want to recruit these creatures?")
+            var gold = g.resources["Gold", default: 0], room = GameState.rowSlots - g.garrisonCount(i)
+            var plan: [(String, Int)] = []
+            var short = "", total = 0
             for c in creatures {
-                guard let def = tables.creature(c) else { continue }
-                let n = min(g.towns[i].available[c] ?? 0, def.gold > 0 ? g.resources["Gold", default: 0] / def.gold : 0)
-                if n > 0, g.addToGarrison(i, c, n) {
-                    g.towns[i].available[c, default: 0] -= n; g.resources["Gold", default: 0] -= n * def.gold; bought += n
+                guard let def = tables.creature(c), let have = g.towns[i].available[c], have > 0 else { continue }
+                let n = min(have, def.gold > 0 ? gold / def.gold : have)
+                if n <= 0 { short = "not_enough_resources"; continue }
+                if !g.towns[i].garrison.contains(where: { $0.creature == c }) && !plan.contains(where: { $0.0 == c }) {
+                    if room <= 0 { short = "not_enough_slots"; continue }
+                    room -= 1
                 }
+                plan.append((c, n)); gold -= n * def.gold; total += n * def.gold
             }
-            prompt = (bought > 0 ? (g.tables?.strings["creatures_recruited.castle_window"] ?? "Creatures recruited.") : (g.tables?.strings["not_enough_resources.castle_window"] ?? "You cannot afford any creatures."), false, nil)
+            let strings = g.tables?.strings ?? [:]
+            if plan.isEmpty {
+                let key = short.isEmpty ? "not_enough_creatures" : short
+                prompt = (strings["\(key).castle_window"] ?? "You cannot recruit any creatures.", false, nil)
+                return
+            }
+            let lines = plan.map { c, n in "\(n) \(n == 1 ? tables.creature(c)?.name ?? c : tables.creature(c)?.plural ?? c)" }
+            let text = (strings["recruit_creatures.castle_window"] ?? "Do you want to recruit these creatures?") + "\n\n" + lines.joined(separator: ", ") + "\n\n\(total) gold"
+            prompt = (text, true, { [weak self] in
+                guard let self = self, let g = self.game else { return }
+                for (c, n) in plan {
+                    guard let def = tables.creature(c), g.addToGarrison(i, c, n) else { continue }
+                    g.towns[i].available[c, default: 0] -= n; g.resources["Gold", default: 0] -= n * def.gold
+                }
+                self.sound?.play("dialogue.recruit")
+            })
             return
         }
         for (k, p) in castlePanels(d, count: creatures.count).enumerated() where inside(p, at: ox, oy, x, y) {
             let c = creatures[k]
             guard let def = tables.creature(c) else { return }
             // no room: a stack of theirs or a free slot is needed (0x8b1160)
-            if !g.towns[i].garrison.contains(where: { $0.creature == c }) && g.garrisonSlots(i).count >= GameState.rowSlots {
+            if !g.towns[i].garrison.contains(where: { $0.creature == c }) && g.garrisonCount(i) >= GameState.rowSlots {
                 prompt = ((g.tables?.strings["no_room.town"] ?? "There is no room in your garrison to hire %creatures.").replacingOccurrences(of: "%creatures", with: def.plural), false, nil)
                 return
             }

@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import H4Engine
 
 /// The town screen's army rows (town_spec §4): the garrison above, the visiting army (or a spare
@@ -6,13 +7,14 @@ import H4Engine
 /// place takes it, anything else swaps; with Shift half of it is split off -- or clicked and then
 /// the place clicked; the garrison button pair moves everything up or down.
 extension Renderer {
-    /// The two rows now: the garrison and the visiting army or the spare row.
-    func townRows() -> [[ArmySlot]]? {
+    /// The two rows now (seven places each): the garrison and the visiting army or the spare row.
+    func townRows() -> [[ArmySlot?]]? {
         guard let g = game, let i = townOpen, i < g.towns.count else { return nil }
         let v = g.visitingArmy(town: i)
-        return [g.garrisonSlots(i), v.map { g.armySlots($0) } ?? townSpare]
+        let spare = townSpare.count == GameState.rowSlots ? townSpare : [ArmySlot?](repeating: nil, count: GameState.rowSlots)
+        return [g.garrisonSlots(i), v.map { g.armySlots($0) } ?? spare]
     }
-    /// The ring under a canvas point: (row, slot).
+    /// The ring under a canvas point: (row, place).
     func townRing(at x: Float, _ y: Float) -> (row: Int, k: Int)? {
         guard let ui = ui else { return nil }
         for row in 0...1 {
@@ -24,16 +26,22 @@ extension Renderer {
         return nil
     }
     func townPress(x: Float, y: Float) {
-        guard townDialog == nil, let r = townRing(at: x, y), let rows = townRows(), r.k < rows[r.row].count else { townDrag = nil; return }
+        townDragAt = nil
+        guard townDialog == nil, let r = townRing(at: x, y), let rows = townRows(), rows[r.row][r.k] != nil else { townDrag = nil; return }
         townDrag = r
+    }
+    /// The pointer moved with the button down: the lifted stack follows it (the system pointer hides).
+    func townDragged(x: Float, y: Float, split: Bool) {
+        guard townDrag != nil else { return }
+        if townDragAt == nil { NSCursor.hide() }
+        townDragAt = (x, y); townDragSplit = split
     }
     /// Apply a move; the army must keep a hero while it has creatures.
     func townMove(from: (row: Int, k: Int), to: (row: Int, k: Int), split: Bool) {
         guard let g = game, let i = townOpen, var rows = townRows() else { return }
         var n: Int? = nil
-        if split, let s = rows[from.row][from.k].stack, s.count > 1 { n = s.count / 2 }
-        let target = min(to.k, rows[to.row].count)
-        guard GameState.move(&rows, from: from, to: (to.row, target), split: n) else { return }
+        if split, let s = rows[from.row][from.k]?.stack, s.count > 1 { n = s.count / 2 }
+        guard GameState.move(&rows, from: from, to: to, split: n) else { return }
         if let v = g.visitingArmy(town: i) {
             if !g.applyTownRows(i, rows, visitor: v) { prompt = ("An army needs a hero to lead it.", false, nil); return }
         } else {
@@ -42,13 +50,13 @@ extension Renderer {
         townSelected = nil
     }
     func townDrop(x: Float, y: Float, split: Bool) {
-        defer { townDrag = nil }
+        defer { townDrag = nil; if townDragAt != nil { NSCursor.unhide() }; townDragAt = nil }
         guard let from = townDrag, let to = townRing(at: x, y) else { return }
         townMove(from: from, to: to, split: split)
     }
     /// A click on the rows: select a stack, or move the selected one here. True when handled.
     func townRowsClick(x: Float, y: Float) -> Bool {
-        guard let ts = town, let g = game, let i = townOpen, let ui = ui else { return false }
+        guard let ts = town, let g = game, let i = townOpen else { return false }
         if ts.hit(ts.hotspot("Move_Up_Released"), x, y) || ts.hit(ts.hotspot("Move_Down_Released"), x, y) {
             guard var rows = townRows() else { return true }
             let up = ts.hit(ts.hotspot("Move_Up_Released"), x, y)
@@ -61,34 +69,56 @@ extension Renderer {
         guard let r = townRing(at: x, y), let rows = townRows() else { return false }
         if let s = townSelected {
             if s.row == r.row && s.k == r.k { townSelected = nil } else { townMove(from: s, to: r, split: false) }
-        } else if r.k < rows[r.row].count { townSelected = r }
+        } else if rows[r.row][r.k] != nil { townSelected = r }
         return true
     }
     /// The town screen closes: a spare row with a hero becomes an army at the gate.
     func closeTown() {
-        if let g = game, let i = townOpen, g.visitingArmy(town: i) == nil, !townSpare.isEmpty { g.leaveTown(i, spare: townSpare) }
-        townSpare = []; townSelected = nil; townDrag = nil; game?.townVisitor = nil
+        if let g = game, let i = townOpen, g.visitingArmy(town: i) == nil, townSpare.contains(where: { $0 != nil }) { g.leaveTown(i, spare: townSpare) }
+        townSpare = []; townSelected = nil; townDrag = nil; townDragAt = nil; game?.townVisitor = nil
         townOpen = nil
     }
 
+    func slotIcon(_ s: ArmySlot, ui: AdventureUI) -> (UILayer?, String?) {
+        switch s {
+        case .hero(let h): return (ui.portrait(keyword: h.keyword, alignment: h.alignment), nil)
+        case .stack(let st): return (ui.creatureIcon(st.creature), String(st.count))
+        }
+    }
     func townRowQuads() -> [Quad] {
         guard let ui = ui, let rows = townRows() else { return [] }
         var out: [Quad] = []
+        let lifting = townDragAt != nil ? townDrag : nil
         for (r, row) in rows.enumerated() {
             let origins = townRingOrigins(row: r, ui: ui)
-            for (k, s) in row.prefix(GameState.rowSlots).enumerated() {
+            for (k, slot) in row.enumerated() {
+                guard var s = slot else { continue }
+                // a stack being dragged leaves its place (all of it, or the half a split takes)
+                if let l = lifting, l.row == r, l.k == k {
+                    guard townDragSplit, let st = s.stack, st.count > 1 else { continue }
+                    s = .stack(Hero.Stack(creature: st.creature, count: st.count - st.count / 2))
+                }
                 let cx = origins[k].x + 41, cy = origins[k].y + 41
                 if let sel = townSelected, sel.row == r, sel.k == k { out.append(Quad(texture: solid(230, 200, 60), x: cx - 31, y: cy - 31, w: 62, h: 62)) }
-                var icon: UILayer?, count: String? = nil
-                switch s {
-                case .hero(let h): icon = ui.portrait(keyword: h.keyword, alignment: h.alignment)
-                case .stack(let st): icon = ui.creatureIcon(st.creature); count = String(st.count)
-                }
+                let (icon, count) = slotIcon(s, ui: ui)
                 if let icon = icon { out.append(Quad(texture: uiTexture("icon|\(icon.name)", { icon.bitmap }), x: cx - icon.width / 2, y: cy - icon.height / 2, w: icon.width, h: icon.height)) }
                 ringLabel(&out, ui: ui, cx: cx, cy: cy, count: count, hero: s.hero != nil)
             }
         }
+        // the lifted stack under the pointer
+        if let l = lifting, let at = townDragAt, let s = rows[l.row][l.k] {
+            var shown = s
+            if townDragSplit, let st = s.stack, st.count > 1 { shown = .stack(Hero.Stack(creature: st.creature, count: st.count / 2)) }
+            let (icon, count) = slotIcon(shown, ui: ui)
+            if let icon = icon { out.append(Quad(texture: uiTexture("icon|\(icon.name)", { icon.bitmap }), x: Int(at.0) - icon.width / 2, y: Int(at.1) - icon.height / 2, w: icon.width, h: icon.height)) }
+            ringLabel(&out, ui: ui, cx: Int(at.0), cy: Int(at.1), count: count, hero: shown.hero != nil)
+        }
         return out
+    }
+    // (the balloon's slot text)
+    func townSlot(at x: Float, _ y: Float) -> ArmySlot? {
+        guard let r = townRing(at: x, y), let rows = townRows() else { return nil }
+        return rows[r.row][r.k]
     }
 }
 
@@ -107,8 +137,8 @@ extension Renderer {
         for name in ui?.resourceNames ?? [] where ts.hit(ts.hotspot("\(name)_Number") ?? ts.hotspot("\(name)_number"), x, y) || ts.hit(ts.hotspot(name), x, y) {
             return t("town_screen.\(name.lowercased())")
         }
-        if let r = townRing(at: x, y), let rows = townRows(), r.k < rows[r.row].count {
-            switch rows[r.row][r.k] {
+        if let slot = townSlot(at: x, y) {
+            switch slot {
             case .hero(let h): return h.name
             case .stack(let s):
                 let c = g.tables?.creature(s.creature)

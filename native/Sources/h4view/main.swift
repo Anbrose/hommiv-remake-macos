@@ -307,6 +307,9 @@ if let out = snapshot {
     if let m = ProcessInfo.processInfo.environment["H4SAVEDIALOG"] { renderer.openSaveDialog(m == "load" ? .load : .save) }   // snapshot the save / load dialog
     if ProcessInfo.processInfo.environment["H4MENU"] != nil { renderer.openSystemMenu() }   // snapshot the system menu
     if walk != nil { game.quickCombatOnly = true }   // --walk snapshots resolve fights at once
+    if let a = ProcessInfo.processInfo.environment["H4ARMY"], let h = game.heroes.first {   // debugging: the hero's army, "devil:5,imp:20"
+        h.army = a.split(separator: ",").compactMap { p in let q = p.split(separator: ":"); return q.count == 2 ? Int(q[1]).map { Hero.Stack(creature: String(q[0]), count: $0) } : nil }
+    }
     if let target = battleAt, let hero = game.heroes.first, let cs = combatScreen,
        let p = scene.placed.first(where: { $0.cellX == target.0 && $0.cellY == target.1 }), let mi = game.monster(for: p) {
         cs.start(game: game, hero: hero, monsterAt: mi, p, terrain: 1)
@@ -408,8 +411,9 @@ if let out = snapshot {
         if ProcessInfo.processInfo.environment["H4CASTLE"] != nil { renderer.townDialog = .castle }   // snapshot: the creature screen
         if let b = ProcessInfo.processInfo.environment["H4BALLOON"]?.split(separator: ",").compactMap({ Float($0) }), b.count == 2 { renderer.townBalloon = ((b[0], b[1]), .distantPast) }   // snapshot: the help balloon there
         if ProcessInfo.processInfo.environment["H4GARRISON"] != nil, let i = renderer.townOpen { let o = game.hireOffer(town: i)   // snapshot: a hero hired into the garrison
-            let h = game.hire(o, with: nil); print("hired \(h?.name ?? "-"): garrison \(game.garrisonSlots(i).count), visiting \(game.visitingArmy(town: i)?.name ?? "none")")
-            renderer.townSelected = (0, 0)
+            let h = game.hire(o, with: nil); print("hired \(h?.name ?? "-"): garrison \(game.garrisonCount(i)), visiting \(game.visitingArmy(town: i)?.name ?? "none")")
+            renderer.townMove(from: (0, 0), to: (0, 4), split: false)
+            if ProcessInfo.processInfo.environment["H4DRAG"] != nil { renderer.townDrag = (1, 1); renderer.townDragAt = (620, 420) }
         }
         if let a = ProcessInfo.processInfo.environment["H4TOWNSHOP"], let h = game.heroes.first {   // snapshot: a town blacksmith (alignment)
             let o = ShopOffer(key: "town", title: "Blacksmith", panel: a, items: [], potions: [], hero: h)
@@ -620,14 +624,20 @@ final class MapView: MTKView {
     }
     override func mouseDragged(with e: NSEvent) {
         dragged += abs(Float(e.deltaX)) + abs(Float(e.deltaY))
-        if renderer.townOpen != nil { return }
+        if renderer.townOpen != nil {
+            if dragged >= 4 {
+                let p = convert(e.locationInWindow, from: nil), sc = Float(window?.backingScaleFactor ?? 1)
+                renderer.townDragged(x: Float(p.x) * sc / renderer.uiScale, y: Float(bounds.height - p.y) * sc / renderer.uiScale, split: e.modifierFlags.contains(.shift))
+            }
+            return
+        }
         renderer.pan -= SIMD2(Float(e.deltaX), Float(e.deltaY)) / renderer.zoom
     }
     override func mouseUp(with e: NSEvent) {
         let p0 = convert(e.locationInWindow, from: nil), sc = Float(window?.backingScaleFactor ?? 1)
         if renderer.townOpen != nil, renderer.townDrag != nil {   // a drop in the town's army rows
             let x = Float(p0.x) * sc / renderer.uiScale, y = Float(bounds.height - p0.y) * sc / renderer.uiScale
-            if dragged >= 4 { renderer.townDrop(x: x, y: y, split: e.modifierFlags.contains(.shift)); return }
+            if dragged >= 4 { renderer.townDrop(x: x, y: y, split: e.modifierFlags.contains(.shift) || renderer.townDragSplit); return }
             renderer.townDrag = nil
         }
         guard dragged < 4, let g = renderer.game else { return }

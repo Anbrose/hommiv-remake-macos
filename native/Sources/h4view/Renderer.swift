@@ -139,7 +139,9 @@ final class Renderer: NSObject, MTKViewDelegate {
     var optionsOpen: GameSettings? = nil   // the options dialog, while open (the values being edited)
     var settings = GameSettings.load()
     var hire: HireOffer? = nil             // the tavern's dialog
-    var townSpare: [ArmySlot] = []            // the town's visiting row when no army stands at the gate
+    var townSpare: [ArmySlot?] = []           // the town's visiting row when no army stands at the gate
+    var townDragAt: (Float, Float)? = nil      // where a lifted stack is (the pointer) while dragged
+    var townDragSplit = false
     var townSelected: (row: Int, k: Int)? = nil
     var townDrag: (row: Int, k: Int)? = nil
     var shop: ShopState? = nil             // a blacksmith's or conservatory's shop

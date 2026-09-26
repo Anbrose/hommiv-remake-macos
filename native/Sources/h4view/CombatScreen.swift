@@ -173,6 +173,8 @@ final class CombatScreen {
 
     /// A hero's army as fighters: its heroes (with their spell books) in the first slots, then the
     /// stacks with the heroes' skill bonuses and morale.
+    /// A creature's combat model: combat_actor.<name>, else by its keyword (the devil's is "archdevil").
+    func actorName(_ cd: CreatureDef) -> String { actor(cd.name) != nil ? cd.name : cd.keyword }
     func armyFighters(game g: GameState, _ h: Hero, tables t: RuleTables) -> [Battle.Fighter] {
         let heroes = [h] + h.companions
         let army: [(alignment: String, undead: Bool)] = heroes.map { ($0.alignment, false) } + h.army.compactMap { st in t.creature(st.creature).map { ($0.alignment, Combatant(creature: $0, count: 1).has("undead")) } }
@@ -191,7 +193,7 @@ final class CombatScreen {
             var st = Combatant(creature: cd, count: s.count)
             st.morale = Battle.armyMorale(own: cd.alignment, army: army) + g.objectMorale(h, alignment: cd.alignment, undeadOrMechanical: st.has("undead") || st.has("mechanical"))
             bonus.apply(&st)
-            out.append(Battle.Fighter(stats: st, keyword: cd.keyword, actor: cd.name, size: actor(cd.name)?.size ?? 4, move: cd.move + bonus.moveThirds, shots: cd.shots, slot: k + heroes.count))
+            out.append(Battle.Fighter(stats: st, keyword: cd.keyword, actor: actorName(cd), size: actor(actorName(cd))?.size ?? 4, move: cd.move + bonus.moveThirds, shots: cd.shots, slot: k + heroes.count))
         }
         return out
     }
@@ -240,7 +242,7 @@ final class CombatScreen {
             guard let cd = t.creature(st.creature) else { continue }
             var c = Combatant(creature: cd, count: st.count)
             c.morale = Battle.armyMorale(own: cd.alignment, army: army)
-            defenders.append(Battle.Fighter(stats: c, keyword: cd.keyword, actor: cd.name, size: actor(cd.name)?.size ?? 4, move: cd.move, shots: cd.shots, slot: k))
+            defenders.append(Battle.Fighter(stats: c, keyword: cd.keyword, actor: actorName(cd), size: actor(actorName(cd))?.size ?? 4, move: cd.move, shots: cd.shots, slot: k))
         }
         let form: Battle.Formation = level == 3 ? .castle : level > 0 ? .siege : .loose
         battle = Battle(field: f, attackers: armyFighters(game: g, h, tables: t), defenders: defenders, seed: seed, formations: (.loose, form))
@@ -272,7 +274,7 @@ final class CombatScreen {
             st.morale = Battle.armyMorale(own: cd.alignment, army: army)
             if bonus != nil { st.morale += g.objectMorale(h, alignment: cd.alignment, undeadOrMechanical: st.has("undead") || st.has("mechanical")) }
             bonus?.apply(&st)
-            return Battle.Fighter(stats: st, keyword: cd.keyword, actor: cd.name, size: actor(cd.name)?.size ?? 4, move: cd.move + (bonus?.moveThirds ?? 0), shots: cd.shots)
+            return Battle.Fighter(stats: st, keyword: cd.keyword, actor: actorName(cd), size: actor(actorName(cd))?.size ?? 4, move: cd.move + (bonus?.moveThirds ?? 0), shots: cd.shots)
         }
         strings = t.strings
         let attackers = armyFighters(game: g, h, tables: t)
@@ -332,6 +334,14 @@ final class CombatScreen {
             if now.timeIntervalSince(p.started) >= p.duration {
                 finish(p.event)
                 playing = nil
+            } else if case .move(let id, let path, let start, _) = p.event, teleporting.contains(id), let m = moves[id], let end = path.last {
+                let first = now.timeIntervalSince(p.started) < m.preTime
+                unitPos[id] = first ? (Float(start.0), Float(start.1)) : (Float(end.0), Float(end.1))
+                let state = first ? "prewalk" : "postwalk"
+                if unitState[id]?.state != state {
+                    unitState[id] = (state, now, true)
+                    if !first { sound?.play("miscellaneous.teleport_in") }
+                }
             } else if case .move(let id, let path, let start, let flying) = p.event, !path.isEmpty, let m = moves[id] {
                 // prewalk (a flyer's take-off), whole loops of walk, postwalk, each covering its
                 // share of the path's length (0x7dec80)
@@ -374,6 +384,18 @@ final class CombatScreen {
     func begin(_ e: Battle.Event, now: Date) {
         guard let b = battle else { return }
         switch e {
+        case .move(let id, let path, let start, _) where b.unit(id).stats.has("teleport") && !path.isEmpty:
+            // a teleporter (the devil) goes up in flames where it stands (its prewalk) and comes out of
+            // them at the end (postwalk), with no travel in between
+            let u = b.unit(id)
+            let end = path[path.count - 1]
+            let face = Battle.facing(dx: Float(end.0 - start.0), dy: Float(end.1 - start.1))
+            let preTime = max(0.3, stateDuration(u.actor, "prewalk", face)), postTime = max(0.3, stateDuration(u.actor, "postwalk", face))
+            moves[id] = Move(length: 0, preDist: 0, postDist: 0, preTime: preTime, walkTime: 0, postTime: postTime)
+            teleporting.insert(id)
+            unitPos[id] = (Float(start.0), Float(start.1))
+            sound?.play("miscellaneous.teleport_out")
+            playing = Anim(event: e, started: now, duration: preTime + postTime)
         case .move(let id, let path, let start, let flying):
             // flyers take off first (0x7dd400: prewalk, walk, postwalk); walkers walk and stop (0x7de960: walk, postwalk)
             let u = b.unit(id)
@@ -484,7 +506,7 @@ final class CombatScreen {
         case .move(let id, let path, _, _):
             // it stays where this move ended until the queue has played out (the battle may already have moved it on)
             if let last = path.last { shownPos[id] = (Float(last.0), Float(last.1)) }
-            unitPos[id] = nil; unitState[id] = nil; moves[id] = nil
+            unitPos[id] = nil; unitState[id] = nil; moves[id] = nil; teleporting.remove(id)
             sound?.stopLoop("walk|\(id)")
         case .melee, .shoot:
             break
@@ -559,6 +581,8 @@ final class CombatScreen {
     /// The move being played: its length and the part each phase covers (cells) and lasts (s).
     struct Move { var length, preDist, postDist: Float; var preTime, walkTime, postTime: Double }
     var moves: [Int: Move] = [:]
+    /// Units whose move is a teleport (flames out, flames in).
+    var teleporting: Set<Int> = []
     /// The point `d` cells along a polyline of cells, and the direction there.
     static func along(_ pts: [(Int, Int)], _ d: Float) -> ((Float, Float), (Float, Float)) {
         var left = max(0, d)

@@ -128,7 +128,7 @@ let campaignRef: (id: Int, index: Int)? = {
     guard p.count == 3, p[0] == "campaign", let id = Int(p[1]), let k = Int(p[2]) else { return nil }
     return (id, k)
 }()
-let map = try campaignRef.map { try MapFile(data: CampaignFile.load($0.id, from: archive).scenario($0.index), objectNames: objNames) }
+var map = try campaignRef.map { try MapFile(data: CampaignFile.load($0.id, from: archive).scenario($0.index), objectNames: objNames) }
     ?? MapFile(data: Data(contentsOf: URL(fileURLWithPath: args[2])), objectNames: objNames)
 let masks = try TransitionMasks(data: archive.payload("transition.Transitions.h4d"))
 lap("loaded '\(map.name)'")
@@ -144,6 +144,11 @@ if let t = ruleTables {
     RandomResolver.creaturePool = (1...4).map { lv in t.creatures.filter { $0.level == lv && $0.expansion <= expansion && !sea.contains($0.keyword) }.map { $0.keyword } }
 }
 RandomResolver.playerAlignments = Dictionary(map.playerSpecs.map { ($0.colour, $0.alignments) }, uniquingKeysWith: { a, _ in a })
+// the new-game screen's choices: "--human <colour>", "--align <colour>:<alignment 0-5>", "--difficulty <0-4>"
+for (k, a) in args.enumerated() where k + 1 < args.count {
+    if a == "--human", let c = Int(args[k + 1]) { map.humanOverride = c }
+    if a == "--align" { let p = args[k + 1].split(separator: ":").compactMap { Int($0) }; if p.count == 2, (0..<6).contains(p[1]) { RandomResolver.playerAlignments[p[0]] = 1 << p[1] } }
+}
 // every level of the map (the surface and, on most maps, the underground)
 let scenes = try (0..<max(1, map.levels)).map { try MapScene(map: map, level: $0, archive: archive, masks: masks) }
 let scene = scenes[min(level, scenes.count - 1)]

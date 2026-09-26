@@ -143,7 +143,9 @@ public struct MapFile {
     /// The map's own events (timed, triggerable, continuous).
     public let events: [MapEvent]
     /// The colour the human plays: the first player slot a human may take.
-    public var humanColour: Int { playerSpecs.first { $0.canBeHuman }?.colour ?? playerSpecs.first?.colour ?? 0 }
+    /// The colour the player chose on the new-game screen (else the first that can be human).
+    public var humanOverride: Int? = nil
+    public var humanColour: Int { humanOverride ?? playerSpecs.first { $0.canBeHuman }?.colour ?? playerSpecs.first?.colour ?? 0 }
     /// Map difficulty (0 easy ... 4 impossible), the byte after the name.
     public let difficulty: Int
     public let objects: [MapObject]

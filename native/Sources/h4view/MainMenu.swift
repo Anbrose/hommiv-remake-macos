@@ -36,6 +36,10 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
             case "briefing": view.screen = .briefing(id: Int(p[1]) ?? 1, index: Int(p[2]) ?? 0, carry: nil); view.briefingTab = Int(p.count > 3 ? p[3] : "2") ?? 2
             case "epilogue": view.screen = .epilogue(id: Int(p[1]) ?? 1, index: Int(p[2]) ?? 0, carry: nil)
             case "popup": view.clickMain(900, 130)
+            case "setup":
+                let H = URL(fileURLWithPath: view.archivePath).deletingLastPathComponent().deletingLastPathComponent().path
+                let path = "\(H)/maps/\(p.count > 1 ? p[1] : "Barbarians from Below").h4c"
+                if let d = try? Data(contentsOf: URL(fileURLWithPath: path)), let m = try? MapFile(data: d, objectNames: []) { view.setup = MenuView.Setup(map: m, human: m.humanColour); view.screen = .setup(path: path) }
             default: break
             }
             view.frame = NSRect(x: 0, y: 0, width: 1024, height: 768)
@@ -58,11 +62,16 @@ final class MenuView: NSView {
         case briefing(id: Int, index: Int, carry: String?)
         case epilogue(id: Int, index: Int, carry: String?)
         case load
+        case setup(path: String)
     }
+    /// The new-game options (layers.dialog.New_Game_Options): the players, who is human, their
+    /// alignments, the difficulty, whether wandering stacks move.
+    struct Setup { var map: MapFile; var human: Int; var align: [Int: Int] = [:]; var difficulty = 1; var guardsMove = true }
+    var setup: Setup?
     let archivePath: String
     let archive: H4Archive
     let strings: [String: String]
-    let font14: H4Font, font12: H4Font, font22: H4Font, font16: H4Font, font18: H4Font, font20: H4Font, font30: H4Font
+    let font14: H4Font, font12: H4Font, font22: H4Font, font16: H4Font, font18: H4Font, font20: H4Font, font30: H4Font, font36: H4Font
     let sound: GameSound
     var screen: Screen = .main
     var popup: [(String, () -> Void)]? = nil
@@ -90,6 +99,7 @@ final class MenuView: NSView {
         font20 = (try? H4Font(data: archive.payload("font.Prose_Antique.20.h4d"))) ?? font14
         font18 = (try? H4Font(data: archive.payload("font.Prose_Antique.18.h4d"))) ?? font14
         font30 = (try? H4Font(data: archive.payload("font.Prose_Antique.30.h4d"))) ?? font22
+        font36 = (try? H4Font(data: archive.payload("font.Prose_Antique.36.h4d"))) ?? font30
         sound = GameSound(dataDirectory: dir)
         super.init(frame: NSRect(x: 0, y: 0, width: 1024, height: 768))
         // an epilogue / the next scenario after a won campaign scenario: "--menu --next <id> <index> [--carry file]"
@@ -205,6 +215,7 @@ final class MenuView: NSView {
         case .briefing(let id, let index, _): drawBriefing(id, index, epilogue: false)
         case .epilogue(let id, let index, _): drawBriefing(id, index, epilogue: true)
         case .load: drawLoad()
+        case .setup: drawSetup()
         }
         if let p = popup { drawPopup(p) }
         ctx = nil
@@ -366,7 +377,14 @@ final class MenuView: NSView {
         }
         if inside(f["Scrollbar"], x, y) { scroll = max(0, min(max(0, maps.count - 10), scroll + (y < Float(origin.1 + 209) ? -10 : 10))); return }
         if inside(f["Back_Button"], x, y) { screen = .main; return }
-        if inside(f["Begin_Button"], x, y), selected < maps.count { start([maps[selected].path]) }
+        if inside(f["Begin_Button"], x, y), selected < maps.count {
+            let path = maps[selected].path
+            // a single scenario: its options first; a campaign file straight in
+            if maps[selected].summary.scenarios > 1 { start([path]); return }
+            if let d = try? Data(contentsOf: URL(fileURLWithPath: path)), let m = try? MapFile(data: d, objectNames: []) {
+                setup = Setup(map: m, human: m.humanColour); screen = .setup(path: path)
+            } else { start([path]) }
+        }
     }
 
     // MARK: campaigns
@@ -481,6 +499,140 @@ final class MenuView: NSView {
         if inside(f["Begin"], x, y) { start(["campaign:\(id):\(index)"] + (carry.map { ["--carry", $0] } ?? [])) }
     }
 
+    // MARK: new game options
+
+    static let colourNames = ["Red", "Blue", "Green", "Orange", "Purple", "Teal"]
+    static let alignmentNames = ["Life", "Order", "Death", "Chaos", "Nature", "Might"]
+    /// A row's alignment choice: the one picked, or the map's only one, else Random (-1).
+    func alignment(_ s: Setup, _ spec: PlayerSpec) -> Int {
+        if let a = s.align[spec.colour] { return a }
+        let allowed = (0..<6).filter { spec.alignments & (1 << $0) != 0 }
+        return allowed.count == 1 ? allowed[0] : -1
+    }
+    /// The rows as the original lists them: grouped by team (in order of first appearance), the
+    /// teams numbered 1, 2, ... in that order.
+    func setupRows(_ s: Setup) -> [(spec: PlayerSpec, team: Int)] {
+        var order: [Int] = []
+        for p in s.map.playerSpecs { let t = s.map.teams[p.colour] ?? 100 + p.colour; if !order.contains(t) { order.append(t) } }
+        return s.map.playerSpecs.map { p in (p, (order.firstIndex(of: s.map.teams[p.colour] ?? 100 + p.colour) ?? 0) + 1) }
+            .enumerated().sorted { ($0.element.team, $0.offset) < ($1.element.team, $1.offset) }.map { $0.element }
+    }
+    func drawSetup() {
+        guard let s = setup, let f = layers("dialog.New_Game_Options"), let p1 = f["Player_1"] else { return }
+        origin = dialogOrigin
+        draw(f["background"], key: "ngo|bg")
+        for (n, t) in [("Color_Title", text("color.new_game", "Color")), ("Alignment_Title", text("alignment.new_game", "Alignment")), ("Name_Title", text("name.new_game", "Name")), ("Team_Title", text("team.new_game", "Team"))] {
+            label(t, in: f[n], font: font16)
+        }
+        let flags = layers("icons.flags.55"), arrows = layers("button.Arrows")
+        let teams = s.map.teams
+        for (k, r) in setupRows(s).prefix(6).enumerated() {
+            let spec = r.spec
+            guard let row = f["Player_\(k + 1)"] else { continue }
+            let dy = row.y - p1.y
+            func at(_ l: UILayer?) -> UILayer? { l.map { UILayer(name: $0.name, kind: $0.kind, x: $0.x, y: $0.y + dy, width: $0.width, height: $0.height, bitmap: $0.bitmap) } }
+            let colour = MenuView.colourNames[min(5, spec.colour)]
+            let human = spec.colour == s.human
+            // the colour arrows (in the row's colour for the human, grey otherwise) and the alignment arrows
+            if let ca = f["Color_Arrows"], let arr = arrows {
+                for (dir, suffix) in [("Up", "Released"), ("Down", "Released")] {
+                    let changeable = human && s.map.playerSpecs.filter { $0.canBeHuman }.count > 1
+                    let name = human ? "\(colour)_\(dir)_\(changeable ? suffix : "Released")" : "Alignment_\(dir)_Disabled"
+                    if let l = arr.layers.first(where: { $0.name.lowercased() == name.lowercased() }) {
+                        draw(UILayer(name: "", kind: 4, x: ca.x - 4 + l.x, y: ca.y + dy - 4 + l.y, width: l.width, height: l.height, bitmap: l.bitmap), key: "arr|\(name)")
+                    }
+                }
+            }
+            if let aa = f["Alignment_Arrows"], let arr = arrows {
+                let changeable = human && (0..<6).filter { spec.alignments & (1 << $0) != 0 }.count > 1
+                for dir in ["Up", "Down"] {
+                    if let l = arr.layers.first(where: { $0.name.lowercased() == "alignment_\(dir.lowercased())_\(changeable ? "released" : "disabled")" }) {
+                        draw(UILayer(name: "", kind: 4, x: aa.x - 4 + l.x, y: aa.y + dy - 4 + l.y, width: l.width, height: l.height, bitmap: l.bitmap), key: "arr|al|\(dir)")
+                    }
+                }
+            }
+            // the banner: the colour's flag and the alignment's emblem on it
+            if let pf = f["Player_Flag"], let fl = flags {
+                let a = alignment(s, spec)
+                for n in [colour, a >= 0 ? MenuView.alignmentNames[a] : "Random"] {
+                    guard let l = fl[n] else { continue }
+                    draw(UILayer(name: "", kind: 4, x: pf.x + (pf.width - 54) / 2 + l.x, y: pf.y + dy + (pf.height - 65) / 2 + l.y, width: l.width, height: l.height, bitmap: l.bitmap), key: "flag55|\(n)")
+                }
+            }
+            if let bg = f["Player_Background"] {
+                let h = min(bg.height, 74)
+                draw(UILayer(name: "", kind: 4, x: bg.x, y: bg.y + dy, width: bg.width, height: h, bitmap: crop(bg.bitmap, height: h)), key: "ngo|namebox|\(h)")
+            }
+            label(human ? text("player.new_game", "Player") : text("computer.new_game", "Computer"), in: at(f["Player_Name"]), font: font36, centre: false)
+            if spec.canBeHuman, let cb = f["human_checkbox"], let b = layers("button.checkbox")?[human ? "Pressed" : "Released"] {
+                draw(UILayer(name: "", kind: 4, x: cb.x + (cb.width - b.width) / 2, y: cb.y + dy + (cb.height - b.height) / 2, width: b.width, height: b.height, bitmap: b.bitmap), key: "cb|\(human)")
+            }
+            if let tf = f["Team_Flag"], let fl = flags {
+                let team = r.team; _ = teams
+                for n in [colour, "team_\(min(6, team))"] {
+                    guard let l = fl[n] else { continue }
+                    let sc = 0.8
+                    let w = Int(Double(l.width) * sc), h = Int(Double(l.height) * sc)
+                    draw(UILayer(name: "", kind: 4, x: tf.x + (tf.width - Int(54 * sc)) / 2 + Int(Double(l.x) * sc), y: tf.y + dy + (tf.height - Int(65 * sc)) / 2 + Int(Double(l.y) * sc), width: w, height: h, bitmap: l.bitmap), key: "flag55|\(n)")
+                }
+            }
+        }
+        // the conditions and the description
+        let loss = "\(text("loss_condition.campaign", "Loss Condition")): \(s.map.lossText ?? text("default_loss_condition", "Lose all towns and armies."))"
+        let win = "\(text("win_condition.campaign", "Victory Condition")): \(s.map.victoryText ?? text("default_victory_condition", "Be the only player to own towns."))"
+        paragraph(loss + "\n\n" + win, in: f["victory_loss_Condition"], font: font18)
+        paragraph(s.map.description, in: f["Map_Description"], font: font18)
+        draw(f[s.guardsMove ? "Creature_Guard_Released" : "Creature_Guard_Pressed"], key: "ngo|guard|\(s.guardsMove)")
+        label(s.guardsMove ? text("guards_move.shared", "Mobile Guards") : text("guards_dont_move.shared", "Stationary Guards"), in: f["creature_guard_text"], font: font16)
+        draw(f["Player_Difficulty_Box"], key: "ngo|diffbox")
+        if let slot = f["Player_Difficulty"], let ic = layers("icons.difficulty_60")?[["easy", "Normal", "Hard", "expert", "impossible"][s.difficulty]] {
+            draw(UILayer(name: "", kind: 4, x: slot.x + (slot.width - 60) / 2 + ic.x, y: slot.y + (slot.height - 59) / 2 + ic.y, width: ic.width, height: ic.height, bitmap: ic.bitmap), key: "diff60|\(s.difficulty)")
+        }
+        draw(f[s.difficulty > 0 ? "Left_Released" : "Left_Disabled"], key: "ngo|l|\(s.difficulty > 0)")
+        draw(f[s.difficulty < 4 ? "Right_Released" : "Right_Disabled"], key: "ngo|r|\(s.difficulty < 4)")
+        let dn = [("easy", "Easy Game"), ("normal", "Intermediate Game"), ("hard", "Hard Game"), ("expert", "Expert Game"), ("impossible", "Impossible Game")][s.difficulty]
+        label(strings["\(dn.0).difficulty"] ?? dn.1, in: f["Difficulty_Text"], font: font16)
+        button(text("back", "Back"), in: f["Back_Button"])
+        button(text("begin", "Begin"), in: f["Begin_Button"])
+    }
+    func clickSetup(_ path: String, _ x: Float, _ y: Float) {
+        guard var s = setup, let f = layers("dialog.New_Game_Options"), let p1 = f["Player_1"] else { return }
+        origin = dialogOrigin
+        let humans = s.map.playerSpecs.filter { $0.canBeHuman }.map { $0.colour }
+        for (k, r) in setupRows(s).prefix(6).enumerated() {
+            let spec = r.spec
+            guard let row = f["Player_\(k + 1)"] else { continue }
+            let dy = row.y - p1.y
+            func at(_ l: UILayer?) -> UILayer? { l.map { UILayer(name: $0.name, kind: $0.kind, x: $0.x, y: $0.y + dy, width: $0.width, height: $0.height, bitmap: $0.bitmap) } }
+            // the human checkbox: this colour plays
+            if spec.canBeHuman, inside(at(f["human_checkbox"]), x, y) { s.human = spec.colour }
+            // the human's colour arrows: the next / previous colour that can be human
+            if spec.colour == s.human, let ca = at(f["Color_Arrows"]), inside(ca, x, y), let i = humans.firstIndex(of: s.human) {
+                let up = y < Float(origin.1 + ca.y + ca.height / 2)
+                s.human = humans[(i + (up ? humans.count - 1 : 1)) % humans.count]
+            }
+            // the alignment arrows (the human's row): through the alignments the map allows, and Random
+            if spec.colour == s.human, let aa = at(f["Alignment_Arrows"]), inside(aa, x, y) {
+                let allowed = [-1] + (0..<6).filter { spec.alignments & (1 << $0) != 0 }
+                if allowed.count > 2 {
+                    let cur = allowed.firstIndex(of: alignment(s, spec)) ?? 0
+                    let up = y < Float(origin.1 + aa.y + aa.height / 2)
+                    s.align[spec.colour] = allowed[(cur + (up ? allowed.count - 1 : 1)) % allowed.count]
+                }
+            }
+        }
+        if inside(f["Left_Released"], x, y) { s.difficulty = max(0, s.difficulty - 1) }
+        if inside(f["Right_Released"], x, y) { s.difficulty = min(4, s.difficulty + 1) }
+        if inside(f["Creature_Guard_Released"], x, y) { s.guardsMove.toggle() }
+        setup = s
+        if inside(f["Back_Button"], x, y) { screen = .scenarios; return }
+        if inside(f["Begin_Button"], x, y) {
+            var a = [path, "--human", "\(s.human)", "--difficulty", "\(s.difficulty)"]
+            if let al = s.align[s.human], al >= 0 { a += ["--align", "\(s.human):\(al)"] }
+            start(a)
+        }
+    }
+
     // MARK: load
 
     func drawLoad() {
@@ -526,6 +678,7 @@ final class MenuView: NSView {
         case .briefing(let id, let index, let carry): clickBriefing(id, index, carry: carry, epilogue: false, x, y)
         case .epilogue(let id, let index, let carry): clickBriefing(id, index, carry: carry, epilogue: true, x, y)
         case .load: clickLoad(x, y)
+        case .setup(let path): clickSetup(path, x, y)
         }
     }
     override func scrollWheel(with e: NSEvent) {

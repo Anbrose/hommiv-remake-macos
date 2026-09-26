@@ -138,6 +138,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     var casting: Int? = nil               // a combat spell being aimed
     var optionsOpen: GameSettings? = nil   // the options dialog, while open (the values being edited)
     var settings = GameSettings.load()
+    var hire: HireOffer? = nil             // the tavern's dialog
     var heroShown = 0                     // which of the army's heroes the hero screen shows
     var floaters: [(text: String, x: Int, y: Int, since: Date)] = []
     var buildPage = 0
@@ -375,6 +376,10 @@ final class Renderer: NSObject, MTKViewDelegate {
             if y < 546, let lay = ts.layout(t.alignment) {
                 if let top = townBuilding(at: x, y) {
                     if top.name.lowercased().hasPrefix("mage guild") { townDialog = .mageGuild(page: 0); return }
+                    if top.name.lowercased().contains("tavern") {   // the town's tavern: hire a hero (one a week)
+                        if let r = g.tavernRefusal(town: i) { prompt = (r, false, nil) } else { hire = g.hireOffer(town: i) }
+                        return
+                    }
                     if let b = tables.buildings(for: t.alignment).first(where: { $0.keyword == top.name.lowercased() }), let c = b.creature, let def = tables.creature(c) {
                         let most = min(t.available[c] ?? 0, def.gold > 0 ? g.resources["Gold", default: 0] / def.gold : 99)
                         townDialog = .recruit(creature: c, count: most)
@@ -626,6 +631,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         out += marketQuads()
         out += spellBookQuads()
         out += optionsQuads()
+        out += hireQuads()
         out += levelUpQuads()
         out += choiceQuads()
         out += messageBoxQuads()

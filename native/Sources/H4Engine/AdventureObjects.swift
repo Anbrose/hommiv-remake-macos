@@ -160,6 +160,8 @@ extension GameState {
             setupTeaching(p, &st)
         case "creature_bank":
             setupBank(p, &st)
+        case "tavern":
+            st.baseMaterial = -1   // (marks a tavern for the daily count)
         default:
             return
         }
@@ -177,6 +179,12 @@ extension GameState {
 
     /// The daily tick of owned objects (slot 31): generators pay every 7 days from their claim.
     func objectsNewDay() {
+        // an adventure tavern (0x470df0): reopens when used and its day count has reached 7, else counts on
+        for (k, st) in objectStates where st.baseMaterial == -1 {
+            var t = st
+            if t.used && t.countdown >= 7 { t.used = false; t.countdown = 0 } else { t.countdown += 1 }
+            objectStates[k] = t
+        }
         for (k, st) in objectStates where !st.guardCreatures.isEmpty || st.initialWorth > 0 {   // banks grow every day, or count down
             var b = st
             if b.countdown > 0 { b.countdown -= 1 } else { growBank(&b, days: 1) }
@@ -224,7 +232,7 @@ extension GameState {
                                           "teacher", "random_teacher", "school", "shrine", "random_shrine", "subterranean_gate", "gateway",
                                           "teleporter_entrance", "teleporter_exit", "whirlpool", "keymaster_tent", "border_gate", "border_guard",
                                           "tower", "cartographer", "obelisk", "lighthouse", "creature_bank",
-                                          "sign", "ocean_bottle", "prison", "pandoras_box", "seers_hut", "quest_gate", "quest_guard"]
+                                          "sign", "ocean_bottle", "prison", "pandoras_box", "seers_hut", "quest_gate", "quest_guard", "tavern"]
     public func hasVisit(_ p: MapScene.Placed) -> Bool { GameState.visitTypes.contains(p.type) }
 
     func remove(_ p: MapScene.Placed) {
@@ -355,7 +363,7 @@ extension GameState {
             marketOpen = 2; dialogueSound(9)
         case "teacher", "random_teacher", "school", "shrine", "random_shrine", "subterranean_gate", "gateway", "teleporter_entrance",
              "teleporter_exit", "whirlpool", "keymaster_tent", "border_gate", "border_guard", "tower", "cartographer", "obelisk", "lighthouse",
-             "creature_bank", "sign", "ocean_bottle", "prison", "pandoras_box", "seers_hut", "quest_gate", "quest_guard":
+             "creature_bank", "sign", "ocean_bottle", "prison", "pandoras_box", "seers_hut", "quest_gate", "quest_guard", "tavern":
             return visitMore(hero, p, &st)
         default:
             return false

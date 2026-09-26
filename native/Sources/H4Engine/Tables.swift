@@ -44,6 +44,7 @@ public struct CreatureDef {
 
 public struct HeroDef {
     public let keyword: String, name: String, sex: String, heroClass: String
+    public var biography = ""
 }
 
 /// The game's rule tables: creatures, heroes, random town names, mine incomes.
@@ -162,7 +163,11 @@ public final class RuleTables {
         }
         for i in creatures.indices { creatures[i].expansion = expansionOf[creatures[i].keyword] ?? 0 }
         let he = RuleTable(data: try archive.payload("table.heroes.h4d"))
-        heroes = he.rows.filter { $0.count > 3 && !$0[0].isEmpty }.map { HeroDef(keyword: $0[0], name: $0[1], sex: $0[2].lowercased(), heroClass: $0[3].lowercased()) }
+        heroes = he.rows.filter { $0.count > 3 && !$0[0].isEmpty }.map {
+            var h = HeroDef(keyword: $0[0], name: $0[1], sex: $0[2].lowercased(), heroClass: $0[3].lowercased())
+            h.biography = $0.count > 4 ? $0[4] : ""
+            return h
+        }
         let rn = RuleTable(data: try archive.payload("table.random_names.h4d"))
         var n: [String: [String]] = [:]
         for row in rn.rows where row.count >= 2 && !row[0].isEmpty { n[row[0], default: []].append(row[1]) }

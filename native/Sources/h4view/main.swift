@@ -361,6 +361,7 @@ if let out = snapshot {
         game.giveExperience(n, to: h); renderer.levelUpChoice = 0
     }
     if ProcessInfo.processInfo.environment["H4MARKET"] != nil { renderer.market = MarketState(k: 3, sell: 1, buy: 0, lots: 5) }   // snapshot: the marketplace
+    if ProcessInfo.processInfo.environment["H4HIRE"] != nil { renderer.hire = game.hireOffer(town: game.towns.firstIndex { $0.owned }) }   // snapshot: the tavern
     if ProcessInfo.processInfo.environment["H4OPTIONS"] != nil { renderer.optionsOpen = renderer.settings }   // snapshot: the options
     if let m = ProcessInfo.processInfo.environment["H4OVERVIEW"] { renderer.overview = KingdomOverview(mode: m == "heroes" ? .heroes : .towns) }   // snapshot: the kingdom overview
     if let k = ProcessInfo.processInfo.environment["H4ARMYPOPUP"].flatMap({ Int($0) }) { renderer.armyPopup = ArmyPopup(hero: 0, selected: k) }   // snapshot: the right-click window
@@ -580,6 +581,7 @@ final class MapView: MTKView {
         let p = convert(e.locationInWindow, from: nil)
         let scale = Float(window?.backingScaleFactor ?? 1)
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
+        if renderer.hire != nil { renderer.hireClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.optionsOpen != nil { renderer.optionsClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.spellBook != nil { renderer.spellBookClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.inCombat {

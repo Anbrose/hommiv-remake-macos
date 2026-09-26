@@ -320,6 +320,8 @@ public final class GameState {
     public var question: (text: String, yes: () -> Void)?
     /// A choice an object offers: the question, the options, what picking one does.
     public var choice: (text: String, options: [String], pick: (Int) -> Void)?
+    /// A hire dialog to open (a tavern visited, a town's tavern).
+    public var hireOpen: HireOffer?
     /// The keymaster tents' keys the player has (by colour subtype).
     public var keys: Set<String> = []
     /// A hero went through a portal (the view should follow).
@@ -351,6 +353,8 @@ public final class GameState {
         public var z = 0                                // map level
         /// The mage guild's spells by guild level (1...5), drawn at the start of the game.
         public var guildSpells: [[Int]] = []
+        /// Days before the tavern has a hero to hire again (heroes4.exe town+0x18c).
+        public var tavernDays = 0
         /// The town's garrison: the creatures that defend it.
         public var garrison: [Hero.Stack] = []
         /// 0 no walls, 1 fort, 2 citadel, 3 castle (the siege layout).
@@ -1378,7 +1382,7 @@ public final class GameState {
             dwellings[i].fourteenths += tables?.creature(dwellings[i].creature)?.growth ?? 0
             dwellings[i].available += dwellings[i].fourteenths / 14; dwellings[i].fourteenths %= 14
         }
-        for i in towns.indices { towns[i].builtToday = false }
+        for i in towns.indices { towns[i].builtToday = false; if towns[i].tavernDays > 0 { towns[i].tavernDays -= 1 } }
         if dayOfWeek == 1, let t = tables {   // a new week: dwellings restock, in towns too
             for i in towns.indices {
                 for b in t.buildings(for: towns[i].alignment) where towns[i].buildings.contains(b.keyword) {

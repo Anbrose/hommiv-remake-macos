@@ -222,6 +222,12 @@ extension GameState {
                 run(event: &e, ScriptContext(current: actingColour, hero: hero))
             }
             remove(p)
+        case "tavern":
+            dialogueSound(24)
+            if st.used { say(p, "empty"); return true }
+            guard 1 + hero.companions.count + hero.army.count < Hero.armySlots else { say(p, "denied"); return true }
+            var o = hireOffer(town: nil); o.tavernKey = key
+            if isHumanActing { hireOpen = o }
         case "seers_hut", "quest_gate", "quest_guard":
             visitQuest(hero, p, &st)
         case "lighthouse":

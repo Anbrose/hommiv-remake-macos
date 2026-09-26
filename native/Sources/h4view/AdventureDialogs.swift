@@ -112,35 +112,11 @@ extension Renderer {
             let m = Battle.armyMorale(own: h.alignment, army: moraleArmy)
             let moraleText = m > 0 ? "+\(m)" : "\(m)"
             let values: [(String, String)] = [("Damage_Text", s.damage), ("Hit_Points_Text", "\(s.hitPoints)"), ("Melee_Attack_Text", "\(s.attack)"), ("Melee_Defense_Text", "\(s.defense)"),
-                                              ("Ranged_Attack_Text", "\(s.ranged)"), ("Ranged_Defense_Text", "\(s.defense)"), ("Speed_Text", "\(s.speed)"), ("Move_Text", "\(s.move)"),
-                                              ("Experience_Text", "\(h.experience)"), ("Spell_Points_Text", "\(s.spellPoints)"), ("Shots_Text", "\(s.shots)"), ("Morale_Text", moraleText), ("Luck_Text", "0")]
-            for (slot, v) in values { out += centred(v, in: d[slot], at: ox, oy, font: ui.numberFont) }
+                                              ("Ranged_Attack_Text", "\(s.ranged)"), ("Ranged_Defense_Text", "\(s.defense)"), ("Speed_Text", "\(s.speed)"), ("Move_Text", "\(Int(h.movement))\n(\(Int(h.maxMovement)))"),
+                                              ("Experience_Text", "\(h.experience)"), ("Spell_Points_Text", "\(g.spellPoints(h))\n(\(g.maxSpellPoints(h)))"), ("Shots_Text", "\(s.shots)"), ("Morale_Text", moraleText), ("Luck_Text", "0")]
+            out += statTexts(values, d, ox, oy)
             }
-            // the army: one row of creature_rings pieces (Left, Middle x5, Right) tiled by width in
-            // Single_Ring_Background, as t_creature_array_window lays them out; labels last
-            if let row = d["Single_Ring_Background"] {
-                var slots: [(UILayer?, String?)] = army.map { (ui.portrait(keyword: $0.keyword, alignment: $0.alignment), nil) }
-                slots += leader.army.map { (ui.creatureIcon($0.creature), String($0.count)) }
-                var cursor = ox + row.x
-                var centres: [(Int, Int)] = []
-                for k in 0..<7 {
-                    let name = k == 0 ? "Left" : k == 6 ? "Right" : "Middle"
-                    guard let piece = ui.creatureRing(name) else { continue }
-                    let o = (cursor - piece.x, oy + row.y - 1)
-                    out.append(Quad(texture: uiTexture("cring|\(name)", { piece.bitmap }), x: o.0 + piece.x, y: o.1 + piece.y, w: piece.width, h: piece.height))
-                    centres.append((o.0 + 41, o.1 + 41))
-                    cursor += piece.width
-                }
-                for (k, (icon, _)) in slots.prefix(centres.count).enumerated() {
-                    if let icon = icon { out.append(Quad(texture: uiTexture("icon|\(icon.name)", { icon.bitmap }), x: centres[k].0 - icon.width / 2, y: centres[k].1 - icon.height / 2, w: icon.width, h: icon.height)) }
-                }
-                for (k, (_, count)) in slots.prefix(centres.count).enumerated() {
-                    ringLabel(&out, ui: ui, cx: centres[k].0, cy: centres[k].1, count: count, hero: k < army.count)
-                }
-            }
-            if let ok = d["ok_button"], let b = ui.button("ok") {
-                out.append(Quad(texture: uiTexture("button|ok|\(b.name)", { b.bitmap }), x: ox + ok.x + (ok.width - b.width) / 2, y: oy + ok.y + (ok.height - b.height) / 2, w: b.width, h: b.height))
-            }
+            out += armyScreenChrome(g.heroes[i], d, ox, oy, selected: heroShown)
         }
         return out
     }
@@ -158,15 +134,11 @@ extension Renderer {
             return true
         case .hero(let i):
             let ox = (AdventureUI.width - 800) / 2, oy = (AdventureUI.height - 600) / 2
-            // a hero's ring shows that hero
-            if let d = ui.dialog("army.layout"), let row = d["Single_Ring_Background"], i < g.heroes.count {
+            // a ring shows that hero or stack
+            if let d = ui.dialog("army.layout"), i < g.heroes.count {
                 let n = 1 + g.heroes[i].companions.count + g.heroes[i].army.count
-                var cursor = ox + row.x
-                for k in 0..<min(7, n) {
-                    guard let piece = ui.creatureRing(k == 0 ? "Left" : k == 6 ? "Right" : "Middle") else { break }
-                    let cx = cursor - piece.x + 41, cy = oy + row.y - 1 + 41
-                    if abs(x - Float(cx)) < 38, abs(y - Float(cy)) < 38 { heroShown = k; return true }
-                    cursor += piece.width
+                for (k, o) in armyRingOrigins(d, row: 0, ox: ox, oy: oy).enumerated() where k < n {
+                    if abs(x - Float(o.x + 41)) < 33, abs(y - Float(o.y + 41)) < 33 { heroShown = k; return true }
                 }
             }
             // an artifact: worn ones come off into the backpack, backpack ones are put on where they fit

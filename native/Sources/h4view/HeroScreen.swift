@@ -141,9 +141,11 @@ extension Renderer {
         guard let g = game, let ui = ui, let c = g.tables?.creature(st.creature) else { return [] }
         var out = dialogImages(d, key: "herodlg", at: ox, oy, skip: ["Ring_Pressed", "Move_Army_Up", "Move_Army_Down", "Move_Tombstone_up", "loose_Released", "loose_Disabled",
                                                                "tight_Pressed", "tight_Disabled", "square_Pressed", "square_Disabled", "Up_Disabled", "name_text", "creature_text",
-                                                               "Double_Ring_Background", "Skill_Frame", "Army_Up_Highlighted", "Army_Up_Pressed", "Army_Down_Highlighted",
+                                                               "Double_Ring_Background", "Skill_Frame", "Abilities_Frame", "Army_Up_Highlighted", "Army_Up_Pressed", "Army_Down_Highlighted",
                                                                "Army_Down_Pressed", "SpellBook_Highlighted", "SpellBook_Pressed", "SpellBook_Released", "Ranged", "Ranged_Text",
                                                                "skill_row_2", "skill_row_3", "skill_row_4", "skill_row_5", "Experience", "Experience_Text"])
+        // the abilities' frame and the scroll behind the description
+        for n in ["Abilities_Frame"] { if let l = d[n] { out.append(Quad(texture: uiTexture("dlg|army|\(n)", { l.bitmap }), x: ox + l.x, y: oy + l.y, w: l.width, h: l.height)) } }
         if let slot = d["creature_portrait"], let p = ui.creatureIcon(st.creature, size: 82) {
             out.append(Quad(texture: uiTexture("cicon82|\(st.creature)", { p.bitmap }), x: ox + slot.x + (slot.width - p.width) / 2, y: oy + slot.y + (slot.height - p.height) / 2, w: p.width, h: p.height))
         }
@@ -154,7 +156,10 @@ extension Renderer {
                 out.append(Quad(texture: uiTexture("skill|\(a)", { l.bitmap }), x: ox + slot.x + (slot.width - l.width) / 2, y: oy + slot.y + (slot.height - l.height) / 2, w: l.width, h: l.height))
             }
         }
-        out += paragraph(c.longHelp, in: d["creature_text"], at: ox, oy, font: ui.numberFont)
+        if let t = d["creature_text"] {
+            out += paragraph(c.longHelp, in: UILayer(name: "", kind: 1, x: t.x, y: t.y - 30, width: t.width + 10, height: t.height + 60, bitmap: Bitmap(width: 1, height: 1)), at: ox, oy, font: ui.font(18))
+        }
+        out += creatureModelQuads(st.creature, d, ox, oy)
         let bonus = ArmyBonuses(heroes: [leader] + leader.companions)
         func tenths(_ v: Int, _ pct: Int) -> String {   // shown with a decimal when the bonus leaves one (ftol(v x 10 + 0.5))
             let t = Int((Double(v * (100 + pct)) / 10 + 0.5))
@@ -168,10 +173,124 @@ extension Renderer {
         let values: [(String, String)] = [("Damage_Text", "\(c.damageLow)-\(c.damageHigh)"), ("Hit_Points_Text", "\(c.hitPoints)"),
                                           ("Melee_Attack_Text", tenths(c.attack, bonus.attackPercent)), ("Melee_Defense_Text", tenths(c.defense, bonus.defensePercent)),
                                           ("Ranged_Attack_Text", ranged ? tenths(c.attack, bonus.attackPercent) : "N/A"), ("Ranged_Defense_Text", tenths(c.defense, bonus.defensePercent)),
-                                          ("Speed_Text", "\(c.speed + bonus.speed)"), ("Move_Text", "\(Int(leader.movement))/\(Int(leader.maxMovement))"),
+                                          ("Speed_Text", "\(c.speed + bonus.speed)"), ("Move_Text", "\(Int(leader.movement))\n(\(Int(leader.maxMovement)))"),
                                           ("Spell_Points_Text", c.spellPoints > 0 ? "\(c.spellPoints)" : ""), ("Shots_Text", ranged ? "\(c.shots)" : "N/A"),
                                           ("Morale_Text", m > 0 ? "+\(m)" : "\(m)"), ("Luck_Text", "\(bonus.luck)")]
-        for (slot, v) in values { out += centred(v, in: d[slot], at: ox, oy, font: ui.numberFont) }
+        out += statTexts(values, d, ox, oy)
+        return out
+    }
+    /// The stats in their boxes; "a\nb" as two lines (the current value over its maximum).
+    func statTexts(_ values: [(String, String)], _ d: LayerFile, _ ox: Int, _ oy: Int) -> [Quad] {
+        guard let ui = ui else { return [] }
+        var out: [Quad] = []
+        for (slot, v) in values {
+            guard let l = d[slot] else { continue }
+            let parts = v.components(separatedBy: "\n")
+            if parts.count == 1 { out += centred(v, in: l, at: ox, oy, font: ui.font(16)); continue }
+            let f = ui.font(12)
+            for (k, p) in parts.enumerated() {
+                out += centred(p, in: UILayer(name: "", kind: 1, x: l.x, y: l.y + k * (l.height / 2), width: l.width, height: l.height / 2, bitmap: Bitmap(width: 1, height: 1)), at: ox, oy, font: f)
+            }
+        }
+        return out
+    }
+}
+
+extension Renderer {
+    /// The army screen's two rows of rings (Top / Bottom pieces tiled edge to edge in
+    /// Double_Ring_Background): the frame origins of a row's seven places.
+    func armyRingOrigins(_ d: LayerFile, row: Int, ox: Int, oy: Int) -> [(piece: String, x: Int, y: Int)] {
+        guard let ui = ui, let bg = d["Double_Ring_Background"] else { return [] }
+        let name = row == 0 ? "Top" : "Bottom"
+        let pieces = (0..<7).map { $0 == 0 ? "\(name)_Left" : $0 == 6 ? "\(name)_Right" : name }
+        let widths = pieces.map { ui.creatureRing($0).map { $0.width } ?? 60 }
+        var cursor = ox + bg.x + (bg.width - widths.reduce(0, +)) / 2
+        let top = ui.creatureRing("Top"), piece0 = ui.creatureRing(pieces[0])
+        let cursorY = oy + bg.y + (row == 0 ? 0 : (top?.height ?? 72))
+        var out: [(piece: String, x: Int, y: Int)] = []
+        for (k, p) in pieces.enumerated() {
+            let l = ui.creatureRing(p)
+            out.append((p, cursor - (l?.x ?? 0), cursorY - (piece0?.y ?? 0)))
+            cursor += widths[k]
+        }
+        return out
+    }
+    /// What the army screen shows around the hero or creature part (layers.dialog.army.layout):
+    /// the morale and luck icons, the formation buttons, the tents (move up / down), the two rows of
+    /// rings with the army in the upper one, split, the spell book and potion buttons, the kingdom's
+    /// armies down the right, OK.
+    func armyScreenChrome(_ leader: Hero, _ d: LayerFile, _ ox: Int, _ oy: Int, selected: Int) -> [Quad] {
+        guard let g = game, let ui = ui else { return [] }
+        var out: [Quad] = []
+        func img(_ n: String) { if let l = d[n] { out.append(Quad(texture: uiTexture("dlg|army|\(n)", { l.bitmap }), x: ox + l.x, y: oy + l.y, w: l.width, h: l.height)) } }
+        func button(_ file: String, _ state: String, in slot: String) {
+            guard let s = d[slot], let f = (try? ui.archive.payload("layers.button.\(file).h4d")).flatMap({ try? LayerFile(data: $0) }), let b = f[state] ?? f.layers.first(where: { $0.name.lowercased() == state.lowercased() }) else { return }
+            out.append(Quad(texture: uiTexture("button|\(file)|\(state)", { b.bitmap }), x: ox + s.x + (s.width - b.width) / 2, y: oy + s.y + (s.height - b.height) / 2, w: b.width, h: b.height))
+        }
+        // morale and luck: their icons (icons.morale.34 "+1 Morale", "0 Luck") by the numbers
+        let army = [leader] + leader.companions
+        let moraleArmy: [(alignment: String, undead: Bool)] = army.map { ($0.alignment, false) } + leader.army.compactMap { st in g.tables?.creature(st.creature).map { ($0.alignment, Combatant(creature: $0, count: 1).has("undead")) } }
+        let m = Battle.armyMorale(own: leader.alignment, army: moraleArmy)
+        let icons = iconSheet("morale.34")
+        for (slot, v, word) in [("Morale", m, "morale"), ("Luck", 0, "luck")] {
+            guard let s = d[slot], let ic = icons["\(v > 0 ? "+" : "")\(v) \(word)"] ?? icons["\(v) \(word)"] else { continue }
+            out.append(Quad(texture: uiTexture("moraleicon|\(ic.name)", { ic.bitmap }), x: ox + s.x + (s.width - ic.width) / 2, y: oy + s.y + (s.height - ic.height) / 2, w: ic.width, h: ic.height))
+        }
+        img("loose_pressed"); img("tight_Released"); img("square_Released")
+        img("Move_Army_Down"); img("Move_Army_Up")
+        img("Double_Ring_Background")
+        // the rings: the army in the upper row, the lower one empty (another army's place)
+        var slots: [(UILayer?, String?)] = army.map { (ui.portrait(keyword: $0.keyword, alignment: $0.alignment), nil) }
+        slots += leader.army.map { (ui.creatureIcon($0.creature), String($0.count)) }
+        for row in 0...1 {
+            let origins = armyRingOrigins(d, row: row, ox: ox, oy: oy)
+            for o in origins { if let piece = ui.creatureRing(o.piece) { out.append(Quad(texture: uiTexture("cring|\(o.piece)", { piece.bitmap }), x: o.x + piece.x, y: o.y + piece.y, w: piece.width, h: piece.height)) } }
+            guard row == 0 else { continue }
+            for (k, (icon, count)) in slots.prefix(origins.count).enumerated() {
+                let cx = origins[k].x + 41, cy = origins[k].y + 41
+                if k == selected, let ring = ui.creatureRing("selected") ?? d["Ring_Pressed"] { out.append(Quad(texture: uiTexture("ringsel|\(ring.name)", { ring.bitmap }), x: cx - ring.width / 2, y: cy - ring.height / 2, w: ring.width, h: ring.height)) }
+                if let icon = icon { out.append(Quad(texture: uiTexture("icon|\(icon.name)", { icon.bitmap }), x: cx - icon.width / 2, y: cy - icon.height / 2, w: icon.width, h: icon.height)) }
+                ringLabel(&out, ui: ui, cx: cx, cy: cy, count: count, hero: k < army.count)
+            }
+        }
+        button("split", "Released", in: "split_button")
+        if selected < army.count { img("SpellBook_Released") }
+        button("hide_Potion", "Hide_Potions_Released", in: "Hide_Potions_Button")
+        // the kingdom's armies down the right: their leaders' portraits, this one ringed
+        if let list = d["Army_list"] {
+            for (k, h) in g.heroes.prefix(3).enumerated() {
+                let cy = oy + list.y + 12 + k * 100, cx = ox + list.x + list.width / 2
+                if let p = ui.portrait(keyword: h.keyword, alignment: h.alignment) { out.append(Quad(texture: uiTexture("icon|\(p.name)", { p.bitmap }), x: cx - p.width / 2, y: cy + 14, w: p.width, h: p.height)) }
+                if h === leader, let r = d["Ring_Pressed"] { out.append(Quad(texture: uiTexture("dlg|army|Ring_Pressed", { r.bitmap }), x: cx - r.width / 2, y: cy, w: r.width, h: r.height)) }
+            }
+            img("Army_Up_Released"); img("Army_Down_Released")
+        }
+        if let ok = d["ok_button"], let b = ui.button("ok") {
+            out.append(Quad(texture: uiTexture("button|ok|\(b.name)", { b.bitmap }), x: ox + ok.x + (ok.width - b.width) / 2, y: oy + ok.y + (ok.height - b.height) / 2, w: b.width, h: b.height))
+        }
+        if selected >= army.count { button("dismiss", "Released", in: "dismiss") }
+        return out
+    }
+    /// The creature's figures in their alignment's scene (control.creature_model): three of them
+    /// (the i_of_3 places) in their standing pose.
+    func creatureModelQuads(_ keyword: String, _ d: LayerFile, _ ox: Int, _ oy: Int) -> [Quad] {
+        guard let g = game, let ui = ui, let box = d["creature_box"], let c = g.tables?.creature(keyword) else { return [] }
+        var out: [Quad] = []
+        let back = (try? ui.archive.payload("layers.control.creature_model.\(c.alignment.lowercased()).h4d")).flatMap { try? LayerFile(data: $0) }
+        if let bg = back?.layers.first(where: { $0.isImage }) {
+            out.append(Quad(texture: uiTexture("cmodel|\(c.alignment)", { bg.bitmap }), x: ox + box.x, y: oy + box.y, w: box.width, h: box.height))
+        }
+        guard let cs = combat, let places = (try? ui.archive.payload("layers.control.creature_model.h4d")).flatMap({ try? LayerFile(data: $0) }) else { return out }
+        let actor = cs.actorName(c)
+        guard let (s, entry) = combatSprite(cs, actor: actor, state: "wait", facing: "sw"), let f = s.frames.first else { return out }
+        let sx = Float(box.width) / 300, sy = Float(box.height) / 300
+        for k in 1...3 {
+            guard let pl = places["\(k)_of_3"] else { continue }
+            // the figure's feet at the bottom middle of its place
+            let fx = Float(box.x) + Float(pl.x + pl.width / 2) * sx, fy = Float(box.y) + Float(pl.y + pl.height - 12) * sy
+            let sc: Float = 0.8
+            out.append(Quad(texture: texture(for: f, of: entry), x: ox + Int(fx + (Float(s.origin.x) + Float(f.box.left)) * sc), y: oy + Int(fy + (Float(s.origin.y) + Float(f.box.top)) * sc), w: Int(Float(f.bitmap.width) * sc), h: Int(Float(f.bitmap.height) * sc)))
+        }
         return out
     }
 }

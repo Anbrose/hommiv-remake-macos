@@ -43,8 +43,10 @@ public final class H4Font {
         text.reduce(0) { $0 + step(glyph($1)) }
     }
 
-    /// The text as an RGBA bitmap in one colour.
-    public func render(_ text: String, colour: (UInt8, UInt8, UInt8) = (0, 0, 0)) -> Bitmap {
+    /// The text as an RGBA bitmap. Each glyph byte holds two 4-bit coverages: the letter in the
+    /// high nibble, its halo in the low one (0x71b820); the halo is drawn under the letter in
+    /// `halo`'s colour when one is given (the army screen's texts use (200,200,200)).
+    public func render(_ text: String, colour: (UInt8, UInt8, UInt8) = (0, 0, 0), halo: (UInt8, UInt8, UInt8)? = nil) -> Bitmap {
         let w = max(measure(text), 1)
         var bm = Bitmap(width: w, height: size)
         var x = 0
@@ -52,11 +54,15 @@ public final class H4Font {
             let g = glyph(c)
             for y in 0..<g.height {
                 for i in 0..<g.width where x + i < w {
-                    let a = g.alpha[y * g.width + i]
-                    if a != 0 {
-                        let o = (y * w + x + i) * 4
-                        bm.pixels[o] = colour.0; bm.pixels[o + 1] = colour.1; bm.pixels[o + 2] = colour.2; bm.pixels[o + 3] = a
-                    }
+                    let v = g.alpha[y * g.width + i]
+                    let a1 = Float(v >> 4) / 15, a2 = halo != nil ? Float(v & 15) / 15 : 0
+                    guard a1 > 0 || a2 > 0 else { continue }
+                    let h = halo ?? colour
+                    let a = a1 + a2 * (1 - a1)
+                    func mix(_ c1: UInt8, _ c2: UInt8) -> UInt8 { UInt8(min(255, (Float(c1) * a1 + Float(c2) * a2 * (1 - a1)) / a + 0.5)) }
+                    let o = (y * w + x + i) * 4
+                    bm.pixels[o] = mix(colour.0, h.0); bm.pixels[o + 1] = mix(colour.1, h.1); bm.pixels[o + 2] = mix(colour.2, h.2)
+                    bm.pixels[o + 3] = UInt8(min(255, a * 255 + 0.5))
                 }
             }
             x += step(g)

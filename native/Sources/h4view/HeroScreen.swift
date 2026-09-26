@@ -57,8 +57,8 @@ extension Renderer {
         let rows = [d["skill_1"]] + (2...5).map { d["skill_row_\($0)"] }
         for (r, ids) in skillRows(h).prefix(5).enumerated() {
             guard let row = rows[r] else { continue }
-            let step = r == 0 ? ((d["skill_2"]?.x ?? row.x + 60) - row.x) : 57
-            for (k, id) in ids.prefix(4).enumerated() { out.append((id, ox + row.x + k * step, oy + row.y)) }
+            let cols = [30, 90, 147, 204]   // skill_1..skill_4 x, for every row
+            for (k, id) in ids.prefix(4).enumerated() { out.append((id, ox + cols[k], oy + row.y)) }
         }
         return out
     }
@@ -67,7 +67,7 @@ extension Renderer {
         var items: [(Int, Int, Int)] = []
         var doll: (Int, Int)? = nil
         if let inv = d["hero_inventory"], let m = dollLayout(h), let bg = m["Background"] {
-            let dx = ox + inv.x + (inv.width - bg.width) / 2, dy = oy + inv.y + (inv.height - bg.height) / 2
+            let dx = ox + inv.x, dy = oy + inv.y   // (top-left, 0x597f50)
             doll = (dx, dy)
             for (i, a) in h.equipped.enumerated() where i < 14 {
                 if let a = a, let s = m[Renderer.slotLayers[i]] { items.append((a, dx + s.x, dy + s.y)) }
@@ -121,7 +121,7 @@ extension Renderer {
     func heroArtifactHit(_ h: Hero, _ d: LayerFile, _ ox: Int, _ oy: Int, x: Float, y: Float) -> ArtifactHit? {
         func at(_ sx: Int, _ sy: Int) -> Bool { x >= Float(sx) && x < Float(sx + 44) && y >= Float(sy) && y < Float(sy + 44) }
         if let inv = d["hero_inventory"], let m = dollLayout(h), let bg = m["Background"] {
-            let dx = ox + inv.x + (inv.width - bg.width) / 2, dy = oy + inv.y + (inv.height - bg.height) / 2
+            let dx = ox + inv.x, dy = oy + inv.y   // (top-left, 0x597f50)
             for (i, a) in h.equipped.enumerated() where i < 14 && a != nil {
                 if let s = m[Renderer.slotLayers[i]], at(dx + s.x, dy + s.y) { return .worn(i) }
             }
@@ -275,33 +275,85 @@ extension Renderer {
         if selected >= army.count { button("dismiss", "Released", in: "dismiss") }
         return out
     }
-    /// The creature's figures in their alignment's scene (control.creature_model): three of them
-    /// (the i_of_3 places) in their standing pose.
+    /// The creature model window (t_combat_model_window, army_screen_spec §4) at creature_box: the
+    /// alignment's 300x300 backdrop and the figures at scale min(212,216)/280, the backdrop centred
+    /// and clipped; up to three figures in the i_of_n places (fewer while their frames do not fit),
+    /// facing sw, each mostly in its wait loop, now and then another action or a walk in place.
     func creatureModelQuads(_ keyword: String, _ d: LayerFile, _ ox: Int, _ oy: Int) -> [Quad] {
         guard let g = game, let ui = ui, let box = d["creature_box"], let c = g.tables?.creature(keyword) else { return [] }
         var out: [Quad] = []
+        let sc = Float(min(box.width, box.height)) / 280
         let back = (try? ui.archive.payload("layers.control.creature_model.\(c.alignment.lowercased()).h4d")).flatMap { try? LayerFile(data: $0) }
-        if let bg = back?.layers.first(where: { $0.isImage }) {
-            out.append(Quad(texture: uiTexture("cmodel|\(c.alignment)", { bg.bitmap }), x: ox + box.x, y: oy + box.y, w: box.width, h: box.height))
+        if let bg = back?.layers.first(where: { $0.isImage || $0.width >= 300 }) {
+            // the part of the scaled backdrop inside the window: offset ((212 - 227) / 2, (216 - 227) / 2)
+            let sw = Float(bg.width) * sc, sh = Float(bg.height) * sc
+            let offX = Int((Float(box.width) - sw) / 2), offY = Int((Float(box.height) - sh) / 2)
+            let cx0 = Int(Float(-offX) / sc), cy0 = Int(Float(-offY) / sc)
+            let cw = min(bg.width - cx0, Int(Float(box.width) / sc)), ch = min(bg.height - cy0, Int(Float(box.height) / sc))
+            out.append(Quad(texture: uiTexture("cmodel|\(c.alignment)|\(cx0),\(cy0)", {
+                var b = Bitmap(width: cw, height: ch)
+                for y in 0..<ch { for x in 0..<cw { for k in 0..<4 { b.pixels[(y * cw + x) * 4 + k] = bg.bitmap.pixels[((y + cy0) * bg.width + x + cx0) * 4 + k] } } }
+                return b
+            }), x: ox + box.x, y: oy + box.y, w: box.width, h: box.height))
         }
         guard let cs = combat, let places = (try? ui.archive.payload("layers.control.creature_model.h4d")).flatMap({ try? LayerFile(data: $0) }) else { return out }
         let actor = cs.actorName(c)
-        // the walk loop in place (the combat actor's walk; wait when it has none), facing index 4
-        guard let (s, entry) = combatSprite(cs, actor: actor, state: "walk", facing: "sw") ?? combatSprite(cs, actor: actor, state: "wait", facing: "sw"),
-              var f = s.frames.first else { return out }
-        let tl = s.timeline
-        if !tl.isEmpty {
-            let period = cs.framePeriod(actor, "walk")
-            f = tl[Int(Date().timeIntervalSince1970 / max(0.03, period)) % tl.count].frame
-        }
-        let sx = Float(box.width) / 300, sy = Float(box.height) / 300
-        for k in 1...3 {
-            guard let pl = places["\(k)_of_3"] else { continue }
-            // the figure's feet at the bottom middle of its place
-            let fx = Float(box.x) + Float(pl.x + pl.width / 2) * sx, fy = Float(box.y) + Float(pl.y + pl.height - 12) * sy
-            let sc: Float = 0.8
-            out.append(Quad(texture: texture(for: f, of: entry), x: ox + Int(fx + (Float(s.origin.x) + Float(f.box.left)) * sc), y: oy + Int(fy + (Float(s.origin.y) + Float(f.box.top)) * sc), w: Int(Float(f.bitmap.width) * sc), h: Int(Float(f.bitmap.height) * sc)))
+        guard let a = cs.actor(actor) else { return out }
+        // the fitting sequence's bounding box (walk if it has one, else wait)
+        let fit = a.state("walk") != nil ? "walk" : "wait"
+        guard let (fs, _) = combatSprite(cs, actor: actor, state: fit, facing: "sw") else { return out }
+        let frames = fs.frames
+        let left = frames.map { Int(fs.origin.x) + $0.box.left }.min() ?? 0, right = frames.map { Int(fs.origin.x) + $0.box.right }.max() ?? 0
+        let top = frames.map { Int(fs.origin.y) + $0.box.top }.min() ?? 0, bottom = frames.map { Int(fs.origin.y) + $0.box.bottom }.max() ?? 0
+        let bw = right - left, bh = bottom - top
+        var n = 3
+        while n > 1, let pl = places["1_of_\(n)"], pl.width < bw || pl.height < bh { n -= 1 }
+        let now = Date()
+        for k in 1...n {
+            guard let pl = places["\(k)_of_\(n)"] else { continue }
+            let x = Float(pl.x * 2 + pl.width) * sc * 0.5
+            let y = Float(pl.y * 2 + pl.height) * sc * 0.5 + Float(bh) * sc / 2 - Float(Int(Float(a.size * 16) * sc))
+            let (state, t0) = modelFigureState(key: "\(keyword)|\(k)", actor: actor, a, now: now)
+            guard let (s, entry) = combatSprite(cs, actor: actor, state: state, facing: "sw") ?? combatSprite(cs, actor: actor, state: "wait", facing: "sw") else { continue }
+            let tl = s.timeline
+            var f = s.frames.first, sh = f.flatMap { s.shadow(for: $0) }
+            if !tl.isEmpty {
+                let e = tl[Int(now.timeIntervalSince(t0) / max(0.03, cs.framePeriod(actor, state))) % tl.count]; f = e.frame; sh = e.shadow
+            }
+            let ax = Float(ox + box.x) + x, ay = Float(oy + box.y) + y
+            for img in [sh, f].compactMap({ $0 }) {
+                out.append(Quad(texture: texture(for: img, of: entry), x: Int(ax + (Float(s.origin.x) + Float(img.box.left)) * sc), y: Int(ay + (Float(s.origin.y) + Float(img.box.top)) * sc),
+                                w: Int(Float(img.bitmap.width) * sc), h: Int(Float(img.bitmap.height) * sc)))
+            }
         }
         return out
+    }
+    /// A model figure's action now (t_creature_model_figure 0x6041f0): wait loops ~2 s, then a random
+    /// pick (block, cast, fidget, flinch, melee, ranged, wait, or prewalk -> walk ~6 s -> postwalk);
+    /// any other action plays once and goes back to wait.
+    func modelFigureState(key: String, actor: String, _ a: CombatActor, now: Date) -> (String, Date) {
+        guard let cs = combat else { return ("wait", now) }
+        var st = modelFigures[key] ?? (state: "wait", since: now, until: now.addingTimeInterval(2 + Double.random(in: 0...1.5)))
+        if now >= st.until {
+            let dur: (String) -> Double = { max(0.2, cs.stateDuration(actor, $0, "sw")) }
+            var next = "wait"
+            switch st.state {
+            case "prewalk": next = "walk"
+            case "walk": next = "postwalk"
+            case "wait":
+                let pick = ["block", "cast_spell", "fidget", "flinch", "melee", "ranged", "wait", "prewalk", "prewalk", "prewalk"][Int.random(in: 0..<10)]
+                next = a.state(pick) != nil ? pick : "wait"
+            default: next = "wait"
+            }
+            let length: Double
+            switch next {
+            case "wait": length = max(2, ceil(2 / dur("wait")) * dur("wait"))
+            case "walk": length = max(dur("walk"), ceil(6 / dur("walk")) * dur("walk"))
+            default: length = dur(next)
+            }
+            st = (next, now, now.addingTimeInterval(length))
+        }
+        modelFigures[key] = st
+        return (st.state, st.since)
     }
 }

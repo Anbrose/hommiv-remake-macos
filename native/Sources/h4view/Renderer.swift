@@ -438,6 +438,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// Cancel beside OK, and what OK does.
     var prompt: (text: String, cancel: Bool, ok: (() -> Void)?)?
     var outcomeShown = false
+    var modelFigures: [String: (state: String, since: Date, until: Date)] = [:]
     /// 15000 -> "15,000"
     static func grouped(_ n: Int) -> String {
         let f = NumberFormatter(); f.numberStyle = .decimal; f.groupingSeparator = ","; f.usesGroupingSeparator = true

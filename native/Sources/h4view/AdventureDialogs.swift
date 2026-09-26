@@ -84,39 +84,7 @@ extension Renderer {
                 out.append(Quad(texture: uiTexture("button|ok|\(b.name)", { b.bitmap }), x: ox + ok.x + (ok.width - b.width) / 2, y: oy + ok.y + (ok.height - b.height) / 2, w: b.width, h: b.height))
             }
         case .hero(let i):
-            guard i < g.heroes.count, let d = ui.dialog("army.layout") else { return [] }
-            let leader = g.heroes[i], army = [leader] + leader.companions
-            let ox = (AdventureUI.width - 800) / 2, oy = (AdventureUI.height - 600) / 2
-            // a creature stack chosen in the rings: the screen's creature mode (0x534640)
-            if heroShown >= army.count, heroShown - army.count < leader.army.count {
-                out += creatureModeQuads(leader, stack: leader.army[heroShown - army.count], d, ox, oy)
-            } else {
-            let h = army[min(heroShown, army.count - 1)]
-            // not drawn: text-area masks (name_text, creature_text: outlines only), the other states of
-            // the buttons, the creature-only abilities frame, and the two-row ring backdrop (a hero
-            // outside a town shows one row); the formation buttons show the army's (loose) pressed
-            out += dialogImages(d, key: "herodlg", at: ox, oy, skip: ["Ring_Pressed", "Move_Army_Up", "Move_Army_Down", "Move_Tombstone_up", "loose_Released", "loose_Disabled",
-                                                                    "tight_Pressed", "tight_Disabled", "square_Pressed", "square_Disabled", "Up_Disabled", "name_text", "creature_text",
-                                                                    "Double_Ring_Background", "Abilities_Frame", "Army_Up_Highlighted", "Army_Up_Pressed", "Army_Down_Highlighted",
-                                                                    "Army_Down_Pressed", "SpellBook_Highlighted", "SpellBook_Pressed", "Ranged", "Ranged_Text", "dismiss"])
-            // skills, the class picture with the worn artifacts, the backpack
-            out += heroThingsQuads(h, d, ox, oy)
-            if let slot = d["creature_portrait"], let p = ui.portrait(keyword: h.keyword, alignment: h.alignment, size: 82) {
-                out.append(Quad(texture: uiTexture("portrait82|\(h.alignment)|\(h.keyword)", { p.bitmap }), x: ox + slot.x + (slot.width - p.width) / 2, y: oy + slot.y + (slot.height - p.height) / 2, w: p.width, h: p.height))
-            }
-            out += centred(h.name, in: d["name_text"], at: ox, oy, font: ui.dateFont)
-            out += centred(classLine(h), in: d["class_text"], at: ox, oy, font: ui.dateFont)
-            let s = g.heroStats(h)
-            // the hero's morale from the army's alignments (heroes4.exe 0x640310)
-            let moraleArmy: [(alignment: String, undead: Bool)] = army.map { ($0.alignment, false) } + leader.army.compactMap { st in g.tables?.creature(st.creature).map { ($0.alignment, Combatant(creature: $0, count: 1).has("undead")) } }
-            let m = Battle.armyMorale(own: h.alignment, army: moraleArmy)
-            let moraleText = m > 0 ? "+\(m)" : "\(m)"
-            let values: [(String, String)] = [("Damage_Text", s.damage), ("Hit_Points_Text", "\(s.hitPoints)"), ("Melee_Attack_Text", "\(s.attack)"), ("Melee_Defense_Text", "\(s.defense)"),
-                                              ("Ranged_Attack_Text", "\(s.ranged)"), ("Ranged_Defense_Text", "\(s.defense)"), ("Speed_Text", "\(s.speed)"), ("Move_Text", "\(Int(h.movement))\n(\(Int(h.maxMovement)))"),
-                                              ("Experience_Text", "\(h.experience)"), ("Spell_Points_Text", "\(g.spellPoints(h))\n(\(g.maxSpellPoints(h)))"), ("Shots_Text", "\(s.shots)"), ("Morale_Text", moraleText), ("Luck_Text", "0")]
-            out += statTexts(values, d, ox, oy)
-            }
-            out += armyScreenChrome(g.heroes[i], d, ox, oy, selected: heroShown)
+            out += armyScreenQuads(i)
         }
         return out
     }
@@ -137,8 +105,8 @@ extension Renderer {
             // a ring shows that hero or stack
             if let d = ui.dialog("army.layout"), i < g.heroes.count {
                 let n = 1 + g.heroes[i].companions.count + g.heroes[i].army.count
-                for (k, o) in armyRingOrigins(d, row: 0, ox: ox, oy: oy).enumerated() where k < n {
-                    if abs(x - Float(o.x + 41)) < 33, abs(y - Float(o.y + 41)) < 33 { heroShown = k; return true }
+                for (k, o) in armyRingSlots(ox, oy).enumerated() where k < n {
+                    if abs(x - Float(o.fx + 41)) < 33, abs(y - Float(o.fy + 41)) < 33 { heroShown = k; return true }
                 }
             }
             // an artifact: worn ones come off into the backpack, backpack ones are put on where they fit

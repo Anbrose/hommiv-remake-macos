@@ -183,7 +183,8 @@ extension GameState {
         for (k, var st) in objectStates where st.owner != nil {
             if st.countdown > 0 { st.countdown -= 1 }
             if st.countdown == 0 {
-                resources[GameState.materialNames[st.material], default: 0] += st.amount
+                if st.owner == map.humanColour || st.owner == nil { resources[GameState.materialNames[st.material], default: 0] += st.amount }
+                else if let o = st.owner { aiResources[o, default: GameState.startingResources][GameState.materialNames[st.material], default: 0] += st.amount }
                 objectStates[k] = st
                 reroll(key: k)
                 objectStates[k]?.countdown = 7
@@ -291,7 +292,7 @@ extension GameState {
                 say(p, "Initial", ["%artifact_list": list])
             }
         case "windmill", "weekly_material_generator", "random_weekly_material_generator":
-            st.owner = map.humanColour
+            st.owner = actingColour
             if st.countdown == 0 {
                 gain(st.material, st.amount, at: hero)
                 say(p, "initial", ["%material": materialList([(st.material, st.amount)]), "%material_name": GameState.materialNames[st.material].lowercased()])
@@ -428,7 +429,7 @@ extension GameState {
                 .map { ($0.0, $0.1 - self.resources[GameState.materialNames[$0.0], default: 0]) }
             if !short.isEmpty { self.say(p, "insufficient.materials", ["%material_list": self.materialList(short)]); return }
             for (mat, n) in cost { self.resources[GameState.materialNames[mat], default: 0] -= n }
-            self.mines.append(Mine(x: p.cellX, y: p.cellY, name: p.name, resource: GameState.materialNames[m], amount: [1000, 2, 2, 1, 1, 1, 1][m], owned: true, z: self.level))
+            self.mines.append(Mine(x: p.cellX, y: p.cellY, name: p.name, resource: GameState.materialNames[m], amount: [1000, 2, 2, 1, 1, 1, 1][m], owned: self.isHumanActing, z: self.level, owner: self.actingColour))
             self.say(p, "paid")
             self.sounds.append("miscellaneous.flag_mine")
         })

@@ -296,6 +296,14 @@ public final class GameState {
         set { passabilities[min(level, passabilities.count - 1)] = newValue }
     }
     public var heroes: [Hero] = []
+    /// The computer players' treasuries by colour.
+    public var aiResources: [Int: [String: Int]] = [:]
+    /// The pending battle with an enemy army was started by the computer (the player defends).
+    public var aiAttacking = false
+    /// The player acting now (the human, or a computer player during its turn).
+    public var acting: Int? = nil
+    public var actingColour: Int { acting ?? map.humanColour }
+    public var isHumanActing: Bool { acting == nil || acting == map.humanColour }
     /// The other players' heroes on the map (armies led by heroes; companions travel with them).
     public var enemyHeroes: [Hero] = []
     /// A script's fight: what runs when it is won and when it is lost.
@@ -348,7 +356,11 @@ public final class GameState {
         /// 0 no walls, 1 fort, 2 citadel, 3 castle (the siege layout).
         public var castleLevel: Int { buildings.contains("castle") ? 3 : buildings.contains("citadel") ? 2 : buildings.contains("fort") ? 1 : 0 }
     }
-    public struct Mine { public let x: Int, y: Int, name: String, resource: String, amount: Int; public var owned: Bool; public var z = 0 }
+    public struct Mine {
+        public let x: Int, y: Int, name: String, resource: String, amount: Int; public var owned: Bool; public var z = 0
+        /// The player (colour) the mine works for, nil unflagged.
+        public var owner: Int? = nil
+    }
     /// A creature dwelling on the map: a week's growth waits at the start; once owned it grows by
     /// the weekly growth in fourteenths each day (heroes4.exe 0x43cdb0: half a week's growth a week).
     public struct Dwelling {
@@ -789,7 +801,7 @@ public final class GameState {
         let result = QuickCombat.fight(attackers: combatants(of: hero), defenders: [Combatant(creature: c, count: monsters[i].count)],
                                        seed: day * 131 + hero.x * 17 + hero.y)
         if ProcessInfo.processInfo.environment["H4DEBUG"] != nil { for l in result.log.prefix(12) { print("  " + l) } }
-        let survivors = result.attackers.dropFirst().filter { $0.alive }.map { s in Hero.Stack(creature: t.creatures.first { $0.name == s.name }?.keyword ?? s.name, count: s.count) }
+        let survivors = result.attackers.filter { $0.alive && !$0.isHero }.map { s in Hero.Stack(creature: t.creatures.first { $0.name == s.name }?.keyword ?? s.name, count: s.count) }
         finishBattle(hero: hero, monsterAt: i, p, won: result.attackerWon, army: survivors, monstersLeft: result.defenders.first?.count ?? 0, experience: result.experience, rounds: result.rounds)
     }
 
@@ -1022,7 +1034,8 @@ public final class GameState {
             }
             if !towns[i].owned {
                 let previous = towns[i].owner
-                towns[i].owned = true; towns[i].owner = map.humanColour; log.append("\(towns[i].name) is yours")
+                towns[i].owner = actingColour; towns[i].owned = actingColour == map.humanColour
+                if towns[i].owned { log.append("\(towns[i].name) is yours") }
                 runTownEvent(i, slot: 1, previousOwner: previous, hero: hero)   // "captured"
                 checkScenario(newDay: false)
             } else {
@@ -1034,8 +1047,11 @@ public final class GameState {
             return
         }
         if let i = mine(for: p) {
-            if mines[i].owned { log.append("\(mines[i].resource) mine already yours") }
-            else { mines[i].owned = true; sounds.append("miscellaneous.flag_mine"); log.append("captured a mine: +\(mines[i].amount) \(mines[i].resource) per day") }
+            if mines[i].owner == actingColour { if isHumanActing { log.append("\(mines[i].resource) mine already yours") } }
+            else {
+                mines[i].owner = actingColour; mines[i].owned = isHumanActing
+                if isHumanActing { sounds.append("miscellaneous.flag_mine"); log.append("captured a mine: +\(mines[i].amount) \(mines[i].resource) per day") }
+            }
             hero.target = nil
         }
         if let i = dwelling(for: p), let c = tables?.creature(dwellings[i].creature) {
@@ -1349,6 +1365,7 @@ public final class GameState {
 
     public func endTurn() {
         defer { runDayEvents(); checkScenario(newDay: true) }
+        for c in aiPlayers { aiTurn(c) }   // the computer players move before the new day
         day += 1
         for h in heroes { h.maxMovement = armyMovement(h); h.movement = h.maxMovement; h.path = []; h.plan = [] }
         for (res, amount) in income { resources[res, default: 0] += amount }

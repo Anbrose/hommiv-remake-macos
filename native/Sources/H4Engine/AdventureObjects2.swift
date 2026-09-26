@@ -219,13 +219,13 @@ extension GameState {
         case "pandoras_box":
             // the map's placed event of that name: its message, question, guards and rewards
             if let name = record(for: p)?.text, var e = map.placedEvents.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
-                run(event: &e, ScriptContext(current: map.humanColour, hero: hero))
+                run(event: &e, ScriptContext(current: actingColour, hero: hero))
             }
             remove(p)
         case "seers_hut", "quest_gate", "quest_guard":
             visitQuest(hero, p, &st)
         case "lighthouse":
-            if st.owner == map.humanColour { say(p, "empty") } else { st.owner = map.humanColour; st.countdown = -1; say(p, "initial") }
+            if st.owner == actingColour { say(p, "empty") } else { st.owner = actingColour; st.countdown = -1; say(p, "initial") }
         default:
             return false
         }
@@ -359,7 +359,7 @@ extension GameState {
         guard let r = record(for: p), r.questTexts.count >= 4 else { say(p, "help"); return }
         dialogueSound(17)
         if st.used { scripts.messages.append(r.questTexts.count > 5 ? r.questTexts[5] : (objectText(p, "completed") ?? r.questTexts[1])); return }
-        let c = ScriptContext(current: map.humanColour, hero: hero)
+        let c = ScriptContext(current: actingColour, hero: hero)
         let first = st.countdown == 0
         st.countdown = 1
         if first, !r.questTexts[2].isEmpty { scripts.messages.append(r.questTexts[2]) }
@@ -380,6 +380,6 @@ extension GameState {
               let name = record(for: p)?.text, objectStates[objectKey(p)]?.used != true,
               var e = map.placedEvents.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else { return }
         objectStates[objectKey(p), default: ObjectState()].used = true
-        run(event: &e, ScriptContext(current: map.humanColour, hero: hero))
+        run(event: &e, ScriptContext(current: actingColour, hero: hero))
     }
 }

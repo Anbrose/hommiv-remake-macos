@@ -252,6 +252,15 @@ if ProcessInfo.processInfo.environment["H4VISITALL"] != nil, let h = game.heroes
     print("hero: atk+\(h.attackBonus) def+\(h.defenseBonus) spd+\(h.speedBonus) sp+\(h.spellPointBonus) exp \(h.experience) luck \(h.armyLuck) morale \(h.armyMorale) temple \(h.templeAlignment ?? "-") backpack \(h.backpack.map { game.artifactName($0) })")
     exit(0)
 }
+if let n = ProcessInfo.processInfo.environment["H4AIDAYS"].flatMap({ Int($0) }) {   // debugging aid: let the computer play n days
+    for d in 0..<n {
+        game.endTurn()
+        let hs = game.enemyHeroes.map { "\($0.name)@\($0.x),\($0.y) army \($0.army.map { "\($0.count) \($0.creature)" })" }
+        print("day \(d + 2): \(hs) towns \(game.towns.map { "\($0.name):\($0.owner.map(String.init) ?? "-")" }) ai gold \(game.aiResources.mapValues { $0["Gold"] ?? 0 }) battle \(game.pendingHeroBattle != nil)")
+        game.pendingHeroBattle = nil
+    }
+    exit(0)
+}
 // the map's scripts: loaded, then day 1's events (the opening story, ...)
 game.loadScripts()
 // a saved game: its state over the freshly started scenario (day events already ran then)

@@ -277,6 +277,8 @@ final class AdventureUI {
         for d in g.dwellings { let (px, py) = point(d.x, d.y); diamond(px, py, 2, (160, 160, 160)) }
         for t in g.towns where t.z == g.level { let (px, py) = point(t.x + 3, t.y + 3); diamond(px, py, 6, t.owned ? playerColours[0] : (200, 200, 200)) }
         for h in g.heroes where h.z == g.level { let (px, py) = point(h.x, h.y); diamond(px, py, 1, playerColours[0]) }
+        for h in g.enemyHeroes where h.z == g.level { let (px, py) = point(h.x, h.y); diamond(px, py, 1, playerColours[min(max(0, h.owner), playerColours.count - 1)]) }
+        for t in g.towns where t.z == g.level && !t.owned && t.owner != nil { let (px, py) = point(t.x + 3, t.y + 3); diamond(px, py, 6, playerColours[min(max(0, t.owner!), playerColours.count - 1)]) }
         return bm
     }
 

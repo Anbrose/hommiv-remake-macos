@@ -483,7 +483,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
         // minimap: the map squashed into the panel's frame, with the visible area outlined
         if let mm = ui.hotspot("mini_map") {
-            let stamp = g.level * 7_000_001 + g.day * 1000 + g.heroes.reduce(0) { $0 + $1.x * 7 + $1.y } + g.towns.filter { $0.owned }.count * 31 + g.mines.filter { $0.owned }.count * 17
+            let stamp = g.level * 7_000_001 + g.day * 1000 + g.enemyHeroes.reduce(0) { $0 + $1.x * 13 + $1.y * 3 } + g.heroes.reduce(0) { $0 + $1.x * 7 + $1.y } + g.towns.filter { $0.owned }.count * 31 + g.mines.filter { $0.owned }.count * 17
             if minimapTexture == nil || minimapStamp != stamp { minimapTexture = makeTexture(AdventureUI.minimap(game: g, size: mm.width)); minimapStamp = stamp }
             out.append(Quad(texture: minimapTexture!, x: mm.x, y: mm.y, w: mm.width, h: mm.height))
             let n = Float(scene.map.size)

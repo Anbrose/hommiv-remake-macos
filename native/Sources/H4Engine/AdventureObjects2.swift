@@ -222,6 +222,8 @@ extension GameState {
                 run(event: &e, ScriptContext(current: actingColour, hero: hero))
             }
             remove(p)
+        case "shipyard":
+            visitShipyard(hero, p)
         case "tavern":
             dialogueSound(24)
             if st.used { say(p, "empty"); return true }

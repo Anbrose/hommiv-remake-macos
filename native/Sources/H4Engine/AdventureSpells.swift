@@ -23,6 +23,7 @@ extension GameState {
                 jumped = true
             }
         case 108: h.timedEffects["spell.pathfinding"] = 1           // no terrain penalty today
+        case 158: if !summonBoat(h) { h.spellPoints = spellPoints(h) + h.spellCost(spell) }   // no ship: nothing spent
         case 132: h.movement += h.maxMovement * 0.3                  // Endurance ("by 30") [G: read as 30%]
         case 70: h.armyLuck["spell.luck"] = 10                       // maximum luck until the next battle
         case 103: h.armyMorale["spell.morale"] = 10

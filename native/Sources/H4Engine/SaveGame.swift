@@ -29,6 +29,7 @@ public struct SaveGame: Codable {
     public var aiResources: [Int: [String: Int]]? = nil
     public var keys: [String]? = nil
     public var mineOwners: [Int?]? = nil
+    public var boats: [Boat]? = nil
     public var usedArtifacts: [Int]? = nil
 
     public struct Stack: Codable { public var creature: String; public var count: Int }
@@ -54,6 +55,7 @@ public struct SaveGame: Codable {
         public var armyLuck: [String: Int]?, armyMorale: [String: Int]?, templeAlignment: String?
         public var spells: [Int]?
         public var owner: Int?
+        public var boat: String?
     }
     public struct TownState: Codable {
         public var x, y: Int
@@ -119,6 +121,7 @@ extension GameState {
         s.objectStates = objectStates; s.usedArtifacts = Array(usedArtifacts).sorted()
         s.enemyHeroes = enemyHeroes.map { SaveGame.state(of: $0) }; s.aiResources = aiResources; s.keys = Array(keys).sorted()
         s.mineOwners = mines.map { $0.owner }
+        s.boats = boats
         return s
     }
 
@@ -176,6 +179,7 @@ extension GameState {
         }
         if let a = s.aiResources { aiResources = a }
         if let k = s.keys { keys = Set(k) }
+        if let bs = s.boats { boats = bs; for b in bs where b.z < passabilities.count { passabilities[b.z].block(b.x, b.y) } }
         if let mo = s.mineOwners { for (i, o) in mo.enumerated() where i < mines.count { mines[i].owner = o } }
     }
 }
@@ -193,6 +197,7 @@ extension SaveGame {
         st.companions = h.companions.map { state(of: $0) }
         st.z = h.z
         st.owner = h.owner
+        st.boat = h.boat
         st.bonuses = [h.attackBonus, h.defenseBonus, h.speedBonus, h.spellPointBonus, h.dreamTeachers, h.spellPoints ?? -1, h.manaRestoredToday]
         st.visitedObjects = Array(h.visitedObjects).sorted(); st.fountainEffects = Array(h.fountainEffects).sorted(); st.timedEffects = h.timedEffects
         st.armyLuck = h.armyLuck; st.armyMorale = h.armyMorale; st.templeAlignment = h.templeAlignment
@@ -211,6 +216,7 @@ extension SaveGame {
         h.companions = (st.companions ?? []).map { hero(from: $0) }
         h.z = st.z ?? 0
         h.owner = st.owner ?? 0
+        h.boat = st.boat
         if let b = st.bonuses, b.count >= 7 {
             h.attackBonus = b[0]; h.defenseBonus = b[1]; h.speedBonus = b[2]; h.spellPointBonus = b[3]; h.dreamTeachers = b[4]
             h.spellPoints = b[5] < 0 ? nil : b[5]; h.manaRestoredToday = b[6]

@@ -910,6 +910,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             g.click(hero: hero, pickup: p)
             return
         }
+        if hero.boat != nil || g.boat(at: x, y) != nil { g.click(hero: hero, x: x, y: y); return }   // sailing, or a ship to board
         if !g.passability.isFree(x, y) {
             // Clicked on something you cannot stand on. If an object's picture is under the cursor
             // (a bridge deck is drawn well above its cells), go to the nearest free cell of its
@@ -950,7 +951,9 @@ final class Renderer: NSObject, MTKViewDelegate {
     func heroQuads(_ h: Hero, at t: Double) -> [Quad] {
         guard let r = resolver else { print("hero: no resolver"); return [] }
         let state = h.isWalking ? "walk" : "wait"
-        guard let entry = r.sequence(actor: h.actor, state: state, facing: h.facing) else { print("hero: no sequence for \(h.actor) \(state) \(h.facing)"); return [] }
+        // at sea the army is drawn as its ship (adv_actor.ships.<alignment>)
+        let actorName = h.boat.map { "ships.\(["life", "order", "death", "chaos", "nature", "might"].contains($0) ? $0 : "generic")" } ?? h.actor
+        guard let entry = r.sequence(actor: actorName, state: state, facing: h.facing) else { print("hero: no sequence for \(h.actor) \(state) \(h.facing)"); return [] }
         if actorSprites[entry] == nil {
             do { actorSprites[entry] = try Sprite(data: r.archive.payload(entry)) } catch { print("hero: \(entry): \(error)") }
         }
@@ -1004,6 +1007,12 @@ final class Renderer: NSObject, MTKViewDelegate {
         // heroes are sorted in among the objects by the same depth rule (cell row, then column)
         var pending: [(depth: Float, quads: [Quad])] = []
         if let g = game {
+            // empty ships on the water
+            for b in g.boats where b.z == g.level {
+                let ship = Hero(actor: "", x: b.x, y: b.y, movement: 0)
+                ship.boat = b.alignment; ship.facing = "sw"
+                pending.append((inFront(b.x, b.y, Float((b.x + b.y) * 1000 + (b.y - b.x) + 500)), heroQuads(ship, at: t)))
+            }
             for h in (g.heroes + g.enemyHeroes) where h.z == g.level {
                 for a in (h.owner == g.map.humanColour && settings.showMovementPath ? g.arrows(for: h) : []) {
                     // arrows sort with the objects (a tree in front hides them) and ride up onto bridges

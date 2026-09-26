@@ -13,6 +13,10 @@ public struct Passability {
     public private(set) var bridgeAxis: [UInt8]
     /// Road type on the cell (0 none, 1 stone, 2 dirt, 3 cobble); road-to-road moves cost the road's rate.
     public private(set) var roadType: [UInt8]
+    /// Open sea (terrain 0): where ships sail.
+    public private(set) var water: [Bool]
+    /// Cells blocked by the ground itself (water, rivers, the map's edge); `blocked` adds what stands there.
+    var terrainBlocked: [Bool]
 
     /// Decorative categories that do not block movement even though their footprint says so.
     static let walkable: Set<String> = ["flowers", "moss", "Mushrooms", "Cracks-Holes", "Dunes", "Lava flows-mud", "Stumps", "Logs", "Skeletons"]
@@ -38,16 +42,19 @@ public struct Passability {
         elevation = [Float](repeating: 0, count: size * size)
         bridgeAxis = [UInt8](repeating: 0, count: size * size)
         roadType = MapScene.roadTypes(map: map, level: level)
+        water = [Bool](repeating: false, count: size * size)
+        occupied = [Bool](repeating: false, count: size * size)
+        terrainBlocked = [Bool](repeating: true, count: size * size)
         let cells = map.cells[level]
         for x in 0..<size {
             for y in 0..<size {
                 guard let c = cells[x * size + y] else { continue }
                 let i = x * size + y
                 switch c.type {
-                case 0, 9, 10, 11: blocked[i] = true; continue   // water (no boats yet) and rivers (need a bridge)
+                case 0, 9, 10, 11: blocked[i] = true; water[i] = c.type == 0; continue   // water (by ship) and rivers (need a bridge)
                 default: cost[i] = Passability.terrainCost(c.type)
                 }
-                blocked[i] = false
+                blocked[i] = false; terrainBlocked[i] = false
             }
         }
         let debug = ProcessInfo.processInfo.environment["H4DEBUG"] != nil
@@ -58,7 +65,7 @@ public struct Passability {
             // pickups block too: the hero stops next to them and takes them from there
             for b in p.sprite.blocked {
                 let x = p.cellX + b.x, y = p.cellY + b.y
-                if x >= 0, x < size, y >= 0, y < size { blocked[x * size + y] = true }
+                if x >= 0, x < size, y >= 0, y < size { blocked[x * size + y] = true; occupied[x * size + y] = true }
             }
         }
         // bridges (and their ramps) are walkable over the river they span: their whole footprint is a deck
@@ -68,7 +75,7 @@ public struct Passability {
                 for j in 0..<p.sprite.footprint.h {
                     let x = p.cellX + i, y = p.cellY + j
                     if x >= 0, x < size, y >= 0, y < size {
-                        blocked[x * size + y] = false; cost[x * size + y] = 1; elevation[x * size + y] = raise
+                        blocked[x * size + y] = false; terrainBlocked[x * size + y] = false; cost[x * size + y] = 1; elevation[x * size + y] = raise
                         bridgeAxis[x * size + y] = 3   // axis decided below
                     }
                 }
@@ -100,12 +107,17 @@ public struct Passability {
         x >= 0 && x < size && y >= 0 && y < size ? elevation[x * size + y] : 0
     }
 
+    /// Something stands on the cell (an object, a monster, an army, a ship).
+    public private(set) var occupied: [Bool] = []
     public mutating func free(_ x: Int, _ y: Int) {
-        if x >= 0, x < size, y >= 0, y < size { blocked[x * size + y] = false }
+        if x >= 0, x < size, y >= 0, y < size { occupied[x * size + y] = false; blocked[x * size + y] = terrainBlocked[x * size + y] }
     }
     public mutating func block(_ x: Int, _ y: Int) {
-        if x >= 0, x < size, y >= 0, y < size { blocked[x * size + y] = true }
+        if x >= 0, x < size, y >= 0, y < size { occupied[x * size + y] = true; blocked[x * size + y] = true }
     }
+    public func isWater(_ x: Int, _ y: Int) -> Bool { x >= 0 && y >= 0 && x < size && y < size && water[x * size + y] }
+    /// Open water nothing stands on.
+    public func isFreeWater(_ x: Int, _ y: Int) -> Bool { isWater(x, y) && !occupied[x * size + y] }
 
     /// Pathfinding's relief on rough terrain for the army being routed (GameState sets it).
     public var relief: Float = 0
@@ -207,8 +219,12 @@ public final class Hero {
     public var heroClass = -1
     public var home: (x: Int, y: Int) = (0, 0)   // where a beaten hero regroups
     public var z = 0                              // map level (0 surface, 1 underground)
+    /// Aboard a ship: the ship's alignment (it draws the hero as adv_actor.ships.<alignment>).
+    public var boat: String? = nil
     /// The player (colour) the hero serves.
     public var owner = 0
+    /// A ship this hero is walking to, to board.
+    public var boardTarget: (Int, Int)? = nil
     /// An enemy hero this hero is on its way to attack.
     public var attackTarget: Hero? = nil
     // What adventure objects gave the hero (heroes4.exe's bonus array at hero+0x10: attack,
@@ -306,6 +322,8 @@ public final class GameState {
     public var isHumanActing: Bool { acting == nil || acting == map.humanColour }
     /// The other players' heroes on the map (armies led by heroes; companions travel with them).
     public var enemyHeroes: [Hero] = []
+    /// Empty ships on the water.
+    public var boats: [Boat] = []
     /// A script's fight: what runs when it is won and when it is lost.
     public var scriptBattle: (win: ScriptNode?, lose: ScriptNode?, context: ScriptContext)?
     /// A siege waiting for the combat screen: the hero and the town.
@@ -498,6 +516,7 @@ public final class GameState {
 
     /// The movement an army gets per day: the slowest of the hero and its creatures.
     public func armyMovement(_ h: Hero) -> Float {
+        if h.boat != nil { return seaMovement(h) }
         var m = Hero.baseMovement
         for s in h.army { if let c = tables?.creature(s.creature), c.move > 0 { m = min(m, Float(c.move)) } }
         // Master / Grandmaster Pathfinding: the whole army +25% / +50% on land (0x6426c0)
@@ -1212,6 +1231,33 @@ public final class GameState {
         passability.relief = GameState.terrainRelief(hero)
         if let e = enemyAt(x, y) { attack(e, with: hero); return }
         hero.attackTarget = nil
+        if hero.boat != nil {   // at sea: sail over water; a coast cell to land on
+            let from = standingCell(hero)
+            var route: [(x: Int, y: Int)]? = nil
+            if passability.isFreeWater(x, y) { route = seaPath(from: from, to: (x, y)) }
+            else if passability.isFree(x, y) {
+                var best: [(x: Int, y: Int)]? = nil
+                for dx in -1...1 { for dy in -1...1 where passability.isFreeWater(x + dx, y + dy) || (x + dx, y + dy) == from {
+                    if let r = (x + dx, y + dy) == from ? [] : seaPath(from: from, to: (x + dx, y + dy)), best == nil || r.count < best!.count { best = r }
+                } }
+                route = best.map { $0 + [(x, y)] }
+            }
+            guard let r = route else { return }
+            if let last = hero.plan.last, last.x == x, last.y == y { hero.path = hero.plan; hero.plan = []; hero.progress = 0 }
+            else { hero.plan = r }
+            return
+        }
+        if let b = boat(at: x, y) {   // an empty ship: walk to the shore beside it, then board
+            if GameState.adjacent((hero.x, hero.y), (x, y)) { board(hero, b); return }
+            var best: [(x: Int, y: Int)]? = nil
+            for dx in -1...1 { for dy in -1...1 where (dx != 0 || dy != 0) && isVacant((x + dx, y + dy), for: hero) {
+                if let r = passability.path(from: (hero.x, hero.y), to: (x + dx, y + dy)), best == nil || r.count < best!.count { best = r }
+            } }
+            guard let r = best else { return }
+            if hero.boardTarget.map({ $0 == (x, y) }) == true, !hero.plan.isEmpty { hero.path = hero.plan; hero.plan = []; hero.progress = 0 }
+            else { hero.plan = r; hero.boardTarget = (x, y) }
+            return
+        }
         if hero.isWalking {
             interrupt(hero)
             let from = standingCell(hero)
@@ -1303,6 +1349,10 @@ public final class GameState {
             let stepCost = passability.stepCost(from: h.x, h.y, to: next.x, next.y)
             // out of movement: stop here, keeping the rest of the route (red) to go on with later
             if h.movement + 0.001 < stepCost { h.plan = h.path; h.path = []; continue }
+            // at sea, the last step onto land is the landing
+            if h.boat != nil, !passability.isWater(next.x, next.y) {
+                land(h, at: (next.x, next.y)); continue
+            }
             h.facing = Hero.facing(dx: next.x - h.x, dy: next.y - h.y)
             h.progress += dt * GameState.cellsPerSecond
             h.distance += dt * GameState.cellsPerSecond
@@ -1319,6 +1369,10 @@ public final class GameState {
                     log.append("\(tables?.creature(monsters[i].creature)?.plural ?? monsters[i].creature) attack \(h.name)!")
                     startCharge(i, at: h)
                     continue
+                }
+                if h.path.isEmpty, let bt = h.boardTarget {
+                    h.boardTarget = nil
+                    if let b = boat(at: bt.0, bt.1), GameState.adjacent((h.x, h.y), bt) { board(h, b); continue }
                 }
                 if h.path.isEmpty, let e = h.attackTarget, GameState.adjacent((h.x, h.y), (e.x, e.y)) {
                     h.attackTarget = nil

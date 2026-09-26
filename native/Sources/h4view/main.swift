@@ -362,6 +362,10 @@ if let out = snapshot {
     }
     if ProcessInfo.processInfo.environment["H4MARKET"] != nil { renderer.market = MarketState(k: 3, sell: 1, buy: 0, lots: 5) }   // snapshot: the marketplace
     if ProcessInfo.processInfo.environment["H4HIRE"] != nil { renderer.hire = game.hireOffer(town: game.towns.firstIndex { $0.owned }) }   // snapshot: the tavern
+    if ProcessInfo.processInfo.environment["H4BOAT"] != nil, let h = game.heroes.first, let c = game.debugBoard(h) {   // snapshot: a hero at sea
+        print("boarded at \(c): sea movement \(game.armyMovement(h)), path to (c+6): \(game.seaPath(from: c, to: (c.0 + 3, c.1 + 3))?.count ?? -1)")
+        aim(renderer, at: c)
+    }
     if ProcessInfo.processInfo.environment["H4OPTIONS"] != nil { renderer.optionsOpen = renderer.settings }   // snapshot: the options
     if let m = ProcessInfo.processInfo.environment["H4OVERVIEW"] { renderer.overview = KingdomOverview(mode: m == "heroes" ? .heroes : .towns) }   // snapshot: the kingdom overview
     if let k = ProcessInfo.processInfo.environment["H4ARMYPOPUP"].flatMap({ Int($0) }) { renderer.armyPopup = ArmyPopup(hero: 0, selected: k) }   // snapshot: the right-click window

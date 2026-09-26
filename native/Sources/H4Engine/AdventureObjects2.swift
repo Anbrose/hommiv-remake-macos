@@ -150,13 +150,18 @@ extension GameState {
         case "subterranean_gate":
             guard let to = st.partner else { say(p, "denied"); return true }
             teleport(hero, to: to, p)
-        case "gateway", "teleporter_entrance":
-            // to any gateway of the same colour (both ways), or any exit of a portal's colour; the player picks
-            let want = p.type == "gateway" ? "gateway" : "teleporter_exit"
+        case "gateway", "teleporter_entrance", "ferry":
+            // to any gateway of the same colour (both ways), any exit of a portal's colour, or any
+            // other ferry on the same water (0x4dc1d0); the player picks
             var dests: [String] = []
-            for l in scenes.indices { for q in scenes[l].placed where q.type == want && q.subtype == p.subtype && !(l == level && q.cellX == p.cellX && q.cellY == p.cellY) {
-                dests.append("\(l)|\(q.cellX)|\(q.cellY)")
-            } }
+            if p.type == "ferry" {
+                dests = ferries(from: p).map { "\(level)|\($0.cellX)|\($0.cellY)" }
+            } else {
+                let want = p.type == "gateway" ? "gateway" : "teleporter_exit"
+                for l in scenes.indices { for q in scenes[l].placed where q.type == want && q.subtype == p.subtype && !(l == level && q.cellX == p.cellX && q.cellY == p.cellY) {
+                    dests.append("\(l)|\(q.cellX)|\(q.cellY)")
+                } }
+            }
             dialogueSound(14)
             if dests.isEmpty { say(p, "denied"); return true }
             let labels = dests.map { d -> String in let c = d.split(separator: "|"); return "(\(c[1]), \(c[2]))" + (c[0] == "1" ? " underground" : "") }
@@ -260,7 +265,8 @@ extension GameState {
         let back = level
         level = c[0]
         guard let q = scene.placed.first(where: { $0.cellX == c[1] && $0.cellY == c[2] }) else { level = back; return }
-        var cell: (Int, Int)? = nil
+        // the first free approach cell in the landing order (0x723e70), else further out
+        var cell: (Int, Int)? = approachCells(q, water: hero.boat != nil).first { isVacant($0, for: hero) || hero.boat != nil }
         for r in 1...3 where cell == nil {
             for dx in -r...q.sprite.footprint.w - 1 + r { for dy in -r...q.sprite.footprint.h - 1 + r where cell == nil {
                 let x = q.cellX + dx, y = q.cellY + dy

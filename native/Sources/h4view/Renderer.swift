@@ -819,24 +819,30 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// stack, activate over something to visit, move over walkable ground, blocked elsewhere.
     func cursorKind(mapPoint m: SIMD2<Float>) -> String {
         cursorFrameIndex = nil
+        // over the shroud nothing is known: the plain pointer
+        if let g = game, g.fogState(cell(at: m).0, cell(at: m).1) == GameState.fogUnexplored { return "normal" }
         var kind = pointerKind(mapPoint: m)
-        if let g = game, g.enemyAt(cell(at: m).0, cell(at: m).1) != nil { kind = "attack" }   // an enemy army
+        if let g = game, let e = g.enemyAt(cell(at: m).0, cell(at: m).1), g.isVisible(e) { kind = "attack" }   // an enemy army
         // a free cell where a wandering stack would fall on the hero: the danger pointer
+        // a fight there -- a stack, an enemy army, or a cell in the guard zone of a stack the player
+        // sees -- the crossed swords (cursor.attack; 0x4f6780 never uses the single sword)
         if kind == "move", let g = game, let h = g.heroes.first {
             let c = cell(at: m)
-            if g.threat(to: h, at: c.0, c.1) != nil { kind = "Danger_Zone" }
+            if let i = g.threat(to: h, at: c.0, c.1), g.fogState(g.monsters[i].x, g.monsters[i].y) == GameState.fogSeen { kind = "attack" }
         }
         guard ["move", "attack", "activate", "Danger_Zone"].contains(kind), let g = game, let h = g.heroes.first else { return kind }
         guard h.z == g.level else { return "normal" }
         // the days to get there pick the frame; an object is reached from the cell before it
         var c = cell(at: m)
-        if kind != "move", kind != "Danger_Zone", let p = scene.placed.last(where: { g.isVisitable($0) && (underCursor($0, m) || onFootprint($0, c)) }) {
-            c = kind == "attack" || g.town(for: p) == nil ? (p.cellX, p.cellY) : g.gateCells(p)[0]
+        var onThing = g.enemyAt(c.0, c.1) != nil
+        if kind != "move", let p = scene.placed.last(where: { g.isVisitable($0) && (underCursor($0, m) || onFootprint($0, c)) }) {
+            c = g.monster(for: p) != nil || g.town(for: p) == nil ? (p.cellX, p.cellY) : g.gateCells(p)[0]
+            onThing = true
         }
         let key = c.0 * g.map.size + c.1 + h.x * 1_000_003 + h.y * 7919 + Int(h.movement * 10) * 104729
         if dayCache?.cell != key {
             var days = g.daysToReach(h, c)
-            if days == nil, kind != "move", kind != "Danger_Zone" {   // an object: the cheapest free neighbour
+            if days == nil, onThing {   // an object or army: the cheapest free neighbour
                 for dx in -1...1 { for dy in -1...1 where dx != 0 || dy != 0 {
                     if let d = g.daysToReach(h, (c.0 + dx, c.1 + dy)) { days = min(days ?? d, d) }
                 } }
@@ -850,7 +856,10 @@ final class Renderer: NSObject, MTKViewDelegate {
         guard let g = game else { return "normal" }
         let c = cell(at: m)
         if let p = scene.placed.last(where: { g.isVisitable($0) && (underCursor($0, m) || onFootprint($0, c)) }) {
-            return g.monster(for: p) != nil ? "attack" : "activate"
+            if g.monster(for: p) != nil {
+                // a stack not seen now is not there for the player
+                if g.fogState(p.cellX, p.cellY) == GameState.fogSeen { return "attack" }
+            } else { return "activate" }
         }
         if g.heroes.contains(where: { $0.z == g.level && $0.x == c.0 && $0.y == c.1 }) { return "normal" }
         return g.passability.isFree(c.0, c.1) ? "move" : "blocked"

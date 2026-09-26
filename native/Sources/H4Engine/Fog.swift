@@ -126,6 +126,10 @@ extension GameState {
         }
         visionChanged = true
     }
+    /// The wandering stacks of this level on cells the player sees now.
+    func seenMonsters() -> Set<Int> {
+        Set(monsters.indices.filter { monsters[$0].z == level && fogState(monsters[$0].x, monsters[$0].y) == GameState.fogSeen })
+    }
     /// What decides the vision (re-run when it changes).
     public var visionSignature: Int {
         var hs = Hasher()

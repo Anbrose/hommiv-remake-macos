@@ -119,6 +119,9 @@ public struct Passability {
     /// Open water nothing stands on.
     public func isFreeWater(_ x: Int, _ y: Int) -> Bool { isWater(x, y) && !occupied[x * size + y] }
 
+    /// Free edges through gateways, portals and ferries: approach cell -> the destinations'
+    /// approach cells (GameState.refreshJumps); a jump costs the one step onto the object.
+    public var jumps: [Int: [Int]] = [:]
     /// Pathfinding's relief on rough terrain for the army being routed (GameState sets it).
     public var relief: Float = 0
 
@@ -171,6 +174,10 @@ public struct Passability {
                         open.append((ng + h(j), j))
                     }
                 }
+            }
+            for j in jumps[i] ?? [] where !closed[j] && !blocked[j] {
+                let ng = g[i] + 1
+                if ng < g[j] { g[j] = ng; prev[j] = Int32(i); open.append((ng + h(j), j)) }
             }
         }
         guard g[t] < .infinity else { return nil }
@@ -256,6 +263,11 @@ public final class Hero {
     public static let baseMovement: Float = 22.56
     /// Remaining path (next cell first) while walking, and progress 0..1 to its first cell.
     public var path: [(x: Int, y: Int)] = []
+    /// The wandering stacks the player could see when this walk began (a walk stops when it
+    /// finds its way runs into the guard zone of one not seen before).
+    var knownThreats: Set<Int>? = nil
+    /// The cell the player clicked for the planned route (it may end short, at a gateway).
+    public var planGoal: (Int, Int)? = nil
     public var progress: Float = 0
     /// Cells walked so far (fractional); drives the walk animation so the legs match the ground.
     public var distance: Float = 0
@@ -357,6 +369,10 @@ public final class GameState {
     public var fogEnabled = true
     /// The shroud changed (the view redraws it).
     public var visionChanged = false
+    /// The planner's gateway edges and which object each approach cell leads through.
+    var jumpSources: [Int: MapScene.Placed] = [:]
+    var jumpsLevel = -1
+    var waterBodies: [[Int]] = []
     /// A blacksmith's or conservatory's shop to open, a sanctuary's dialog.
     public var shopOpen: ShopOffer?
     public var sanctuaryOpen: SanctuaryOffer?
@@ -1277,19 +1293,29 @@ public final class GameState {
             else { hero.plan = r; hero.boardTarget = (x, y) }
             return
         }
+        if jumpsLevel != level { refreshJumps(); jumpsLevel = level }
+        // a route through a gateway, portal or ferry ends at it (it then asks where to go)
+        func plan(from: (Int, Int)) {
+            let r = passability.path(from: from, to: (x, y)) ?? []
+            let cut = cutAtJump(r, from: from)
+            hero.plan = cut.route
+            hero.planGoal = (x, y)
+            hero.target = cut.via.map { ($0.cellX, $0.cellY, $0.name) }
+        }
         if hero.isWalking {
             interrupt(hero)
-            let from = standingCell(hero)
-            hero.plan = passability.path(from: from, to: (x, y)) ?? []
+            plan(from: standingCell(hero))
             return
         }
-        if let last = hero.plan.last, last.x == x, last.y == y {
+        if let g = hero.planGoal, g == (x, y), !hero.plan.isEmpty || hero.target != nil {
+            if hero.plan.isEmpty, let t = hero.target, let p = scene.placed.first(where: { $0.cellX == t.x && $0.cellY == t.y && $0.name == t.name }), canUse(from: (hero.x, hero.y), p) {
+                interact(hero: hero, p); return
+            }
             hero.path = hero.plan
             hero.plan = []
             hero.progress = 0
         } else {
-            hero.plan = passability.path(from: (hero.x, hero.y), to: (x, y)) ?? []
-            hero.target = nil
+            plan(from: (hero.x, hero.y))
         }
     }
 
@@ -1362,7 +1388,19 @@ public final class GameState {
             if c.progress >= Float(c.path.count) { finishCharge() }
             return
         }
+        for h in heroes where !h.isWalking { h.knownThreats = nil }
         for h in heroes where h.isWalking && h.z == level {
+            if h.knownThreats == nil {
+                // the walk is checked once as it starts (0x5439e0), against where the stacks really
+                // are: it ends a step before the guard zone of a stack the player had not seen
+                // (one that notices the hero); the rest of the route is kept to go on with
+                let known = seenMonsters()
+                h.knownThreats = known
+                if let k = h.path.firstIndex(where: { c in threat(to: h, at: c.x, c.y).map { !known.contains($0) } ?? false }) {
+                    h.plan = Array(h.path[k...]); h.path = Array(h.path[..<k]); h.target = nil
+                    if h.path.isEmpty { continue }
+                }
+            }
             let next = h.path[0]
             passability.relief = GameState.terrainRelief(h)
             let stepCost = passability.stepCost(from: h.x, h.y, to: next.x, next.y)
@@ -1389,6 +1427,7 @@ public final class GameState {
                     startCharge(i, at: h)
                     continue
                 }
+
                 if h.path.isEmpty, let bt = h.boardTarget {
                     h.boardTarget = nil
                     if let b = boat(at: bt.0, bt.1), GameState.adjacent((h.x, h.y), bt) { board(h, b); continue }
@@ -1478,10 +1517,11 @@ public final class GameState {
     /// movement. The adventure cursors show it (their frames are 1, 2, 3 and 4+ days). nil: no way there.
     public func daysToReach(_ h: Hero, _ goal: (Int, Int)) -> Int? {
         passability.relief = GameState.terrainRelief(h)
+        if jumpsLevel != level { refreshJumps(); jumpsLevel = level }
         guard let route = passability.path(from: (h.x, h.y), to: goal) else { return nil }
         var left = h.movement, days = 1, px = h.x, py = h.y
         for c in route {
-            let step = passability.stepCost(from: px, py, to: c.x, c.y)
+            let step = GameState.adjacent((px, py), (c.x, c.y)) ? passability.stepCost(from: px, py, to: c.x, c.y) : 1
             if left + 0.001 < step { days += 1; left = h.maxMovement }
             left -= step; px = c.x; py = c.y
         }

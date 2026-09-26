@@ -371,6 +371,8 @@ if let out = snapshot {
         if let p = scene.placed.first(where: { $0.type == t || "\($0.type).\($0.subtype)" == t }) {
             _ = game.debugVisit(hero: h, p)
             if ProcessInfo.processInfo.environment["H4AIM"] != nil { aim(renderer, at: (p.cellX, p.cellY)) }
+            if let c = game.choice { print("choice: \(c.text.prefix(60)) \(c.options)") }
+            for m in game.scripts.messages { print("message: \(m.prefix(80))") }
             if let o = game.shopOpen { renderer.shop = ShopState(offer: o, panel: renderer.ui?.dialog("Blacksmith.\(o.panel)")); game.shopOpen = nil; print("shop \(o.panel): \(o.items.map { game.artifactName($0) }) \(o.potions.map { game.artifactName($0) })") }
             if let o = game.sanctuaryOpen { renderer.sanctuary = o; game.sanctuaryOpen = nil; print("sanctuary: \(o.text) enter \(o.canEnter)")
                 if ProcessInfo.processInfo.environment["H4SANCFLOW"] != nil {
@@ -778,6 +780,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         view.preferredFramesPerSecond = 60
         let renderer = try! Renderer(device: device, scenes: scenes, pixelFormat: .bgra8Unorm)
         renderer.archivePath = args[1]; renderer.mapPath = args.count > 2 ? args[2] : nil
+        if loadFile != nil { renderer.lastAutosaveDay = game.day }   // a loaded game: its day is saved already (no new autosave until the next day)
         renderer.game = game
         renderer.resolver = resolver
         renderer.showBlocked = showBlocked

@@ -438,6 +438,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// Cancel beside OK, and what OK does.
     var prompt: (text: String, cancel: Bool, ok: (() -> Void)?)?
     var outcomeShown = false
+    var messageScroll = 0, messageKey = ""
     lazy var cream: MTLTexture = {
         var bm = Bitmap(width: 2, height: 2)
         for i in 0..<4 { bm.pixels[i * 4] = 255; bm.pixels[i * 4 + 1] = 255; bm.pixels[i * 4 + 2] = 224; bm.pixels[i * 4 + 3] = 255 }
@@ -1049,7 +1050,7 @@ final class Renderer: NSObject, MTKViewDelegate {
                 pending.append((inFront(b.x, b.y, Float((b.x + b.y) * 1000 + (b.y - b.x) + 500)), heroQuads(ship, at: t)))
             }
             for h in (g.heroes + g.enemyHeroes.filter { g.isVisible($0) }) where h.z == g.level {
-                for a in (h.owner == g.map.humanColour && settings.showMovementPath ? g.arrows(for: h) : []) {
+                for a in (g.heroes.contains(where: { $0 === h }) && settings.showMovementPath ? g.arrows(for: h) : []) {   // (the player's armies; their colour need not be the first)
                     // arrows sort with the objects (a tree in front hides them) and ride up onto bridges
                     guard let s = arrowSprite(a.name), let f = s.frames.first else { continue }
                     let raise = g.passability.elevation(a.x, a.y)

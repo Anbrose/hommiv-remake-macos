@@ -103,7 +103,7 @@ extension GameState {
             for k in fogLevel[l].indices { fogLevel[l][k] = -1 }
         }
         let me = map.humanColour
-        for h in heroes where h.owner == me || h.owner == nil {
+        for h in heroes {   // (the player's armies, whatever their colour)
             reveal(level: h.z, x: h.x, y: h.y, radius: sightRadius(of: h), edge: 2, state: GameState.fogSeen, vision: visionLevel(of: h))
         }
         for t in towns where t.owned {
@@ -120,7 +120,7 @@ extension GameState {
             let c = k.split(separator: "|").compactMap { Int($0) }
             if c.count == 3 { owned(c[0], c[1], c[2]) }
         }
-        for (k, h) in sanctuaryGuests where h.owner == me || h.owner == nil {
+        for (k, h) in sanctuaryGuests {
             let c = k.split(separator: "|").compactMap { Int($0) }
             if c.count == 3 { owned(c[0], c[1], c[2], extra: sightRadius(of: h)) }
         }

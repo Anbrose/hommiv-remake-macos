@@ -181,6 +181,7 @@ if let town = scene.placed.first(where: { p in ownedByFirst.map { p.category == 
             s.creature < RuleTables.creatureIds.count ? Hero.Stack(creature: RuleTables.creatureIds[s.creature], count: s.count) : nil }
         hero.maxMovement = game.armyMovement(hero); hero.movement = hero.maxMovement
         if let m = movementLeft { hero.movement = m }
+        hero.owner = map.humanColour
         game.heroes.append(hero)
         lap("\(hero.name) level \(hero.level) \(hero.classKeyword) at (\(o.x),\(o.y)) skills \(hero.skills) with \(all.map { "\($0.name) level \($0.level) \($0.classKeyword) \($0.skills)" })")
     }
@@ -198,6 +199,7 @@ if let town = scene.placed.first(where: { p in ownedByFirst.map { p.category == 
         hero.home = (cell.0, cell.1); hero.z = scene.level
         game.giveStartingArmy(hero)
         if let m = movementLeft { hero.movement = m }
+        hero.owner = map.humanColour
         game.heroes.append(hero)
         lap("\(hero.name) the \(cls) at \(cell) by \(game.towns.first { $0.owned }?.name ?? town.name)")
     }
@@ -788,6 +790,10 @@ final class MapView: MTKView {
             return
         }
         if renderer.adventureDialog != nil { return }
+        if renderer.prompt != nil || !(renderer.game?.scripts.messages.isEmpty ?? true) {   // a long message scrolls
+            if abs(e.scrollingDeltaY) > 1 { renderer.messageScroll += e.scrollingDeltaY < 0 ? 2 : -2 }
+            return
+        }
         renderer.pan -= SIMD2(Float(e.scrollingDeltaX), Float(e.scrollingDeltaY)) / renderer.zoom
     }
     override func magnify(with e: NSEvent) {

@@ -258,9 +258,18 @@ extension Renderer {
     func messageBoxQuads() -> [Quad] {
         guard let ui = ui, let m = messageLayout() else { return [] }
         var out = frameQuads(x: m.x, y: m.y, w: m.w, h: m.h)
-        for (i, line) in m.lines.enumerated() where !line.isEmpty {
+        // a text longer than the box scrolls (the wheel); the lines that fit show
+        let fit = max(1, (m.h - 100) / m.font.lineHeight)
+        let key = m.lines.first ?? ""
+        if messageKey != key { messageKey = key; messageScroll = 0 }
+        messageScroll = max(0, min(max(0, m.lines.count - fit), messageScroll))
+        for (i, line) in m.lines.dropFirst(messageScroll).prefix(fit).enumerated() where !line.isEmpty {
             let w = m.font.measure(line)
             out.append(Quad(texture: uiTexture("msg|\(line)", { m.font.render(line, colour: (40, 24, 8)) }), x: m.x + (m.w - w) / 2, y: m.y + 30 + i * m.font.lineHeight, w: w, h: m.font.size))
+        }
+        if m.lines.count > fit {   // more above / below: small marks at the box's right edge
+            if messageScroll > 0 { out.append(Quad(texture: solid(120, 80, 30), x: m.x + m.w - 34, y: m.y + 30, w: 8, h: 8)) }
+            if messageScroll + fit < m.lines.count { out.append(Quad(texture: solid(120, 80, 30), x: m.x + m.w - 34, y: m.y + m.h - 80, w: 8, h: 8)) }
         }
         if let ok = okRect(), let b = ui.button("ok") {
             out.append(Quad(texture: uiTexture("button|ok|\(b.name)", { b.bitmap }), x: ok.x + (ok.w - b.width) / 2, y: ok.y + (ok.h - b.height) / 2, w: b.width, h: b.height))

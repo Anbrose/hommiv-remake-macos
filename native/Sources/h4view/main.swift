@@ -591,6 +591,7 @@ final class MapView: MTKView {
         let scale = Float(window?.backingScaleFactor ?? 1)
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
         let cx = mouse.x / renderer.uiScale
+        renderer.pointerCanvas = (cx, mouse.y / renderer.uiScale)
         var name = "normal"
         renderer.cursorFrameIndex = nil
         if renderer.inCombat {
@@ -761,6 +762,7 @@ final class MapView: MTKView {
     }
     /// Right click: opens a box describing what is under the cursor; it stays until a left
     /// click lands outside it (as in the game).
+    override func rightMouseUp(with e: NSEvent) { renderer.messageItemHelp = nil }
     override func rightMouseDown(with e: NSEvent) {
         guard renderer.townOpen == nil else { return }
         let p = convert(e.locationInWindow, from: nil)
@@ -768,6 +770,12 @@ final class MapView: MTKView {
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
         let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale
         if renderer.spellBook != nil { renderer.spellBook = nil; return }
+        // a found artifact in a message: its help while the button is held
+        if let r = renderer.itemRect(), cx >= Float(r.x), cx < Float(r.x + r.w), cy >= Float(r.y), cy < Float(r.y + r.h),
+           let a = renderer.messageBox()?.artifact, a & 0xffff < RuleTables.artifactIds.count {
+            renderer.messageItemHelp = renderer.game?.tables?.artifacts[RuleTables.artifactIds[a & 0xffff]]?.help ?? ""
+            return
+        }
         if renderer.casting != nil { renderer.casting = nil; return }   // a right click puts the spell away
         if renderer.inCombat { renderer.combatInspect(x: cx, y: cy); return }
         if renderer.onPopup(cx, cy) || renderer.onDialog(cx, cy).inside { return }

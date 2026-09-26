@@ -198,24 +198,36 @@ extension Renderer {
     /// The texts the map's scripts show, one box at a time: layers.dialog.generic is a frame of
     /// corners, edges and a background tile (repeated to the size), the text wrapped inside, an OK
     /// button under it.
-    static let messageWidth = 440
+    static let messageWidth = 560
+    struct MessageBox { var x, y, w, h: Int; var lines: [String]; var font: H4Font; var title: String?; var artifact: Int?; var bandY, bandH, fit: Int }
+    /// The box as the original draws it: the parchment frame (dialog.generic), a title banner when
+    /// the message has one, the text in a scroll band with rolls at both ends (text_background.large),
+    /// a found artifact in its frame with its name, OK under it.
     func messageLayout() -> (x: Int, y: Int, w: Int, h: Int, lines: [String], font: H4Font)? {
+        messageBox().map { ($0.x, $0.y, $0.w, $0.h, $0.lines, $0.font) }
+    }
+    func messageBox() -> MessageBox? {
         guard let g = game, let text = prompt?.text ?? g.scripts.messages.first, let ui = ui else { return nil }
-        let font = ui.dateFont
+        let font = ui.font(20)
         let w = Renderer.messageWidth
-        let lines = text.components(separatedBy: "\n").flatMap { $0.isEmpty ? [""] : AdventureUI.wrap($0, font: font, width: w - 60) }
-        let h = min(AdventureUI.height - 40, 40 + lines.count * font.lineHeight + 70)
+        let title = prompt == nil ? g.messageTitles[text] : nil, artifact = prompt == nil ? g.messageArtifacts[text] : nil
+        let lines = text.components(separatedBy: "\n").flatMap { $0.isEmpty ? [""] : AdventureUI.wrap($0, font: font, width: w - 150) }
+        let extra = (title != nil ? 46 : 0) + (artifact != nil ? 120 : 0) + 30 + 64
+        let fit = max(1, min(lines.count, (AdventureUI.height - 60 - extra - 40) / font.lineHeight))
+        let bandH = fit * font.lineHeight + 40
+        let h = extra + bandH
         let across = inCombat ? AdventureUI.width : AdventureUI.mapViewportWidth
-        return ((across - w) / 2, (AdventureUI.height - h) / 2, w, h, lines, font)
+        let x = (across - w) / 2, y = (AdventureUI.height - h) / 2
+        return MessageBox(x: x, y: y, w: w, h: h, lines: lines, font: font, title: title, artifact: artifact, bandY: y + 26 + (title != nil ? 46 : 0), bandH: bandH, fit: fit)
     }
     func okRect() -> (x: Int, y: Int, w: Int, h: Int)? {
         guard let m = messageLayout() else { return nil }
-        if prompt?.cancel == true { return (m.x + m.w / 2 - 66 - 20, m.y + m.h - 54, 66, 32) }
-        return (m.x + (m.w - 66) / 2, m.y + m.h - 54, 66, 32)
+        if prompt?.cancel == true { return (m.x + m.w / 2 - 66 - 20, m.y + m.h - 58, 66, 40) }
+        return (m.x + (m.w - 66) / 2, m.y + m.h - 58, 66, 40)
     }
     func cancelRect() -> (x: Int, y: Int, w: Int, h: Int)? {
         guard prompt?.cancel == true, let m = messageLayout() else { return nil }
-        return (m.x + m.w / 2 + 20, m.y + m.h - 54, 66, 32)
+        return (m.x + m.w / 2 + 20, m.y + m.h - 58, 66, 40)
     }
     func cropped(_ b: Bitmap, _ w: Int, _ h: Int) -> Bitmap {
         var out = Bitmap(width: w, height: h)
@@ -256,28 +268,76 @@ extension Renderer {
         return out
     }
     func messageBoxQuads() -> [Quad] {
-        guard let ui = ui, let m = messageLayout() else { return [] }
+        guard let ui = ui, let m = messageBox() else { return [] }
         var out = frameQuads(x: m.x, y: m.y, w: m.w, h: m.h)
-        // a text longer than the box scrolls (the wheel); the lines that fit show
-        let fit = max(1, (m.h - 100) / m.font.lineHeight)
+        // the title on its banner (adventure.day_scroll: its ends and middle stretched to the title)
+        if let t = m.title { let banner = ui.dayScroll
+            let tw = ui.font(20).measure(t) + 80, bx = m.x + (m.w - tw) / 2, by = m.y + 10
+            if let mid = banner["Background"] { out.append(Quad(texture: uiTexture("banner|mid", { mid.bitmap }), x: bx + 10, y: by, w: tw - 20, h: mid.height)) }
+            if let l = banner["left"] ?? banner["Left"] { out.append(Quad(texture: uiTexture("banner|l", { l.bitmap }), x: bx, y: by, w: l.width, h: l.height)) }
+            if let r = banner["Right"] { out.append(Quad(texture: uiTexture("banner|r", { r.bitmap }), x: bx + tw - r.width, y: by, w: r.width, h: r.height)) }
+            let f = ui.font(20), w = f.measure(t)
+            out.append(Quad(texture: uiTexture("dlgtext|20|\(t)|12", { f.render(t, colour: (12, 8, 4)) }), x: m.x + (m.w - w) / 2, y: by + 12, w: w, h: f.size))
+        }
+        // the band
+        let bandW = m.w - 60
+        if let box = ui.popupBitmap(clientW: bandW - 70, clientH: m.bandH - 40, size: "large") {
+            out.append(Quad(texture: uiTexture("band|\(box.bitmap.width)x\(box.bitmap.height)", { box.bitmap }), x: m.x + (m.w - box.bitmap.width) / 2, y: m.bandY + (m.bandH - box.bitmap.height) / 2, w: box.bitmap.width, h: box.bitmap.height))
+        }
         let key = m.lines.first ?? ""
         if messageKey != key { messageKey = key; messageScroll = 0 }
-        messageScroll = max(0, min(max(0, m.lines.count - fit), messageScroll))
-        for (i, line) in m.lines.dropFirst(messageScroll).prefix(fit).enumerated() where !line.isEmpty {
+        messageScroll = max(0, min(max(0, m.lines.count - m.fit), messageScroll))
+        for (i, line) in m.lines.dropFirst(messageScroll).prefix(m.fit).enumerated() where !line.isEmpty {
             let w = m.font.measure(line)
-            out.append(Quad(texture: uiTexture("msg|\(line)", { m.font.render(line, colour: (40, 24, 8)) }), x: m.x + (m.w - w) / 2, y: m.y + 30 + i * m.font.lineHeight, w: w, h: m.font.size))
+            out.append(Quad(texture: uiTexture("msg|\(m.font.size)|\(line)", { m.font.render(line, colour: (12, 8, 4)) }), x: m.x + (m.w - w) / 2, y: m.bandY + 20 + i * m.font.lineHeight, w: w, h: m.font.size))
         }
-        if m.lines.count > fit {   // more above / below: small marks at the box's right edge
-            if messageScroll > 0 { out.append(Quad(texture: solid(120, 80, 30), x: m.x + m.w - 34, y: m.y + 30, w: 8, h: 8)) }
-            if messageScroll + fit < m.lines.count { out.append(Quad(texture: solid(120, 80, 30), x: m.x + m.w - 34, y: m.y + m.h - 80, w: 8, h: 8)) }
+        if m.lines.count > m.fit {
+            if messageScroll > 0 { out.append(Quad(texture: solid(120, 80, 30), x: m.x + m.w - 70, y: m.bandY + 16, w: 8, h: 8)) }
+            if messageScroll + m.fit < m.lines.count { out.append(Quad(texture: solid(120, 80, 30), x: m.x + m.w - 70, y: m.bandY + m.bandH - 24, w: 8, h: 8)) }
         }
-        if let ok = okRect(), let b = ui.button("ok") {
-            out.append(Quad(texture: uiTexture("button|ok|\(b.name)", { b.bitmap }), x: ok.x + (ok.w - b.width) / 2, y: ok.y + (ok.h - b.height) / 2, w: b.width, h: b.height))
+        // a found artifact: its frame (button.Frame_52), icon and name
+        if let a = m.artifact, let r = itemRect() {
+            if let fr = ui.button("Frame_52") { out.append(Quad(texture: uiTexture("frame52", { fr.bitmap }), x: r.x, y: r.y, w: fr.width, h: fr.height)) }
+            if let ic = artifactIcon(a) { out.append(Quad(texture: uiTexture("art|\(a & 0xffff)", { ic.bitmap }), x: r.x + (77 - ic.width) / 2, y: r.y + (77 - ic.height) / 2, w: ic.width, h: ic.height)) }
+            let n = game?.artifactName(a) ?? "", f = ui.font(18), w = f.measure(n)
+            out.append(Quad(texture: uiTexture("dlgtext|18|\(n)|12", { f.render(n, colour: (12, 8, 4)) }), x: m.x + (m.w - w) / 2, y: r.y + 84, w: w, h: f.size))
         }
-        if let c = cancelRect(), let b = ui.button("cancel") {
-            out.append(Quad(texture: uiTexture("button|cancel|\(b.name)", { b.bitmap }), x: c.x + (c.w - b.width) / 2, y: c.y + (c.h - b.height) / 2, w: b.width, h: b.height))
+        for (rect, name) in [(okRect(), "ok"), (cancelRect(), "cancel")] {
+            guard let r = rect, let b = ui.button(name, state: hoverButton(r) ? "Highlighted" : "Released") ?? ui.button(name) else { continue }
+            out.append(Quad(texture: uiTexture("button|\(name)|\(b.name)", { b.bitmap }), x: r.x + (r.w - b.width) / 2, y: r.y + (r.h - b.height) / 2, w: b.width, h: b.height))
+        }
+        // a button's balloon once the pointer rests on it (table.Interface shared.ok / cancel)
+        for (rect, key, fallback) in [(okRect(), "shared.ok", "Okay"), (cancelRect(), "shared.cancel", "Cancel")] {
+            guard let r = rect, hoverButton(r), Date().timeIntervalSince(pointerSince) > 0.8 else { continue }
+            let s = game?.tables?.interfaceTexts[key]?.balloon ?? fallback
+            let f = ui.font(16), w = f.measure(s) + 12, h = f.size + 8, bx = Int(pointerCanvas.0) + 12, by = Int(pointerCanvas.1) - h - 4
+            out += [Quad(texture: solid(20, 12, 4), x: bx - 1, y: by - 1, w: w + 2, h: h + 2), Quad(texture: solid(255, 252, 240), x: bx, y: by, w: w, h: h),
+                    Quad(texture: uiTexture("dlgtext|16|\(s)|12", { f.render(s, colour: (12, 8, 4)) }), x: bx + 6, y: by + 4, w: w - 12, h: f.size)]
+        }
+        // the item's help, when right-clicked, in a band of its own below
+        if let help = messageItemHelp, let a = m.artifact {
+            let text = "\(game?.artifactName(a) ?? ""): \(help)"
+            let f = ui.font(18), lines = AdventureUI.wrap(text, font: f, width: m.w - 150)
+            if let box = ui.popupBitmap(clientW: m.w - 130, clientH: lines.count * f.lineHeight, size: "large") {
+                let by = min(AdventureUI.height - box.bitmap.height - 4, (itemRect()?.y ?? m.y) + 60)
+                out += frameQuads(x: m.x, y: by - 14, w: m.w, h: box.bitmap.height + 28)
+                out.append(Quad(texture: uiTexture("band|\(box.bitmap.width)x\(box.bitmap.height)", { box.bitmap }), x: m.x + (m.w - box.bitmap.width) / 2, y: by, w: box.bitmap.width, h: box.bitmap.height))
+                for (i, line) in lines.enumerated() {
+                    let w = f.measure(line)
+                    out.append(Quad(texture: uiTexture("msg|18|\(line)", { f.render(line, colour: (12, 8, 4)) }), x: m.x + (m.w - w) / 2, y: by + box.clientY + i * f.lineHeight, w: w, h: f.size))
+                }
+            }
         }
         return out
+    }
+    func itemRect() -> (x: Int, y: Int, w: Int, h: Int)? {
+        guard let m = messageBox(), m.artifact != nil else { return nil }
+        return (m.x + (m.w - 77) / 2, m.bandY + m.bandH + 10, 77, 77)
+    }
+    /// The pointer over an OK / Cancel place (the button shows its highlighted face).
+    func hoverButton(_ r: (x: Int, y: Int, w: Int, h: Int)) -> Bool {
+        let p = pointerCanvas
+        return p.0 >= Float(r.x) && p.0 < Float(r.x + r.w) && p.1 >= Float(r.y) && p.1 < Float(r.y + r.h)
     }
     /// A click while a script message is up: OK takes it away. Returns true when the box was open.
     func messageBoxClick(x: Float, y: Float) -> Bool {
@@ -290,6 +350,7 @@ extension Renderer {
             return true
         }
         guard let g = game, !g.scripts.messages.isEmpty else { return false }
+        messageItemHelp = nil
         if let ok = okRect(), x >= Float(ok.x), x < Float(ok.x + ok.w), y >= Float(ok.y), y < Float(ok.y + ok.h) { g.scripts.messages.removeFirst() }
         return true
     }

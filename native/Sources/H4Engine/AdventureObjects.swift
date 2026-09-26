@@ -324,7 +324,9 @@ extension GameState {
         case "artifact", "random_artifact", "random_potion":
             if let a = st.artifacts.first {
                 give(artifact: a, to: hero)
-                if let t = tables?.artifacts[RuleTables.artifactIds[RuleTables.artifactBase(a)]]?.pickUp, !t.isEmpty { scripts.messages.append(t) }
+                if let t = tables?.artifacts[RuleTables.artifactIds[RuleTables.artifactBase(a)]]?.pickUp, !t.isEmpty {
+                    scripts.messages.append(t); messageTitles[t] = artifactName(a); messageArtifacts[t] = a
+                }
             }
             dialogueSound(27); remove(p)
         case "medicine_wagon":

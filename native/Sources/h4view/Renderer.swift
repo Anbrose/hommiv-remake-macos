@@ -438,6 +438,10 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// Cancel beside OK, and what OK does.
     var prompt: (text: String, cancel: Bool, ok: (() -> Void)?)?
     var outcomeShown = false
+    lazy var highlightRing: Sprite? = (try? resolver?.archive.payload("animation.highlight_ring.h4d")).flatMap { try? Sprite(data: $0) }
+    var messageItemHelp: String? = nil        // a found artifact's help, shown while right-clicked
+    var pointerCanvas: (Float, Float) = (0, 0) { didSet { pointerSince = Date() } }
+    var pointerSince = Date()
     var messageScroll = 0, messageKey = ""
     lazy var cream: MTLTexture = {
         var bm = Bitmap(width: 2, height: 2)
@@ -835,7 +839,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         // sees -- the crossed swords (cursor.attack; 0x4f6780 never uses the single sword)
         if kind == "move", let g = game, let h = g.heroes.first {
             let c = cell(at: m)
-            if let i = g.threat(to: h, at: c.0, c.1), g.fogState(g.monsters[i].x, g.monsters[i].y) == GameState.fogSeen { kind = "attack" }
+            if let i = g.threat(to: h, at: c.0, c.1), g.monsterSeen(i) { kind = "attack" }
         }
         guard ["move", "attack", "activate", "Danger_Zone"].contains(kind), let g = game, let h = g.heroes.first else { return kind }
         guard h.z == g.level else { return "normal" }
@@ -865,7 +869,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         if let p = scene.placed.last(where: { g.isVisitable($0) && (underCursor($0, m) || onFootprint($0, c)) }) {
             if g.monster(for: p) != nil {
                 // a stack not seen now is not there for the player
-                if g.fogState(p.cellX, p.cellY) == GameState.fogSeen { return "attack" }
+                if let i = g.monster(for: p), g.monsterSeen(i) { return "attack" }
+                return g.passability.isFree(c.0, c.1) ? "move" : "blocked"
             } else { return "activate" }
         }
         if g.heroes.contains(where: { $0.z == g.level && $0.x == c.0 && $0.y == c.1 }) { return "normal" }
@@ -893,7 +898,8 @@ final class Renderer: NSObject, MTKViewDelegate {
             armyPopup = ArmyPopup(hero: i); return   // an own army: its right-click window
         }
         else if let p = scene.placed.last(where: { underCursor($0, m) || onFootprint($0, c) }) {
-            if let i = g.monster(for: p), let def = g.tables?.creature(g.monsters[i].creature) {   // a wandering stack gets the creature dialog
+            if let i = g.monster(for: p), !g.monsterSeen(i) { text = g.describe(cellX: c.0, cellY: c.1) }   // an unseen stack is not there for the player
+            else if let i = g.monster(for: p), let def = g.tables?.creature(g.monsters[i].creature) {   // a wandering stack gets the creature dialog
                 creatureDialog = (def, g.monsters[i].count, g.monsters[i].extra.compactMap { e in g.tables?.creature(e.creature).map { ($0, e.count) } })
                 return
             }
@@ -902,7 +908,7 @@ final class Renderer: NSObject, MTKViewDelegate {
                 let stacks = zip(st.troopCreatures, st.troopCounts).filter { $0.1 > 0 }.compactMap { c, k in g.tables?.creature(c).map { ($0, k) } }
                 if let lead = stacks.first { creatureDialog = (lead.0, lead.1, Array(stacks.dropFirst())); return }
             }
-            text = g.describe(p)
+            if !(g.monster(for: p).map { !g.monsterSeen($0) } ?? false) { text = g.describe(p) }
         }
         else { text = g.describe(cellX: c.0, cellY: c.1) }
         guard let t = text else { return }
@@ -1017,7 +1023,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         // the selected army's ring (adv_object.internal.selected.army, 8 turning frames) under its feet
         if h === game?.heroes.first, let ring = arrowSprite("selected.army"), !ring.frames.isEmpty {
             let f = ring.frames[Int(t / 0.1) % ring.frames.count]
-            let rx = Int(sx) + Int(ring.origin.x), ry = Int(sy) - 16 + Int(ring.origin.y)
+            let rx = Int(sx) + Int(ring.origin.x), ry = Int(sy) + Int(ring.origin.y)   // (centred under the feet: the cell's bottom vertex)
             out.append(Quad(texture: texture(for: f, of: "selected.army"), x: rx + f.box.left, y: ry + f.box.top, w: f.bitmap.width, h: f.bitmap.height))
         }
         if let sh = shadow { out.append(Quad(texture: texture(for: sh, of: entry), x: ox + sh.box.left, y: oy + sh.box.top, w: sh.bitmap.width, h: sh.bitmap.height)) }
@@ -1080,7 +1086,12 @@ final class Renderer: NSObject, MTKViewDelegate {
             if let g = game, g.fogEnabled {
                 let st = g.fogState(p.cellX + p.sprite.footprint.w - 1, p.cellY + p.sprite.footprint.h - 1)
                 if st == GameState.fogUnexplored && g.fogState(p.cellX, p.cellY) == GameState.fogUnexplored { continue }
-                if p.type == "random_monster" || p.type == "monster" || p.type == "army", g.fogState(p.cellX, p.cellY) != GameState.fogSeen { continue }
+                if p.type == "random_monster" || p.type == "monster" || p.type == "army", let i = g.monster(for: p), !g.monsterSeen(i) { continue }
+            }
+            // a wandering stack stands in the turning dashed ring (animation.highlight_ring), centred under its feet
+            if let g = game, let i = g.monster(for: p), g.monsters[i].bank == nil, let ring = highlightRing, !ring.frames.isEmpty {
+                let f = ring.frames[Int(t / 0.08) % ring.frames.count]
+                out.append(Quad(texture: texture(for: f, of: "highlight_ring"), x: p.anchorX - f.bitmap.width / 2, y: p.anchorY - 2 - f.bitmap.height / 2, w: f.bitmap.width, h: f.bitmap.height))
             }
             let (f, sh) = frame(of: p, at: t)
             var ox = p.anchorX + Int(p.sprite.origin.x), oy = p.anchorY + Int(p.sprite.origin.y)

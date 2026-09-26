@@ -126,9 +126,19 @@ extension GameState {
         }
         visionChanged = true
     }
-    /// The wandering stacks of this level on cells the player sees now.
+    /// Does the player see this wandering stack: its cell seen, and a stealthy one's (stealth 0,
+    /// the others -1) at a vision level that beats it (0x526110).
+    public func monsterSeen(_ i: Int) -> Bool {
+        guard i < monsters.count else { return false }
+        let m = monsters[i]
+        guard fogState(m.x, m.y, level: m.z) == GameState.fogSeen else { return false }
+        guard fogEnabled, m.z < fogLevel.count else { return true }
+        let stealthy = (RuleTables.creatureAbilities[m.creature.lowercased()] ?? []).contains("stealth")
+        return !stealthy || Int(fogLevel[m.z][m.x * map.size + m.y]) >= 0
+    }
+    /// The wandering stacks of this level the player sees now.
     func seenMonsters() -> Set<Int> {
-        Set(monsters.indices.filter { monsters[$0].z == level && fogState(monsters[$0].x, monsters[$0].y) == GameState.fogSeen })
+        Set(monsters.indices.filter { monsters[$0].z == level && monsterSeen($0) })
     }
     /// What decides the vision (re-run when it changes).
     public var visionSignature: Int {

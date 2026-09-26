@@ -170,8 +170,8 @@ final class AdventureUI {
 
     /// A popup box with a client area of the given size, composed from the nine-slice frame.
     /// Returns the bitmap and where the client area sits in it.
-    func popupBitmap(clientW: Int, clientH: Int) -> (bitmap: Bitmap, clientX: Int, clientY: Int)? {
-        let size = clientH > 150 || clientW > 260 ? "large" : "small"
+    func popupBitmap(clientW: Int, clientH: Int, size forced: String? = nil) -> (bitmap: Bitmap, clientX: Int, clientY: Int)? {
+        let size = forced ?? (clientH > 150 || clientW > 260 ? "large" : "small")
         guard let f = popupFrame(size), let client = f["client_area"],
               let tl = f.layers.first(where: { $0.name.lowercased() == "top_left" }), let tr = f.layers.first(where: { $0.name.lowercased() == "top_right" }),
               let bl = f.layers.first(where: { $0.name.lowercased() == "bottom_left" }), let br = f.layers.first(where: { $0.name.lowercased() == "bottom_right" }),

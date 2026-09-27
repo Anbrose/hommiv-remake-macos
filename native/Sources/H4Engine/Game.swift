@@ -381,6 +381,9 @@ public final class GameState {
     public var question: (text: String, yes: () -> Void)?
     /// A choice an object offers: the question, the options, what picking one does.
     public var choice: (text: String, options: [String], pick: (Int) -> Void)?
+    /// A gateway's destinations when there are two or more (t_dialog_teleporter_entrance): the
+    /// object's name and text, each destination as "level|x|y" with its label.
+    public var teleportChoice: (title: String, text: String, dests: [String], labels: [String], pick: (Int) -> Void)?
     /// A hire dialog to open (a tavern visited, a town's tavern).
     public var hireOpen: HireOffer?
     /// The keymaster tents' keys the player has (by colour subtype).

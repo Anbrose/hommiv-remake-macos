@@ -447,6 +447,11 @@ if let out = snapshot {
     }
     if ProcessInfo.processInfo.environment["H4OPTIONS"] != nil { renderer.optionsOpen = renderer.settings }   // snapshot: the options
     if let m = ProcessInfo.processInfo.environment["H4OVERVIEW"] { renderer.overview = KingdomOverview(snapshot: m) }   // snapshot: the kingdom overview (towns, heroes, armies)
+    if ProcessInfo.processInfo.environment["H4TELEPORT"] != nil, let h = game.heroes.first {   // snapshot: the teleporter dialog with four made-up exits
+        let dests = [(0, h.x, h.y), (0, h.x + 10, h.y - 8), (0, h.x - 6, h.y + 12), (0, h.x + 20, h.y)].map { "\($0.0)|\($0.1)|\($0.2)" }
+        game.teleportChoice = ("Gateway", "Where would you like to go?", dests, dests.map { d in let c = d.split(separator: "|"); return "(\(c[1]), \(c[2]))" }, { _ in })
+        renderer.teleporterPicked = 1
+    }
     if let spec = ProcessInfo.processInfo.environment["H4NEUTRAL"] {   // snapshot: a neutral army's window ("creature:n,creature:n")
         let stacks = spec.split(separator: ",").compactMap { p -> (CreatureDef, Int)? in let q = p.split(separator: ":"); guard q.count == 2, let c = game.tables?.creature(String(q[0])), let n = Int(q[1]) else { return nil }; return (c, n) }
         if let lead = stacks.first { renderer.creatureDialog = (lead.0, lead.1, stacks.dropFirst().map { ($0.0, $0.1) }) }
@@ -723,6 +728,7 @@ final class MapView: MTKView {
         if renderer.saveDialogClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale, double: e.clickCount >= 2) { return }
         if renderer.messageBoxClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale) { return }   // a script message: only OK
         if renderer.choiceClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale, double: e.clickCount >= 2) { return }
+        if renderer.teleporterClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale, double: e.clickCount >= 2) { return }
         if renderer.levelUpClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale, double: e.clickCount >= 2) { return }
         if renderer.market != nil { renderer.marketClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.overview != nil { renderer.overviewClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }

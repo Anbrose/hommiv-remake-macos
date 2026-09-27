@@ -449,6 +449,9 @@ final class Renderer: NSObject, MTKViewDelegate {
     lazy var highlightRing: Sprite? = (try? resolver?.archive.payload("animation.highlight_ring.h4d")).flatMap { try? Sprite(data: $0) }
     /// When End Turn was clicked: the hourglass flips in its place (animation.hourglass.flip).
     var endTurnFlip: Date?
+    /// The teleporter dialog: the chosen destination and the first one shown.
+    var teleporterPicked: Int?
+    var teleporterScroll = 0
     lazy var hourglassFlip: Sprite? = (try? resolver?.archive.payload("animation.hourglass.flip.h4d")).flatMap { try? Sprite(data: $0) }
     var messageItemHelp: String? = nil        // a found artifact's help, shown while right-clicked
     var pointerCanvas: (Float, Float) = (0, 0) { didSet { pointerSince = Date() } }
@@ -554,6 +557,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         out += levelUpQuads()
         out += splitQuads()
         out += choiceQuads()
+        out += teleporterQuads()
         out += messageBoxQuads()
         out += saveDialogQuads()
         out += menuQuads()

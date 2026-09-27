@@ -58,7 +58,7 @@ extension Renderer {
         for f in g.floaters { floaters.append((f.text, f.x, f.y, now)) }
         g.floaters.removeAll()
         floaters.removeAll { now.timeIntervalSince($0.since) > 2 }
-        if g.chestOffer != nil, adventureDialog == nil { adventureDialog = .chest }
+        if g.chestOffer != nil, adventureDialog == nil { adventureDialog = .chest; chestChoice = true }   // gold is on at opening (0x5a2c00(0))
         // an object's yes/no question (a vein, the Tree of Knowledge) in the message box
         if let q = g.question, prompt == nil { prompt = (q.text, true, q.yes); g.question = nil }
         if let k = g.marketOpen { market = MarketState(k: k); g.marketOpen = nil }
@@ -87,26 +87,30 @@ extension Renderer {
         var out: [Quad] = []
         switch dlg {
         case .chest:
+            // t_treasure_chest_window (0x8c7260): Background, OK at ok_button's corner, the gold and
+            // experience toggles (gold on at opening), texts in font 20 / 14, black with the halo
             guard let d = ui.dialog("treasure_chest"), let offer = g.chestOffer else { return [] }
             let ox = (AdventureUI.width - 404) / 2, oy = (AdventureUI.height - 457) / 2
-            out += dialogImages(d, key: "chest", at: ox, oy, skip: ["Experience_Highlighted", "gold_highlighted", "gold_pressed", "Experience_Pressed"])
-            out += centred("Treasure Chest", in: d["Title"], at: ox, oy, font: ui.dateFont)
-            let text = g.tables?.objectText("treasure", "treasure_chest", "Initial") ?? "Keep the gold, or give it away for experience?"
-            if let l = d["dialog_text"] {   // inset from the scroll's rollers
-                let inner = UILayer(name: l.name, kind: 1, x: l.x + 18, y: l.y + 8, width: l.width - 36, height: l.height - 8, bitmap: l.bitmap)
-                out += paragraph(text, in: inner, at: ox, oy, font: ui.numberFont)
+            out += layoutImage(d, "Background", ox, oy)
+            out += buttonAt("ok", hoverButton((ox + (d["ok_button"]?.x ?? 0), oy + (d["ok_button"]?.y ?? 0), 76, 44)) ? "Highlighted" : "Released", d["ok_button"], ox, oy)
+            for (gold, prefix) in [(true, "gold"), (false, "Experience")] {
+                let on = (chestChoice ?? true) == gold
+                let rel = d.layers.first { $0.name.lowercased() == "\(prefix.lowercased())_released" }
+                let over = rel.map { hoverButton((ox + $0.x, oy + $0.y, $0.width, $0.height)) } ?? false
+                let state = on ? "pressed" : over ? "highlighted" : "released"
+                if let l = d.layers.first(where: { $0.name.lowercased() == "\(prefix.lowercased())_\(state)" }) {
+                    out.append(Quad(texture: uiTexture("dlg|chest|\(l.name)", { l.bitmap }), x: ox + l.x, y: oy + l.y, w: l.width, h: l.height))
+                }
             }
-            if let icon = materialIcon("Gold", size: 64), let slot = d["gold_icon"] {
-                out.append(Quad(texture: uiTexture("mat64|Gold", { icon.bitmap }), x: ox + slot.x + (slot.width - icon.width) / 2, y: oy + slot.y + 10, w: icon.width, h: icon.height))
+            func text(_ key: String, _ fallback: String) -> String { g.tables?.objectText("treasure", "treasure_chest", key) ?? fallback }
+            func win(_ s: String, _ name: String, _ size: Int) {
+                guard let l = d.layers.first(where: { $0.name.lowercased() == name.lowercased() }) else { return }
+                out += armyText(s, l, size: size, centre: true, vcentre: false, ox, oy)
             }
-            out += centred("\(offer.gold) gold", in: d["gold_label"], at: ox, oy, font: ui.numberFont)
-            out += centred("\(offer.experience) exp.", in: d["experience_label"], at: ox, oy, font: ui.numberFont)
-            if let sel = chestChoice, let hl = d[sel ? "gold_highlighted" : "Experience_Highlighted"] {
-                out.append(Quad(texture: uiTexture("dlg|chest|\(hl.name)", { hl.bitmap }), x: ox + hl.x, y: oy + hl.y, w: hl.width, h: hl.height))
-            }
-            if let ok = d["ok_button"], let b = ui.button("ok", state: chestChoice == nil ? "Disabled" : "Released") {
-                out.append(Quad(texture: uiTexture("button|ok|\(b.name)", { b.bitmap }), x: ox + ok.x + (ok.width - b.width) / 2, y: oy + ok.y + (ok.height - b.height) / 2, w: b.width, h: b.height))
-            }
+            win(text("name", "Treasure Chest"), "Title", 20)
+            win(text("Initial", ""), "dialog_text", 20)
+            win(text("gold", "Keep the %material for yourself.").replacingOccurrences(of: "%material", with: "\(offer.gold) gold"), "gold_label", 14)
+            win(text("experience", "Donate the gold for %experience experience.").replacingOccurrences(of: "%experience", with: "\(offer.experience)"), "experience_label", 14)
         case .hero(let i):
             out += armyScreenQuads(i)
         }
@@ -120,9 +124,9 @@ extension Renderer {
         case .chest:
             let ox = (AdventureUI.width - 404) / 2, oy = (AdventureUI.height - 457) / 2
             guard let d = ui.dialog("treasure_chest") else { adventureDialog = nil; return true }
-            if inside(d["gold_released"], at: ox, oy, x, y) || inside(d["gold_icon"], at: ox, oy, x, y) { chestChoice = true }
-            else if inside(d["Experience_Released"], at: ox, oy, x, y) || inside(d["experience_icon"], at: ox, oy, x, y) { chestChoice = false }
-            else if inside(d["ok_button"], at: ox, oy, x, y), let c = chestChoice { g.resolveChest(gold: c); chestChoice = nil; adventureDialog = nil }
+            if inside(d["gold_released"], at: ox, oy, x, y) { chestChoice = true }
+            else if inside(d["Experience_Released"], at: ox, oy, x, y) { chestChoice = false }
+            else if inside(d["ok_button"], at: ox, oy, x, y) { g.resolveChest(gold: chestChoice ?? true); chestChoice = nil; adventureDialog = nil }
             return true
         case .hero(let i):
             if armySplitClick(i, x: x, y: y) { return true }   // the split button: the split dialog

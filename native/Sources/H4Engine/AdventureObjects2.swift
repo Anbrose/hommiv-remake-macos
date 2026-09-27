@@ -165,7 +165,9 @@ extension GameState {
             dialogueSound(14)
             if dests.isEmpty { say(p, "denied"); return true }
             let labels = dests.map { d -> String in let c = d.split(separator: "|"); return "(\(c[1]), \(c[2]))" + (c[0] == "1" ? " underground" : "") }
-            choice = (objectText(p, "Initial") ?? "Where to?", labels, { [weak self] k in self?.teleport(hero, to: dests[k], p) })
+            // exactly one: taken without a dialog (0x6f8aa4)
+            if dests.count == 1 { teleport(hero, to: dests[0], p); return true }
+            teleportChoice = (objectText(p, "name") ?? p.type, objectText(p, "Initial") ?? "Where to?", dests, labels, { [weak self] k in self?.teleport(hero, to: dests[k], p) })
         case "teleporter_exit":
             say(p, "initial")
         case "whirlpool":

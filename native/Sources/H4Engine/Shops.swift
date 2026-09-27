@@ -110,9 +110,13 @@ extension GameState {
         let key = objectKey(p)
         guard isHumanActing else { return }
         dialogueSound(19)
-        if sanctuaryGuests[key] != nil { say(p, "denied"); return }
         let paid = sanctuaryPaid.contains(key)
         let title = tables?.objectText(p.type, p.subtype, "name") ?? tables?.objectText("sanctuary", "", "name") ?? "Sanctuary"
+        if sanctuaryGuests[key] != nil {   // occupied: the dialog still opens, with "denied" and Enter disabled (0x80b1b4..0x80b264)
+            let body = objectText(p, "denied") ?? objectText(p, "Denied") ?? ""
+            sanctuaryOpen = SanctuaryOffer(key: key, title: title, text: body, canEnter: false, hero: hero)
+            return
+        }
         let body = objectText(p, paid ? "paid" : "initial") ?? objectText(p, paid ? "Paid" : "Initial") ?? "Enter the sanctuary for 200 gold a day?"
         sanctuaryOpen = SanctuaryOffer(key: key, title: title, text: body, canEnter: paid || resources["Gold", default: 0] >= GameState.sanctuaryFee, hero: hero)
     }

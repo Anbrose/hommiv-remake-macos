@@ -342,7 +342,7 @@ if let out = snapshot {
     renderer.combat = combatScreen
     renderer.movies = movies
     if let m = ProcessInfo.processInfo.environment["H4SAVEDIALOG"] { renderer.openSaveDialog(m == "load" ? .load : .save) }   // snapshot the save / load dialog
-    if ProcessInfo.processInfo.environment["H4MENU"] != nil { renderer.openSystemMenu() }   // snapshot the system menu
+    if let m = ProcessInfo.processInfo.environment["H4MENU"] { if m == "game" { renderer.openGameMenu() } else if m == "info" { Renderer.scenarioInfoOpen = true } else { renderer.openSystemMenu() } }   // snapshot the system menu (game: the game menu, info: scenario information)
     if walk != nil { game.quickCombatOnly = true }   // --walk snapshots resolve fights at once
     if let a = ProcessInfo.processInfo.environment["H4ARMY"], let h = game.heroes.first {   // debugging: the hero's army, "devil:5,imp:20"
         h.army = a.split(separator: ",").compactMap { p in let q = p.split(separator: ":"); return q.count == 2 ? Int(q[1]).map { Hero.Stack(creature: String(q[0]), count: $0) } : nil }
@@ -412,6 +412,7 @@ if let out = snapshot {
         }
     }
     if openHeroScreen { renderer.adventureDialog = .hero(0); renderer.heroShown = ProcessInfo.processInfo.environment["H4SLOT"].flatMap { Int($0) } ?? 0 }
+    if let k = ProcessInfo.processInfo.environment["H4SPLIT"].flatMap({ Int($0) }), let h = game.heroes.first, k < h.army.count { renderer.openSplit(h, stack: k, at: (560, 560)) }   // snapshot: the split dialog
     if let n = ProcessInfo.processInfo.environment["H4LEVELUP"].flatMap({ Int($0) }), let h = game.heroes.first {   // snapshot: the level-up dialog
         game.giveExperience(n, to: h); renderer.levelUpChoice = 0
     }
@@ -445,7 +446,11 @@ if let out = snapshot {
         print("puzzle \(first.subtype): \(game.obeliskVisits[first.subtype] ?? 0)/\(game.obelisksRequired(first.subtype)) site \(game.digSites[first.subtype] ?? [])")
     }
     if ProcessInfo.processInfo.environment["H4OPTIONS"] != nil { renderer.optionsOpen = renderer.settings }   // snapshot: the options
-    if let m = ProcessInfo.processInfo.environment["H4OVERVIEW"] { renderer.overview = KingdomOverview(mode: m == "heroes" ? .heroes : .towns) }   // snapshot: the kingdom overview
+    if let m = ProcessInfo.processInfo.environment["H4OVERVIEW"] { renderer.overview = KingdomOverview(snapshot: m) }   // snapshot: the kingdom overview (towns, heroes, armies)
+    if let spec = ProcessInfo.processInfo.environment["H4NEUTRAL"] {   // snapshot: a neutral army's window ("creature:n,creature:n")
+        let stacks = spec.split(separator: ",").compactMap { p -> (CreatureDef, Int)? in let q = p.split(separator: ":"); guard q.count == 2, let c = game.tables?.creature(String(q[0])), let n = Int(q[1]) else { return nil }; return (c, n) }
+        if let lead = stacks.first { renderer.creatureDialog = (lead.0, lead.1, stacks.dropFirst().map { ($0.0, $0.1) }) }
+    }
     if let k = ProcessInfo.processInfo.environment["H4ARMYPOPUP"].flatMap({ Int($0) }) { renderer.armyPopup = ArmyPopup(hero: 0, selected: k) }   // snapshot: the right-click window
     if openChest, let h = game.heroes.first { game.chestOffer = (h, 1500, 1000); renderer.adventureDialog = .chest; renderer.chestChoice = true }
     if openTown {
@@ -627,6 +632,10 @@ final class MapView: MTKView {
     var hoverPending: (mouse: SIMD2<Float>, since: Date)?
     func tickHover() {
         guard let p = hoverPending, Date().timeIntervalSince(p.since) > 0.4, renderer.hover == nil, renderer.townOpen == nil else { return }
+        if let tip = renderer.dialogTip(x: p.mouse.x / renderer.uiScale, y: p.mouse.y / renderer.uiScale) {   // the object dialogs' balloons
+            renderer.hover = (tip, Int(p.mouse.x / renderer.uiScale), Int(p.mouse.y / renderer.uiScale))
+            return
+        }
         if renderer.spellBook != nil {
             if let tip = renderer.spellBookTip(x: p.mouse.x / renderer.uiScale, y: p.mouse.y / renderer.uiScale) {
                 renderer.hover = (tip, Int(p.mouse.x / renderer.uiScale), Int(p.mouse.y / renderer.uiScale))
@@ -671,6 +680,11 @@ final class MapView: MTKView {
     }
     override func mouseDragged(with e: NSEvent) {
         dragged += abs(Float(e.deltaX)) + abs(Float(e.deltaY))
+        if splitDialog != nil {   // the split dialog's scrollbar follows the pointer
+            let p = convert(e.locationInWindow, from: nil), sc = Float(window?.backingScaleFactor ?? 1)
+            renderer.splitClick(x: Float(p.x) * sc / renderer.uiScale, y: Float(bounds.height - p.y) * sc / renderer.uiScale, drag: true)
+            return
+        }
         if renderer.townOpen != nil {
             if dragged >= 4 {
                 let p = convert(e.locationInWindow, from: nil), sc = Float(window?.backingScaleFactor ?? 1)
@@ -694,6 +708,7 @@ final class MapView: MTKView {
         let p = convert(e.locationInWindow, from: nil)
         let scale = Float(window?.backingScaleFactor ?? 1)
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
+        if splitDialog != nil { renderer.splitClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.puzzle != nil { renderer.puzzleClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.shop != nil { renderer.shopClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.sanctuary != nil { renderer.sanctuaryClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
@@ -830,6 +845,7 @@ final class MapView: MTKView {
     }
     override func keyDown(with e: NSEvent) {
         if renderer.saveDialogKey(e) { return }
+        if renderer.dialogKey(e.keyCode) { return }   // the spell book's and the object dialogs' hot keys
         let step: Float = 64 / renderer.zoom
         // the original's hot keys on the map: S save, L load
         if !renderer.inCombat, renderer.townOpen == nil, renderer.prompt == nil {

@@ -1,12 +1,12 @@
 import AppKit
 import H4Engine
 
-/// The main menu and the screens before a game (campaign_spec §3): layers.menu.main.1024 over the
-/// bitmap_raw background (New Game, Load Game, Quit); New Game's scroll menu (Scenarios, the three
-/// campaign sets, Tutorial); the scenario list (layers.dialog.new_game); a set's campaign selection
-/// (dialog.campaign_selection / storm_ / wow_); the campaign screen (layers.dialog.Campaign: the
-/// scenario's 426x340 splash, its prologue as the voice-over text, Begin / Back) and the epilogue
-/// (Campaign_Epilogue). A choice starts the game process again with the map or campaign scenario.
+/// The main menu and the screens before a game (campaign_spec §3, menus_spec parts A-C): the
+/// bitmap_raw background (the Winds of War copy) under layers.menu.main.1024's five layout-image
+/// buttons with their labels in the `_Text` rects; New Game's and Options' scroll menus; the
+/// scenario list (dialog.new_game), New_Game_Options, the campaign selection (campaign_selection /
+/// storm_ / wow_), the campaign briefing (dialog.Campaign) and epilogue (Campaign_Epilogue), Load
+/// Game and Game Settings. A choice starts the game process again with the map or campaign scenario.
 func runMainMenu(_ args: [String]) -> Never {
     let app = NSApplication.shared
     app.setActivationPolicy(.regular)
@@ -28,20 +28,11 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         w.contentAspectRatio = NSSize(width: 4, height: 3)
         w.center(); w.makeKeyAndOrderFront(nil)
         window = w
-        if let out = ProcessInfo.processInfo.environment["H4MENUSNAP"] {   // snapshot: a menu screen ("scenarios", "campaigns:k", "briefing:id:i", "epilogue:id:i", "popup")
-            let p = (ProcessInfo.processInfo.environment["H4MENUSCREEN"] ?? "").split(separator: ":").map(String.init)
-            switch p.first {
-            case "scenarios": view.openScenarios()
-            case "campaigns": view.screen = .campaigns(set: Int(p[1]) ?? 0)
-            case "briefing": view.screen = .briefing(id: Int(p[1]) ?? 1, index: Int(p[2]) ?? 0, carry: nil); view.briefingTab = Int(p.count > 3 ? p[3] : "2") ?? 2
-            case "epilogue": view.screen = .epilogue(id: Int(p[1]) ?? 1, index: Int(p[2]) ?? 0, carry: nil)
-            case "popup": view.clickMain(900, 130)
-            case "setup":
-                let H = URL(fileURLWithPath: view.archivePath).deletingLastPathComponent().deletingLastPathComponent().path
-                let path = "\(H)/maps/\(p.count > 1 ? p[1] : "Barbarians from Below").h4c"
-                if let d = try? Data(contentsOf: URL(fileURLWithPath: path)), let m = try? MapFile(data: d, objectNames: []) { view.setup = MenuView.Setup(map: m, human: m.humanColour); view.screen = .setup(path: path) }
-            default: break
-            }
+        // snapshot: a menu screen ("popup", "options", "settings", "load", "scenarios", "setup[:map]",
+        // "campaigns:k", "briefing:id:i[:tab]", "epilogue:id:i", "hover:<button>")
+        if let out = ProcessInfo.processInfo.environment["H4MENUSNAP"] {
+            view.snapshotting = true
+            view.open(ProcessInfo.processInfo.environment["H4MENUSCREEN"] ?? "")
             view.frame = NSRect(x: 0, y: 0, width: 1024, height: 768)
             if let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
                 view.cacheDisplay(in: view.bounds, to: rep)
@@ -67,17 +58,23 @@ final class MenuView: NSView {
     /// The new-game options (layers.dialog.New_Game_Options): the players, who is human, their
     /// alignments, the difficulty, whether wandering stacks move.
     struct Setup { var map: MapFile; var human: Int; var align: [Int: Int] = [:]; var difficulty = 1; var guardsMove = true }
+    /// An open scroll menu: its entries, the clicked button's top-left, when it opened.
+    struct Popup { var items: [(String, () -> Void)]; var x: Int, y: Int; var opened = Date() }
     var setup: Setup?
     let archivePath: String
     let archive: H4Archive
     let strings: [String: String]
-    let font14: H4Font, font12: H4Font, font22: H4Font, font16: H4Font, font18: H4Font, font20: H4Font, font30: H4Font, font36: H4Font
+    let kit: MenuKit
     let sound: GameSound
-    var screen: Screen = .main
-    var popup: [(String, () -> Void)]? = nil
-    var hover: (Float, Float) = (0, 0)
+    var screen: Screen = .main { didSet { screenOpened = Date() } }
+    var screenOpened = Date()
+    var popup: Popup? = nil
+    var options: GameSettings? = nil
+    var hover: (Float, Float) = (-1, -1)
+    var pressedAt: (Float, Float)? = nil
+    var snapshotting = false
     var images: [String: CGImage] = [:]
-    var layerFiles: [String: LayerFile] = [:]
+    var timer: Timer?
     // the scenario list
     var maps: [(path: String, summary: MapSummary)] = []
     var scroll = 0, selected = 0
@@ -88,18 +85,12 @@ final class MenuView: NSView {
         archivePath = args[1]
         let dir = URL(fileURLWithPath: args[1]).deletingLastPathComponent()
         archive = try H4Archive(url: URL(fileURLWithPath: args[1]))
-        for f in ["x2.h4r", "storm.h4r", "updates.h4r"] { if let a = try? H4Archive(url: dir.appendingPathComponent(f)) { archive.supplement(with: a) } }
-        // (the updates copies of the dialogs and campaigns come first)
-        if let u = try? H4Archive(url: dir.appendingPathComponent("updates.h4r")) { overrides = u }
-        strings = (try? H4Archive(url: dir.appendingPathComponent("text.h4r"))).flatMap { try? RuleTables(archive: $0) }?.strings ?? [:]
-        font14 = try H4Font(data: archive.payload("font.Prose_Antique.14.h4d"))
-        font12 = try H4Font(data: archive.payload("font.Prose_Antique.12.h4d"))
-        font22 = (try? H4Font(data: archive.payload("font.Prose_Antique.22.h4d"))) ?? font14
-        font16 = (try? H4Font(data: archive.payload("font.Prose_Antique.16.h4d"))) ?? font14
-        font20 = (try? H4Font(data: archive.payload("font.Prose_Antique.20.h4d"))) ?? font14
-        font18 = (try? H4Font(data: archive.payload("font.Prose_Antique.18.h4d"))) ?? font14
-        font30 = (try? H4Font(data: archive.payload("font.Prose_Antique.30.h4d"))) ?? font22
-        font36 = (try? H4Font(data: archive.payload("font.Prose_Antique.36.h4d"))) ?? font30
+        var extra: [H4Archive] = []
+        for f in ["updates.h4r", "x2.h4r", "storm.h4r"] { if let a = try? H4Archive(url: dir.appendingPathComponent(f)) { extra.append(a) } }
+        for a in extra.reversed() { archive.supplement(with: a) }
+        let texts = (try? H4Archive(url: dir.appendingPathComponent("text.h4r"))).flatMap { try? RuleTables(archive: $0) }?.strings ?? [:]
+        strings = texts
+        kit = MenuKit(archives: extra + [archive], strings: { texts })
         sound = GameSound(dataDirectory: dir)
         super.init(frame: NSRect(x: 0, y: 0, width: 1024, height: 768))
         // an epilogue / the next scenario after a won campaign scenario: "--menu --next <id> <index> [--carry file]"
@@ -107,40 +98,60 @@ final class MenuView: NSView {
             let carry = args.firstIndex(of: "--carry").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
             screen = .epilogue(id: id, index: index, carry: carry)
         }
+        // the adventure System Menu's New Scenario / New Campaign: "--menu --screen <scenarios|campaigns:k>"
+        if let k = args.firstIndex(of: "--screen"), k + 1 < args.count { open(args[k + 1]) }
         sound.playMusic("main_menu")
+        timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in self?.tick() }
     }
     required init?(coder: NSCoder) { fatalError() }
-    var overrides: H4Archive?
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
 
-    // MARK: resources
+    /// Open a screen by name (the snapshot names and --screen).
+    func open(_ name: String) {
+        let p = name.split(separator: ":").map(String.init)
+        switch p.first {
+        case "scenarios": openScenarios()
+        case "campaigns": screen = .campaigns(set: Int(p.count > 1 ? p[1] : "0") ?? 0)
+        case "briefing": screen = .briefing(id: Int(p[1]) ?? 1, index: Int(p[2]) ?? 0, carry: nil); if p.count > 3 { briefingTab = Int(p[3]) ?? 3 }
+        case "epilogue": screen = .epilogue(id: Int(p[1]) ?? 1, index: Int(p[2]) ?? 0, carry: nil)
+        case "popup": openNewGameMenu()
+        case "options": openOptionsMenu()
+        case "settings": options = GameSettings.load()
+        case "load": saves = Renderer.savedGames(); scroll = 0; selected = 0; screen = .load
+        case "hover": if let l = MenuKit.find(kit.file("menu.main.1024"), "\(p.count > 1 ? p[1] : "New_Game")_Released") { hover = (Float(l.x + l.width / 2), Float(l.y + l.height / 2)) }
+        case "setup":
+            let H = URL(fileURLWithPath: archivePath).deletingLastPathComponent().deletingLastPathComponent().path
+            let path = "\(H)/maps/\(p.count > 1 ? p[1] : "Barbarians from Below").h4c"
+            if let d = try? Data(contentsOf: URL(fileURLWithPath: path)), let m = try? MapFile(data: d, objectNames: []) { setup = Setup(map: m, human: m.humanColour); screen = .setup(path: path) }
+        default: break
+        }
+    }
+    /// Redraw while something moves (the scroll menu unrolling, the voice text scrolling, the caret).
+    func tick() {
+        if popup != nil { needsDisplay = true; return }
+        switch screen {
+        case .briefing, .epilogue: needsDisplay = true
+        default: break
+        }
+    }
 
-    func payload(_ name: String) -> Data? {
-        if let o = overrides, let d = try? o.payload(name) { return d }
-        if let d = try? archive.payload(name) { return d }
-        let low = name.lowercased()
-        if let e = archive.entries.first(where: { $0.name.lowercased() == low }) { return try? archive.payload(e.name) }
-        return nil
-    }
-    func layers(_ name: String) -> LayerFile? {
-        if let l = layerFiles[name] { return l }
-        let l = payload("layers.\(name).h4d").flatMap { try? LayerFile(data: $0) }
-        layerFiles[name] = l
-        return l
-    }
-    func image(_ key: String, _ bm: @autoclosure () -> Bitmap) -> CGImage? {
+    // MARK: resources and drawing
+
+    func text(_ key: String, _ fallback: String) -> String { strings[key] ?? fallback }
+    func layers(_ name: String) -> LayerFile? { kit.file(name) }
+    func image(_ key: String, _ bm: () -> Bitmap) -> CGImage? {
         if let i = images[key] { return i }
         let b = bm()
         guard b.width > 0, b.height > 0, let p = CGDataProvider(data: Data(b.pixels) as CFData),
               let i = CGImage(width: b.width, height: b.height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: b.width * 4, space: CGColorSpaceCreateDeviceRGB(),
-                              bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue), provider: p, decode: nil, shouldInterpolate: true, intent: .defaultIntent) else { return nil }
+                              bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue), provider: p, decode: nil, shouldInterpolate: true, intent: .defaultIntent) else { return nil }
         images[key] = i
         return i
     }
-    /// bitmap_raw.menu.main.1024: u32 1, u32 height, u32 width, u32 size, then 24-bit pixels.
+    /// bitmap_raw.menu.main.1024 (the x2 copy wins): u32 1, u32 height, u32 width, u32 size, then 24-bit BGR pixels.
     lazy var background: CGImage? = {
-        guard let d = payload("bitmap_raw.menu.main.1024.h4d"), d.count > 16 else { return nil }
+        guard let d = kit.payload("bitmap_raw.menu.main.1024.h4d"), d.count > 16 else { return nil }
         var r = ByteReader(d); _ = r.u32()
         let h = Int(r.u32()), w = Int(r.u32()); _ = r.u32()
         guard d.count >= 16 + w * h * 3 else { return nil }
@@ -150,55 +161,32 @@ final class MenuView: NSView {
                 b.pixels[k * 4] = src[16 + k * 3]; b.pixels[k * 4 + 1] = src[16 + k * 3 + 1]; b.pixels[k * 4 + 2] = src[16 + k * 3 + 2]; b.pixels[k * 4 + 3] = 255
             }
         }
-        return image("bg", b)
+        return image("bg") { b }
     }()
-    func text(_ key: String, _ fallback: String) -> String { strings[key] ?? fallback }
-
-    // MARK: drawing
 
     var ctx: CGContext?
-    var origin = (0, 0)   // the current dialog's top-left on the 1024 x 768 canvas
-    func draw(_ l: UILayer?, key: String) {
-        guard let l = l, let c = ctx, let i = image(key, l.bitmap) else { return }
-        c.saveGState(); c.translateBy(x: CGFloat(origin.0 + l.x), y: CGFloat(origin.1 + l.y + l.height)); c.scaleBy(x: 1, y: -1)
-        c.draw(i, in: CGRect(x: 0, y: 0, width: l.width, height: l.height)); c.restoreGState()
-    }
-    func drawAll(_ f: LayerFile, key: String, skip: (String) -> Bool = { _ in false }) {
-        for l in f.layers where l.isImage && !l.name.lowercased().hasSuffix("_pressed") && !l.name.lowercased().hasSuffix("_highlighted") && !l.name.lowercased().hasSuffix("_disabled") && !skip(l.name) {
-            draw(l, key: "\(key)|\(l.name)")
+    func draw(_ items: [UIItem]) {
+        guard let c = ctx else { return }
+        for it in items {
+            guard let i = image(it.key, it.make) else { continue }
+            c.saveGState(); c.translateBy(x: CGFloat(it.x), y: CGFloat(it.y + it.h)); c.scaleBy(x: 1, y: -1)
+            c.draw(i, in: CGRect(x: 0, y: 0, width: it.w, height: it.h)); c.restoreGState()
         }
     }
-    func label(_ s: String, in l: UILayer?, font: H4Font? = nil, colour: (UInt8, UInt8, UInt8) = (12, 8, 4), centre: Bool = true) {
-        guard let l = l, !s.isEmpty else { return }
-        let f = font ?? font14
-        let w = f.measure(s)
-        let bm = f.render(s, colour: colour)
-        let x = centre ? l.x + (l.width - w) / 2 : l.x, y = l.y + (l.height - f.size) / 2
-        draw(UILayer(name: "", kind: 1, x: x, y: y, width: bm.width, height: bm.height, bitmap: bm), key: "text|\(f.size)|\(colour.0)|\(s)")
+    func dialogOrigin(_ w: Int, _ h: Int) -> (Int, Int) { ((1024 - w) / 2, (768 - h) / 2) }
+    func look(_ r: UIRect, enabled: Bool = true) -> ButtonLook {
+        guard enabled else { return .disabled }
+        if let p = pressedAt, r.contains(p.0, p.1), r.contains(hover.0, hover.1) { return .pressed }
+        return r.contains(hover.0, hover.1) ? .highlighted : .released
     }
-    /// A text button in a slot: layers.button.large (166 x 40, the gold bar) with its label.
-    func button(_ s: String, in l: UILayer?, enabled: Bool = true) {
-        guard let l = l, let b = layers("button.large") else { return }
-        let hot = enabled && inside(l, hover.0, hover.1)
-        if let img = b[enabled ? "Released" : "Disabled"] {
-            draw(UILayer(name: "", kind: 4, x: l.x + (l.width - img.width) / 2, y: l.y + (l.height - img.height) / 2, width: img.width, height: img.height, bitmap: img.bitmap), key: "btnlarge|\(enabled)")
-        }
-        label(s, in: l, font: font20, colour: enabled ? (hot ? (120, 20, 10) : (12, 8, 4)) : (110, 90, 70))
-    }
-    func paragraph(_ s: String, in l: UILayer?, font: H4Font? = nil) {
+    func largeButton(_ label: String, _ l: UILayer?, _ ox: Int, _ oy: Int, enabled: Bool = true) {
         guard let l = l else { return }
-        let f = font ?? font12
-        let lines = s.components(separatedBy: "\n").flatMap { $0.isEmpty ? [""] : AdventureUI.wrap($0, font: f, width: l.width) }
-        for (k, line) in lines.enumerated() where k * f.lineHeight + f.size <= l.height && !line.isEmpty {
-            let bm = f.render(line, colour: (12, 8, 4))
-            draw(UILayer(name: "", kind: 1, x: l.x, y: l.y + k * f.lineHeight, width: bm.width, height: bm.height, bitmap: bm), key: "text|\(f.size)|12|\(line)")
-        }
+        draw(kit.largeButton(label, ox + l.x, oy + l.y, look(UIRect(ox + l.x, oy + l.y, 166, 40), enabled: enabled)))
     }
-    func inside(_ l: UILayer?, _ x: Float, _ y: Float) -> Bool {
+    func hit(_ l: UILayer?, _ ox: Int, _ oy: Int, _ x: Float, _ y: Float, w: Int? = nil, h: Int? = nil) -> Bool {
         guard let l = l else { return false }
-        return x >= Float(origin.0 + l.x) && x < Float(origin.0 + l.x + l.width) && y >= Float(origin.1 + l.y) && y < Float(origin.1 + l.y + l.height)
+        return UIRect(ox + l.x, oy + l.y, w ?? l.width, h ?? l.height).contains(x, y)
     }
-    func fill(_ r: CGRect, _ c: (CGFloat, CGFloat, CGFloat, CGFloat)) { ctx?.setFillColor(red: c.0, green: c.1, blue: c.2, alpha: c.3); ctx?.fill(r) }
 
     override func draw(_ dirty: NSRect) {
         guard let c = NSGraphicsContext.current?.cgContext else { return }
@@ -206,7 +194,6 @@ final class MenuView: NSView {
         let s = min(bounds.width / 1024, bounds.height / 768)
         c.translateBy(x: (bounds.width - 1024 * s) / 2, y: (bounds.height - 768 * s) / 2); c.scaleBy(x: s, y: s)
         ctx = c
-        origin = (0, 0)
         if let bg = background { c.saveGState(); c.translateBy(x: 0, y: 768); c.scaleBy(x: 1, y: -1); c.draw(bg, in: CGRect(x: 0, y: 0, width: 1024, height: 768)); c.restoreGState() }
         switch screen {
         case .main: drawMain()
@@ -217,7 +204,13 @@ final class MenuView: NSView {
         case .load: drawLoad()
         case .setup: drawSetup()
         }
-        if let p = popup { drawPopup(p) }
+        if let p = popup {
+            draw(kit.scrollMenu(p.items.map { $0.0 }, x: p.x, y: p.y, hover: hover, elapsed: snapshotting ? 10 : Date().timeIntervalSince(p.opened)))
+        }
+        if let o = options {
+            let (ox, oy) = OptionsView.origin(1024, 768)
+            draw(OptionsView.items(kit, o, ox: ox, oy: oy, hover: hover))
+        }
         ctx = nil
     }
     var canvasScale: (s: CGFloat, dx: CGFloat, dy: CGFloat) {
@@ -229,94 +222,71 @@ final class MenuView: NSView {
         return (Float((p.x - t.dx) / t.s), Float((p.y - t.dy) / t.s))
     }
 
-    // MARK: the main menu
+    // MARK: the main menu (menus_spec A.1)
 
     let mainButtons = ["New_Game", "Load_Game", "Options", "Network", "Quit"]
+    static let mainLabels = ["New_Game": "new_game", "Load_Game": "load_game", "Options": "options", "Network": "multiplayer", "Quit": "quit"]
     func drawMain() {
         guard let f = layers("menu.main.1024") else { return }
-        origin = (0, 0)
-        draw(f["Background"], key: "mm|bg")
-        draw(f["Copywright_Text"], key: "mm|copy")
-        for b in mainButtons {
-            let hot = inside(f["\(b)_Released"], hover.0, hover.1) && popup == nil && (b == "New_Game" || b == "Load_Game" || b == "Quit")
-            draw(f["\(b)_\(hot ? "Highlighted" : "Released")"], key: "mm|\(b)|\(hot)")
-            // the label in the button's scroll (new_game.main_menu, ...)
-            let key = ["New_Game": "new_game", "Load_Game": "load_game", "Options": "options", "Network": "multiplayer", "Quit": "quit"][b] ?? b
-            let enabled = b == "New_Game" || b == "Load_Game" || b == "Quit"
-            label(text("\(key).main_menu", b.replacingOccurrences(of: "_", with: " ")), in: f["\(b)_Text"], font: font30, colour: enabled ? (12, 8, 4) : (110, 90, 70))
+        // the copyright: white with a black halo, PA.12, left and top in Copywright_Text
+        if let r = MenuKit.find(f, "Copywright_Text") {
+            draw(kit.text(text("x2_copyright.main_menu", ""), UIRect(r), MenuKit.Style(12, colour: (255, 255, 255), halo: (0, 0, 0))))
         }
+        for b in mainButtons {
+            guard let rel = MenuKit.find(f, "\(b)_Released") else { continue }
+            let l = popup == nil && options == nil ? look(UIRect(rel)) : .released
+            let name = l == .pressed ? "Pressed" : l == .highlighted ? "Highlighted" : "Released"
+            draw(kit.image(MenuKit.find(f, "\(b)_\(name)") ?? rel, "menu.main.1024"))
+            // the label: a text window of the menu (it does not move with the press), font = rect height
+            if let t = MenuKit.find(f, "\(b)_Text") {
+                draw(kit.text(text("\(MenuView.mainLabels[b] ?? b).main_menu", b), UIRect(t), MenuKit.Style(t.height, just: 1, vcentre: true), clip: false))
+            }
+        }
+    }
+    func openNewGameMenu() {
+        guard let rel = kit.layer("menu.main.1024", "New_Game_Released") else { return }
+        var items: [(String, () -> Void)] = [(text("main_menu_scenario.misc", "Scenarios"), { [weak self] in self?.openScenarios() })]
+        for (k, key, fb) in [(0, "storm_new_campaign_original", "Heroes IV Campaigns"), (1, "storm_new_campaign_storm", "Gathering Storm Campaigns"), (2, "new_campaign_x2", "Winds of War Campaigns")] {
+            items.append((text(key, fb), { [weak self] in self?.screen = .campaigns(set: k) }))
+        }
+        items.append((text("main_menu_tutorial.misc", "Tutorial"), { [weak self] in self?.start(["campaign:0:0"]) }))
+        popup = Popup(items: items, x: rel.x, y: rel.y)
+    }
+    func openOptionsMenu() {
+        guard let rel = kit.layer("menu.main.1024", "Options_Released") else { return }
+        let none: () -> Void = {}
+        popup = Popup(items: [(text("main_menu_settings.misc", "Game Settings"), { [weak self] in self?.options = GameSettings.load() }),
+                              (text("main_menu_high_score.misc", "High Scores"), none),
+                              (text("main_menu_replay_intro.misc", "Replay Cinematic"), none),
+                              (text("main_menu_replay_intro.storm_misc", "Replay Storm Cinematic"), none),
+                              (text("main_menu_replay_intro.x2_misc", "Replay Winds of War Cinematic"), none),
+                              (text("main_menu_credits.misc", "Credits"), none)], x: rel.x, y: rel.y)
     }
     func clickMain(_ x: Float, _ y: Float) {
         guard let f = layers("menu.main.1024") else { return }
-        if inside(f["New_Game_Released"], x, y) {
-            var items: [(String, () -> Void)] = [(text("main_menu_scenario.misc", "Scenarios"), { [weak self] in self?.openScenarios() })]
-            for (k, key, fb) in [(0, "storm_new_campaign_original", "Heroes IV Campaigns"), (1, "storm_new_campaign_storm", "Gathering Storm Campaigns"), (2, "new_campaign_x2", "Winds of War Campaigns")] {
-                items.append((strings["\(key).misc"] ?? strings[key] ?? fb, { [weak self] in self?.screen = .campaigns(set: k) }))
-            }
-            items.append((text("main_menu_tutorial.misc", "Tutorial"), { [weak self] in self?.start(["campaign:0:0"]) }))
-            popup = items
-        } else if inside(f["Load_Game_Released"], x, y) {
-            saves = Renderer.savedGames(); scroll = 0; selected = 0; screen = .load
-        } else if inside(f["Quit_Released"], x, y) { NSApp.terminate(nil) }
+        func on(_ b: String) -> Bool { MenuKit.find(f, "\(b)_Released").map { UIRect($0).contains(x, y) } ?? false }
+        if on("New_Game") { openNewGameMenu() }
+        else if on("Load_Game") { saves = Renderer.savedGames(); scroll = 0; selected = 0; screen = .load }
+        else if on("Options") { openOptionsMenu() }
+        else if on("Quit") { NSApp.terminate(nil) }
     }
-    /// The scroll menu (layers.dialog.scroll_menu): the top bar, a parchment row per entry, the bottom.
-    func drawPopup(_ items: [(String, () -> Void)]) {
-        guard let f = layers("dialog.scroll_menu"), let top = f["top_bar"], let parch = f["parchment"], let bottom = f["bottom_border"] else { return }
-        origin = (560, 60)
-        let rows = popupRows(items, f)
-        let total = rows.reduce(0) { $0 + $1.h }
-        // the parchment (with its side borders) repeated down the entries' height
-        // the top first, then the middle and its two teal borders repeated down the entries' height
-        // from the parchment's own first row (it covers the top bar's last one)
-        draw(top, key: "sm|top")
-        var y = parch.y
-        while y < top.height + total {
-            let h = min(parch.height, top.height + total - y)
-            for n in ["background", "left", "right"] {
-                guard let l = f[n] else { continue }
-                draw(UILayer(name: "", kind: 4, x: l.x, y: y, width: l.width, height: min(h, l.height), bitmap: crop(l.bitmap, height: min(h, l.height))), key: "sm|\(n)|\(h)")
-            }
-            y += h
-        }
-        // the middle goes on under the bottom's corner pieces (bottom_border_size)
-        if let bg = f["background"] {
-            let under = (f["bottom_border_size"]?.height ?? bottom.height) - 8
-            draw(UILayer(name: "", kind: 4, x: bg.x + 4, y: top.height + total, width: bg.width - 8, height: under, bitmap: crop(bg.bitmap, height: under)), key: "sm|under|\(under)")
-        }
-        for r in rows {
-            let hot = hover.1 >= Float(origin.1 + r.y) && hover.1 < Float(origin.1 + r.y + r.h) && hover.0 >= Float(origin.0 + parch.x) && hover.0 < Float(origin.0 + parch.x + parch.width)
-            for (k, line) in r.lines.enumerated() {
-                label(line, in: UILayer(name: "", kind: 1, x: r.x, y: r.y + 6 + k * font20.lineHeight, width: 140, height: font20.lineHeight, bitmap: Bitmap(width: 1, height: 1)), font: font20, colour: hot ? (150, 30, 10) : (12, 8, 4), centre: false)
-            }
-        }
-        draw(UILayer(name: "", kind: 4, x: bottom.x, y: top.height + total, width: bottom.width, height: bottom.height, bitmap: bottom.bitmap), key: "sm|bottom")
-    }
-    /// The entries' lines (wrapped to the text width) and places.
-    func popupRows(_ items: [(String, () -> Void)], _ f: LayerFile) -> [(x: Int, y: Int, h: Int, lines: [String])] {
-        let top = f["top_bar"]?.height ?? 103, tx = f["text_size"]?.x ?? 42, tw = (f["text_size"]?.width ?? 125) + 10
-        var y = top, out: [(x: Int, y: Int, h: Int, lines: [String])] = []
-        for item in items {
-            let lines = AdventureUI.wrap(item.0, font: font20, width: tw)
-            let h = lines.count * font20.lineHeight + 14
-            out.append((tx, y, h, lines)); y += h
-        }
-        return out
-    }
-    func crop(_ b: Bitmap, height h: Int) -> Bitmap {
-        var o = Bitmap(width: b.width, height: min(h, b.height))
-        for k in 0..<(o.width * o.height * 4) { o.pixels[k] = b.pixels[k] }
-        return o
-    }
-    func clickPopup(_ items: [(String, () -> Void)], _ x: Float, _ y: Float) {
-        guard let f = layers("dialog.scroll_menu"), let parch = f["parchment"] else { popup = nil; return }
-        origin = (560, 60)
-        for (k, r) in popupRows(items, f).enumerated() {
-            if inside(UILayer(name: "", kind: 1, x: parch.x, y: r.y, width: parch.width, height: r.h, bitmap: Bitmap(width: 1, height: 1)), x, y) { popup = nil; items[k].1(); return }
-        }
+    func clickPopup(_ p: Popup, _ x: Float, _ y: Float) {
         popup = nil
+        if let k = kit.scrollMenuHit(p.items.map { $0.0 }, x: p.x, y: p.y, x, y) { p.items[k].1() }
+    }
+    func clickOptions(_ x: Float, _ y: Float) {
+        guard var o = options else { return }
+        let (ox, oy) = OptionsView.origin(1024, 768)
+        let h = OptionsView.hit(kit, ox: ox, oy: oy, x, y)
+        switch h {
+        case .ok: o.save(); options = nil; sound.setMusicVolume(o.music)
+        case .cancel: options = nil
+        case .none: break
+        default: OptionsView.apply(h, to: &o); options = o
+        }
     }
 
-    // MARK: the scenario list
+    // MARK: the scenario list (menus_spec B.1)
 
     var mapsDir: URL { URL(fileURLWithPath: archivePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("maps") }
     func openScenarios() {
@@ -329,91 +299,117 @@ final class MenuView: NSView {
         scroll = 0; selected = 0
         screen = .scenarios
     }
-    var dialogOrigin: (Int, Int) { ((1024 - 800) / 2, (768 - 600) / 2) }
+    /// The visible columns packed from line_width's right edge (0x7b60b0): each takes column_width 57
+    /// plus a 9 px line; default Map type, Players, Difficulty, Size (Allies and Humans off).
+    static let scenarioColumns = ["Map_Type", "Players", "Difficulty", "Size"]
+    func columnX(_ f: LayerFile) -> (cols: [String: Int], lines: [Int], nameEnd: Int) {
+        var edge = (MenuKit.find(f, "line_width").map { $0.x + $0.width }) ?? 743
+        let cw = MenuKit.find(f, "column_width")?.width ?? 57
+        var cols: [String: Int] = [:], lines: [Int] = []
+        for c in MenuView.scenarioColumns { edge -= cw + 9; cols[c] = edge + 9; lines.append(edge) }
+        return (cols, lines, edge)
+    }
     func drawScenarios() {
         guard let f = layers("dialog.new_game") else { return }
-        origin = dialogOrigin
-        // the grid, the column pictures (Size, Difficulty, Players, Map type), the description box
-        drawAll(f, key: "ng", skip: { ["Humans_Released", "Allies_Released", "Maps_Released"].contains($0) })
-        label(text("scenario_name.new_game", "Scenario Name"), in: f["Map_Title"], font: font30, centre: false)
-        let sizes = ["S", "M", "L", "XL", "H", "XH", "G"]
-        let cols: [(x0: Int, x1: Int)] = [(f["Size_Released"]?.x ?? 360, (f["Size_Released"].map { $0.x + $0.width }) ?? 406),
-                                           (f["Difficulty_Released"]?.x ?? 430, (f["Difficulty_Released"].map { $0.x + $0.width }) ?? 473),
-                                           (f["Players_Released"]?.x ?? 499, (f["Players_Released"].map { $0.x + $0.width }) ?? 537),
-                                           (f["Map_Type_released"]?.x ?? 694, (f["Map_Type_released"].map { $0.x + $0.width }) ?? 732)]
+        let (ox, oy) = dialogOrigin(800, 599)
+        func l(_ n: String) -> UILayer? { MenuKit.find(f, n) }
+        draw(kit.image(l("Background"), "new_game", ox, oy))
+        draw(kit.image(l("Choose_File_Grid"), "new_game", ox, oy))
+        if let t = l("Map_Title") {   // the name header: a toggle with no images, its text 34 left, v-centred
+            draw(kit.text(text("map_name", "Scenario Name"), UIRect(ox + t.x, oy + t.y, t.width - 8, 44), MenuKit.Style(40, vcentre: true), clip: false))
+        }
+        let (cols, lines, nameEnd) = columnX(f)
+        let cw = l("column_width")?.width ?? 57
+        let lw = l("line_width")
         let diffIcons = layers("icons.difficulty"), typeIcons = layers("icons.map_type")
         for row in 0..<10 {
             let k = scroll + row
-            guard k < maps.count, let slot = f["Map_\(row + 1)"] else { continue }
+            guard k < maps.count, let slot = l("Map_\(row + 1)") else { continue }
             let m = maps[k].summary
             let sel = k == selected
-            if sel {   // the chosen row: blue, white text
-                let vline = f["Vertical_Line"].map { $0.x } ?? 677
-                fill(CGRect(x: origin.0 + 28, y: origin.1 + slot.y - 2, width: vline - 28, height: slot.height + 3), (0.4, 0.4, 0.8, 1))
-                fill(CGRect(x: origin.0 + vline + 9, y: origin.1 + slot.y - 2, width: 743 - vline - 9, height: slot.height + 3), (0.4, 0.4, 0.8, 1))
+            let rowRect = UIRect(ox + (lw?.x ?? 27), oy + slot.y, (lw?.width ?? 716), slot.height)
+            if sel { draw(kit.fill(rowRect)) }
+            let st = MenuKit.Style(slot.height, colour: sel ? (255, 255, 255) : (0, 0, 0), halo: sel ? (0, 0, 0) : MenuKit.halo, vcentre: true)
+            var cst = st; cst.just = 1
+            draw(kit.text(m.name, UIRect(ox + slot.x, oy + slot.y, nameEnd - 8 - slot.x, slot.height), st))
+            func cell(_ c: String) -> UIRect { UIRect(ox + (cols[c] ?? 0), oy + slot.y, cw, slot.height) }
+            let size = m.size <= 76 ? "S" : m.size <= 152 ? "M" : m.size <= 228 ? "L" : "XL"
+            draw(kit.text(size, cell("Size"), cst))
+            draw(kit.text("\(m.players)", cell("Players"), cst))
+            if let ic = MenuKit.find(diffIcons, Renderer.difficultyLayers[min(4, max(0, m.difficulty))]) {
+                let c = cell("Difficulty"); draw(kit.image(ic, "icons.difficulty", c.x + (cw - ic.width) / 2 - ic.x, c.y))
             }
-            let ink: (UInt8, UInt8, UInt8) = sel ? (250, 250, 250) : (12, 8, 4)
-            label(m.name, in: slot, font: font22, colour: ink, centre: false)
-            func cell(_ c: Int) -> UILayer { UILayer(name: "", kind: 1, x: cols[c].x0, y: slot.y, width: cols[c].x1 - cols[c].x0, height: slot.height, bitmap: Bitmap(width: 1, height: 1)) }
-            // (the file's size is 76 cells a step: 76 small, 152 medium, 228 large, 304 extra large)
-            label(sizes[max(0, min(6, (m.size + 38) / 76 - 1))], in: cell(0), font: font22, colour: ink)
-            let dname = ["easy", "Normal", "Hard", "expert", "impossible"][min(4, max(0, m.difficulty))]
-            if let ic = diffIcons?[dname] { let c = cell(1); draw(UILayer(name: "", kind: 4, x: c.x + (c.width - ic.width) / 2, y: c.y + (c.height - ic.height) / 2, width: ic.width, height: ic.height, bitmap: ic.bitmap), key: "diff|\(dname)") }
-            label("\(m.players)", in: cell(2), font: font22, colour: ink)
             let tname = m.version >= 29 ? "expansion_2" : m.version >= 28 ? "expansion" : "original"
-            if let ic = typeIcons?[tname] { let c = cell(3); draw(UILayer(name: "", kind: 4, x: c.x + (c.width - ic.width) / 2 - ic.x / 2, y: c.y + (c.height - ic.height) / 2, width: ic.width, height: ic.height, bitmap: ic.bitmap), key: "mtype|\(tname)") }
+            if let ic = MenuKit.find(typeIcons, tname) {
+                let c = cell("Map_Type"); draw(kit.image(ic, "icons.map_type", c.x + (cw - ic.width) / 2 - ic.x, c.y))
+            }
         }
-        if selected < maps.count { paragraph(text("map_description.new_game", "Map Description:") + "\n" + maps[selected].summary.description, in: f["Description"], font: font18) }
-        button(text("cancel", "Cancel"), in: f["Back_Button"])
-        button(text("details", "Details"), in: f["Details_Button"], enabled: false)
-        button(text("next", "Next"), in: f["Begin_Button"], enabled: selected < maps.count)
+        // the separators (only right of the name area) and the column headers re-centred on their columns
+        if let v = l("Vertical_Line") { for x in lines { draw(kit.image(v, "new_game", ox + x - v.x, oy)) } }
+        for c in MenuView.scenarioColumns {
+            guard let rel = l("\(c)_Released"), let cx = cols[c] else { continue }
+            let dx = cx + (cw - rel.width) / 2 - rel.x
+            let hot = UIRect(ox + rel.x + dx, oy + rel.y, rel.width, rel.height).contains(hover.0, hover.1)
+            draw(kit.image(hot ? (l("\(c)_Highlighted") ?? rel) : rel, "new_game", ox + dx + (hot ? (rel.x + rel.width / 2) - ((l("\(c)_Highlighted") ?? rel).x + (l("\(c)_Highlighted") ?? rel).width / 2) : 0), oy))
+        }
+        if let s = l("Scrollbar") { draw(kit.vScrollbar(ox + s.x, oy + s.y, s.height, first: scroll, visible: 10, total: maps.count)) }
+        draw(kit.image(l("Description_Box"), "new_game", ox, oy))
+        if selected < maps.count, let d = l("Description") {
+            draw(kit.text(text("scene_info_description_title.misc", "Map Description") + ":\n" + maps[selected].summary.description, UIRect(d, ox, oy), MenuKit.Style(16)))
+        }
+        largeButton(text("details", "Details"), l("Details_Button"), ox, oy)
+        largeButton(text("cancel", "Cancel"), l("Back_Button"), ox, oy)
+        largeButton(text("new_map_next.misc", "Next"), l("Begin_Button"), ox, oy, enabled: selected < maps.count)
     }
-    func clickScenarios(_ x: Float, _ y: Float) {
+    func clickScenarios(_ x: Float, _ y: Float, double: Bool) {
         guard let f = layers("dialog.new_game") else { return }
-        origin = dialogOrigin
-        for row in 0..<10 where inside(f["Map_\(row + 1)"], x, y) || (inside(f["line_width"].map { UILayer(name: "", kind: 1, x: $0.x, y: f["Map_\(row + 1)"]?.y ?? 0, width: $0.width, height: $0.height, bitmap: $0.bitmap) }, x, y)) {
-            if scroll + row < maps.count { selected = scroll + row }
-            return
+        let (ox, oy) = dialogOrigin(800, 599)
+        func l(_ n: String) -> UILayer? { MenuKit.find(f, n) }
+        let lw = l("line_width")
+        for row in 0..<10 {
+            guard let slot = l("Map_\(row + 1)") else { continue }
+            if UIRect(ox + (lw?.x ?? 27), oy + slot.y, lw?.width ?? 716, slot.height).contains(x, y) {
+                if scroll + row < maps.count { selected = scroll + row; if double { begin() } }
+                return
+            }
         }
-        if inside(f["Scrollbar"], x, y) { scroll = max(0, min(max(0, maps.count - 10), scroll + (y < Float(origin.1 + 209) ? -10 : 10))); return }
-        if inside(f["Back_Button"], x, y) { screen = .main; return }
-        if inside(f["Begin_Button"], x, y), selected < maps.count {
-            let path = maps[selected].path
-            // a single scenario: its options first; a campaign file straight in
-            if maps[selected].summary.scenarios > 1 { start([path]); return }
-            if let d = try? Data(contentsOf: URL(fileURLWithPath: path)), let m = try? MapFile(data: d, objectNames: []) {
-                setup = Setup(map: m, human: m.humanColour); screen = .setup(path: path)
-            } else { start([path]) }
-        }
+        if let s = l("Scrollbar"), let d = kit.vScrollbarHit(ox + s.x, oy + s.y, s.height, x, y) { scroll = max(0, min(max(0, maps.count - 10), scroll + d)); return }
+        if hit(l("Back_Button"), ox, oy, x, y) { screen = .main; return }
+        if hit(l("Begin_Button"), ox, oy, x, y) { begin() }
+    }
+    func begin() {
+        guard selected < maps.count else { return }
+        let path = maps[selected].path
+        // a single scenario: its options first; a campaign file straight in
+        if maps[selected].summary.scenarios > 1 { start([path]); return }
+        if let d = try? Data(contentsOf: URL(fileURLWithPath: path)), let m = try? MapFile(data: d, objectNames: []) {
+            setup = Setup(map: m, human: m.humanColour); screen = .setup(path: path)
+        } else { start([path]) }
     }
 
-    // MARK: campaigns
+    // MARK: campaigns (menus_spec C.1)
 
-    /// A set's six campaigns in button order, their 192x154 buttons and the layout.
-    func campaignSet(_ set: Int) -> (layout: String, buttons: [String], faces: [String]) {
+    /// A set's layout and its six faces in button order (table 0x6807a0).
+    func campaignSet(_ set: Int) -> (layout: String, faces: [String]) {
         switch set {
-        case 1: return ("dialog.storm_campaign_Selection", (0..<6).map { "Campaign_\($0)" }, ["Campaign1A", "Campaign2A", "Campaign3A", "Campaign4A", "Campaign5A", "Campaign6A"])
-        case 2: return ("dialog.wow_campaign_Selection", (0..<6).map { "Campaign_\($0)" }, ["SpazzA", "MongoA", "MysterioA", "ErutanA", "TarkinA", "WoWPro"])
-        default: return ("dialog.campaign_Selection", ["Life_Campaign", "Might_Campaign", "Order_Campaign", "Nature_Campaign", "Death_Campaign", "Chaos_Campaign"],
-                         ["Life_Intro", "Might_Intro", "Order_Intro", "Nature_Intro", "Death_Intro", "Chaos_Intro"])
+        case 1: return ("dialog.storm_campaign_Selection", ["Campaign3A", "Campaign2A", "Campaign5A", "Campaign4A", "Campaign1A", "Campaign6A"])
+        case 2: return ("dialog.wow_campaign_Selection", ["SpazzA", "MongoA", "MysterioA", "ErutanA", "TarkinA", "WoWPro"])
+        default: return ("dialog.campaign_Selection", ["Life_Intro", "Might_Intro", "Order_Intro", "Nature_Intro", "Death_Intro", "Chaos_Intro"])
         }
     }
     func drawCampaigns(_ set: Int) {
         let s = campaignSet(set)
         guard let f = layers(s.layout) else { return }
-        origin = dialogOrigin
-        drawAll(f, key: "cs\(set)", skip: { $0 == "Completed" })
-        label(text("title.campaign_selection", "Campaign Selection"), in: f["Title"], font: font22)   // (on its own scroll)
-        for (k, b) in s.buttons.enumerated() {
-            guard let slot = f[b] ?? f["Campaign_\(k)"], let face = layers("Campaign_Splashscreens.192x154.\(s.faces[k])")?.layers.first(where: { $0.isImage }) else { continue }
-            draw(UILayer(name: "", kind: 4, x: slot.x, y: slot.y, width: face.width, height: face.height, bitmap: face.bitmap), key: "face|\(s.faces[k])")
-            if inside(slot, hover.0, hover.1), let c = campaign(CampaignFile.sets[set][k]) {
-                label(c.name, in: UILayer(name: "", kind: 1, x: slot.x - 30, y: slot.y + slot.height + 2, width: slot.width + 60, height: 22, bitmap: Bitmap(width: 1, height: 1)), font: font20)
-            }
+        let (ox, oy) = dialogOrigin(800, 599)
+        func l(_ n: String) -> UILayer? { MenuKit.find(f, n) }
+        draw(kit.image(l("Background"), s.layout, ox, oy))
+        if let t = l("Title") { draw(kit.text(text("title.campaign_selection", "Campaign Selection"), UIRect(t, ox, oy), MenuKit.Style(t.height, just: 1, vcentre: true), clip: false)) }
+        if let c = l("Cancel_Button") { draw(kit.button("cancel", look(UIRect(ox + c.x, oy + c.y, 76, 44)), ox + c.x, oy + c.y)) }
+        for k in 0..<6 {
+            guard let slot = l("Campaign_\(k)"), let face = MenuKit.find(layers("Campaign_Splashscreens.192x154.\(s.faces[k])"), "frame 001") else { continue }
+            draw(kit.image(face, "face.\(s.faces[k])", ox + slot.x, oy + slot.y))
         }
-        if let slot = f["Cancel_Button"], let b = layers("button.cancel")?["Released"] {
-            draw(UILayer(name: "", kind: 4, x: slot.x + (slot.width - b.width) / 2, y: slot.y + (slot.height - b.height) / 2, width: b.width, height: b.height, bitmap: b.bitmap), key: "btn|cancel")
-        }
+        draw(kit.image(l("Frame"), s.layout, ox, oy))   // created last: over the faces
     }
     func campaign(_ id: Int) -> CampaignFile? {
         if let c = campaignCache[id] { return c }
@@ -422,84 +418,134 @@ final class MenuView: NSView {
         return c
     }
     func clickCampaigns(_ set: Int, _ x: Float, _ y: Float) {
-        let s = campaignSet(set)
-        guard let f = layers(s.layout) else { return }
-        origin = dialogOrigin
-        for (k, b) in s.buttons.enumerated() where inside(f[b] ?? f["Campaign_\(k)"], x, y) {
+        guard let f = layers(campaignSet(set).layout) else { return }
+        let (ox, oy) = dialogOrigin(800, 599)
+        for k in 0..<6 where hit(MenuKit.find(f, "Campaign_\(k)"), ox, oy, x, y) {
+            briefingTab = 3
             screen = .briefing(id: CampaignFile.sets[set][k], index: 0, carry: nil); return
         }
-        if inside(f["Cancel_Button"], x, y) { screen = .main }
+        if hit(MenuKit.find(f, "Cancel_Button"), ox, oy, x, y, w: 76, h: 44) { screen = .main }
     }
     func scenarioMap(_ id: Int, _ index: Int) -> MapFile? {
         guard let c = campaign(id), index < c.count, let d = try? c.scenario(index) else { return nil }
         return try? MapFile(data: d, objectNames: [])
     }
+
+    // MARK: the campaign briefing and epilogue (menus_spec C.2, C.3)
+
     var voicePlaying: String?
-    /// The campaign screen: the scenario's splash and prologue (or, after a win, the last one's
-    /// epilogue), its title; the tabs' text (campaign, scenario, details); Begin / Back (Next).
+    var briefingTab = 3
+    var difficulty = 1
+    var guardsMove = true
+    var paused = false
+    static let difficultyKeys = ["easy", "normal", "hard", "expert", "impossible"]
+    func difficultyName(_ d: Int) -> String {
+        text("new_map_difficulty_balloon_help_\(MenuView.difficultyKeys[d]).misc", ["Novice Game", "Intermediate Game", "Advanced Game", "Expert Game", "Champion Game"][d])
+    }
     func drawBriefing(_ id: Int, _ index: Int, epilogue: Bool) {
-        guard let f = layers(epilogue ? "dialog.Campaign_Epilogue" : "dialog.Campaign"), let m = scenarioMap(id, index) else { return }
-        origin = epilogue ? ((1024 - 800) / 2, (768 - 456) / 2) : dialogOrigin
-        drawAll(f, key: epilogue ? "ce" : "cb", skip: { n in
-            let l = n.lowercased()
-            return l.hasPrefix("tab_") || l.hasPrefix("creature_guard") || l.hasPrefix("pause") || l.hasPrefix("play") || l == "all" || l == "map_size" || l == "title_background"
-        })
-        let cut = epilogue ? m.epilogue : m.prologue
-        if let name = cut?.image, !name.isEmpty, let pic = layers("Campaign_Splashscreens.426x340.\(name)")?.layers.first(where: { $0.isImage }), let slot = f["Picture"] {
-            draw(UILayer(name: "", kind: 4, x: slot.x, y: slot.y, width: pic.width, height: pic.height, bitmap: pic.bitmap), key: "splash|\(name)")
-        }
-        draw(f["Title_Background"], key: "\(epilogue ? "ce" : "cb")|titlebg")   // (over the picture's top)
-        label(epilogue ? m.name : "\(campaign(id)?.name ?? ""): \(m.name)", in: f["Title"], font: font16)
-        paragraph(cut?.text ?? "", in: f["Voice_Text"], font: font14)
-        if epilogue {
-            button(text("next", "Next"), in: f["Next"])
-        } else {
-            for (k, t) in [(1, text("campaign_info.campaign", "Campaign")), (2, text("scenario_info.campaign", "Scenario")), (3, text("scenario_details.campaign", "Details"))] {
-                draw(f["Tab_\(k)_\(briefingTab == k ? "Pressed" : "Released")"], key: "cb|tab\(k)|\(briefingTab == k)")
-                label(t, in: f[["Campaign", "Map", "Details"][k - 1]], font: font16)
+        let name = epilogue ? "dialog.Campaign_Epilogue" : "dialog.Campaign"
+        guard let f = layers(name), let m = scenarioMap(id, index) else { return }
+        let (ox, oy) = dialogOrigin(800, epilogue ? 456 : 599)
+        func l(_ n: String) -> UILayer? { MenuKit.find(f, n) }
+        draw(kit.image(l("Background"), name, ox, oy))
+        let campaignFile = campaign(id)
+        let multi = (campaignFile?.count ?? 1) > 1
+        if !epilogue {   // the tabs: the pressed one's image, the label on each in (0,14)-(133,45) of the pressed box, font 20
+            for k in (multi ? [1, 2, 3] : [2, 3]) {
+                guard let pr = l("Tab_\(k)_Pressed"), let rel = l("Tab_\(k)_Released") else { continue }
+                let on = briefingTab == k
+                draw(kit.image(on ? pr : rel, name, ox, oy))
+                let label = [text("campaign_info.campaign", "Campaign"), text("scenario_info.campaign", "Scenario"), text("scenario_details.campaign", "Details")][k - 1]
+                draw(kit.text(label, UIRect(ox + pr.x, oy + pr.y + 14, pr.width, pr.height - 14 - (on ? 0 : 0)), MenuKit.Style(pr.height - 14 - 10, just: 1, vcentre: on), clip: false))
             }
+        }
+        let cut = epilogue ? m.epilogue : m.prologue
+        if let pic = cut?.image, !pic.isEmpty, let p = l("Picture"), let fr = MenuKit.find(layers("Campaign_Splashscreens.426x340.\(pic)"), "frame 001") {
+            draw(kit.image(fr, "splash.\(pic)", ox + p.x, oy + p.y))
+        }
+        draw(kit.image(l("Picture_Frame"), name, ox, oy))
+        draw(kit.image(l("Title_Background"), name, ox, oy))
+        if !epilogue {
+            draw(kit.image(l("Player_Difficulty_Box"), name, ox, oy))
+            if let s = l("Player_Difficulty") { draw(kit.image(kit.layer("icons.difficulty_60", Renderer.difficultyLayers[difficulty]), "icons.difficulty_60", ox + s.x, oy + s.y)) }
+            if let g = l("Creature_Guard_Released") {
+                let hot = UIRect(g, ox, oy).contains(hover.0, hover.1)
+                let n = guardsMove ? (hot ? "Creature_Guard_Highlighted_Pressed" : "Creature_Guard_Pressed") : (hot ? "Creature_Guard_Highlighted" : "Creature_Guard_Released")
+                draw(kit.image(l(n) ?? g, name, ox, oy))
+            }
+            if let s = l("Map_Size") {
+                let w = m.size
+                let n = w <= 76 ? "Small" : w <= 152 ? "Medium" : w <= 228 ? "Large" : "X_Large"
+                draw(kit.image(kit.layer("icons.map_size", n), "icons.map_size", ox + s.x, oy + s.y))
+            }
+        }
+        if let t = l("Title") { draw(kit.text(m.name, UIRect(t, ox, oy), MenuKit.Style(t.height, just: 1, vcentre: true), clip: false)) }
+        // the voice-over text, font 27, black without a halo, scrolled up over the text's time (length x 100 ms)
+        if let v = l("Voice_Text"), let s = cut?.text, !s.isEmpty {
+            let st = MenuKit.Style(27, halo: nil)
+            let over = max(0, kit.textHeight(s, st, width: v.width) - v.height)
+            let t = snapshotting ? 0 : Date().timeIntervalSince(screenOpened)
+            let dur = max(1, Double(s.count) * 0.1)
+            draw(kit.text(s, UIRect(v, ox, oy), st, scroll: Int(Double(over) * min(1, t / dur))))
+        }
+        if epilogue {
+            draw(kit.layoutButton(name, "Replay", .released, ox, oy))
+            draw(kit.layoutButton(name, "Pause", paused ? .pressed : .released, ox, oy))
+            largeButton(text("new_map_next.misc", "Next"), l("Next"), ox, oy)
+        } else {
+            if let g = l("creature_guard_text") {
+                draw(kit.text(guardsMove ? text("guards_move.shared", "Mobile Guards") : text("guards_dont_move.shared", "Stationary Guards"), UIRect(g, ox, oy), MenuKit.Style(g.height / 2, just: 1), clip: false))
+            }
+            if let d = l("Player_difficulty_Text") { draw(kit.text(difficultyName(difficulty), UIRect(d, ox, oy), MenuKit.Style(d.height / 2, just: 1), clip: false)) }
+            largeButton(text("cancel", "Cancel"), l("Back"), ox, oy)
+            largeButton(text("begin", "Begin"), l("Begin"), ox, oy)
+            draw(kit.layoutButton(name, "Replay", .released, ox, oy))
+            draw(kit.layoutButton(name, "Pause", paused ? .pressed : .released, ox, oy))
             let body: String
             switch briefingTab {
-            case 1: body = campaign(id)?.description ?? ""
+            case 1: body = campaignFile?.description ?? ""
             case 2: body = m.description
             default:
-                body = [("\(text("win_condition.campaign", "Victory Condition")):   ", m.victoryText ?? text("default_victory_condition", "Defeat all enemies.")),
-                        ("\(text("loss_condition.campaign", "Loss Condition")):   ", m.lossText ?? text("default_loss_condition", "Lose all towns and armies.")),
-                        ("\(text("carryover.campaign", "Carryover")):   ", m.carryoverText)].filter { !$0.1.isEmpty }.map { $0.0 + $0.1 }.joined(separator: "\n\n")
+                body = ["\(text("win_condition.campaign", "Victory Condition")):   \(m.victoryText ?? text("default_victory_condition", "Be the only player to own towns."))",
+                        "\(text("loss_condition.campaign", "Loss Condition")):   \(m.lossText ?? text("default_loss_condition", "Lose all towns and armies."))",
+                        "\(text("map_difficulty.campaign", "Map Difficulty")):   \(difficultyName(min(4, max(0, m.difficulty))))",
+                        "\(text("carryover.campaign", "Carryover")):   \(m.carryoverText)"].joined(separator: "\n")
             }
-            for (k, part) in body.components(separatedBy: "\n\n").enumerated() where k < 3 {
-                let slot = f["Campaign_Description"].map { UILayer(name: "", kind: 1, x: $0.x, y: $0.y + k * 44, width: $0.width, height: k == 0 && !body.contains("\n\n") ? $0.height : 44, bitmap: $0.bitmap) }
-                paragraph(part, in: slot, font: font14)
+            if let d = l("map_description") { draw(kit.text(body, UIRect(d, ox, oy), MenuKit.Style(16))) }
+            if multi && index == 0 {   // the difficulty arrows only on the first scenario
+                draw(kit.layoutButton(name, "Left", difficulty > 0 ? look(UIRect(l("Left_Released")!, ox, oy)) : .disabled, ox, oy))
+                draw(kit.layoutButton(name, "Right", difficulty < 4 ? look(UIRect(l("Right_Released")!, ox, oy)) : .disabled, ox, oy))
             }
-            label(["Easy", "Normal", "Hard", "Expert", "Impossible"][difficulty], in: f["Player_difficulty_Text"], font: font16)
-            button(text("begin_campaign", "Begin"), in: f["Begin"])
-            button(text("back", "Back"), in: f["Back"])
         }
         let voice = cut?.voice ?? ""
-        if !voice.isEmpty, voicePlaying != "\(id)|\(index)|\(epilogue)" {
+        if !snapshotting, !voice.isEmpty, voicePlaying != "\(id)|\(index)|\(epilogue)" {
             voicePlaying = "\(id)|\(index)|\(epilogue)"
             _ = sound.play("Voice_Over.\(voice)")
         }
     }
-    var briefingTab = 2
-    var difficulty = 1
     func clickBriefing(_ id: Int, _ index: Int, carry: String?, epilogue: Bool, _ x: Float, _ y: Float) {
         guard let f = layers(epilogue ? "dialog.Campaign_Epilogue" : "dialog.Campaign") else { return }
-        origin = epilogue ? ((1024 - 800) / 2, (768 - 456) / 2) : dialogOrigin
+        let (ox, oy) = dialogOrigin(800, epilogue ? 456 : 599)
+        func l(_ n: String) -> UILayer? { MenuKit.find(f, n) }
+        if hit(l("Pause_released"), ox, oy, x, y) { paused.toggle(); return }
+        if hit(l("Replay_Released"), ox, oy, x, y) { voicePlaying = nil; screenOpened = Date(); return }
         if epilogue {
-            guard inside(f["Next"], x, y) else { return }
+            guard hit(l("Next"), ox, oy, x, y, w: 166, h: 40) else { return }
             if let c = campaign(id), index + 1 < c.count { screen = .briefing(id: id, index: index + 1, carry: carry) }
             else { screen = .main }   // the campaign is won
             return
         }
-        for k in 1...3 where inside(f["Tab_\(k)_Released"], x, y) { briefingTab = k; return }
-        if inside(f["Left_Released"], x, y) { difficulty = max(0, difficulty - 1); return }
-        if inside(f["Right_Released"], x, y) { difficulty = min(4, difficulty + 1); return }
-        if inside(f["Back"], x, y) { screen = .main; return }
-        if inside(f["Begin"], x, y) { start(["campaign:\(id):\(index)"] + (carry.map { ["--carry", $0] } ?? [])) }
+        for k in 1...3 where hit(l("Tab_\(k)_Pressed"), ox, oy, x, y) && ((campaign(id)?.count ?? 1) > 1 || k > 1) { briefingTab = k; return }
+        if index == 0 {
+            if hit(l("Left_Released"), ox, oy, x, y) { difficulty = max(0, difficulty - 1); return }
+            if hit(l("Right_Released"), ox, oy, x, y) { difficulty = min(4, difficulty + 1); return }
+        }
+        if hit(l("Creature_Guard_Released"), ox, oy, x, y) { guardsMove.toggle(); return }
+        if hit(l("Back"), ox, oy, x, y, w: 166, h: 40) { screen = .main; return }
+        if hit(l("Begin"), ox, oy, x, y, w: 166, h: 40) { start(["campaign:\(id):\(index)", "--difficulty", "\(difficulty)"] + (carry.map { ["--carry", $0] } ?? [])) }
     }
 
-    // MARK: new game options
+    // MARK: new game options (menus_spec B.2)
 
     static let colourNames = ["Red", "Blue", "Green", "Orange", "Purple", "Teal"]
     static let alignmentNames = ["Life", "Order", "Death", "Chaos", "Nature", "Might"]
@@ -518,177 +564,180 @@ final class MenuView: NSView {
             .enumerated().sorted { ($0.element.team, $0.offset) < ($1.element.team, $1.offset) }.map { $0.element }
     }
     func drawSetup() {
-        guard let s = setup, let f = layers("dialog.New_Game_Options"), let p1 = f["Player_1"] else { return }
-        origin = dialogOrigin
-        draw(f["background"], key: "ngo|bg")
-        for (n, t) in [("Color_Title", text("color.new_game", "Color")), ("Alignment_Title", text("alignment.new_game", "Alignment")), ("Name_Title", text("name.new_game", "Name")), ("Team_Title", text("team.new_game", "Team"))] {
-            label(t, in: f[n], font: font16)
+        guard let s = setup, let f = layers("dialog.New_Game_Options"), let p1 = MenuKit.find(f, "Player_1") else { return }
+        let (ox, oy) = dialogOrigin(800, 600)
+        func l(_ n: String) -> UILayer? { MenuKit.find(f, n) }
+        let name = "dialog.New_Game_Options"
+        draw(kit.image(l("background"), name, ox, oy))
+        largeButton(text("back.shared", "Back"), l("Back_Button"), ox, oy)
+        largeButton(text("begin", "Begin"), l("Begin_Button"), ox, oy)
+        for (n, t) in [("Name_Title", "Name"), ("Team_Title", text("new_map_team.misc", "Team")), ("Alignment_Title", "Alignment"), ("Color_Title", "Color")] {
+            if let r = l(n) { draw(kit.text(t, UIRect(r, ox, oy), MenuKit.Style(r.height, just: 1), clip: false)) }
         }
-        let flags = layers("icons.flags.55"), arrows = layers("button.Arrows")
-        let teams = s.map.teams
+        if let d = l("Difficulty_Text") { draw(kit.text(difficultyName(s.difficulty), UIRect(d, ox, oy), MenuKit.Style(d.height / 2, just: 1, vcentre: true), clip: false)) }
+        if let d = l("Map_Description") { draw(kit.text(s.map.description, UIRect(d, ox, oy), MenuKit.Style(18))) }
+        if let d = l("victory_loss_Condition") {
+            let loss = text("new_map_loss_condition.misc", "Loss Condition: ") + (s.map.lossText ?? text("default_loss_condition", "Lose all towns and armies."))
+            let win = text("new_map_win_condition.misc", "Victory Condition: ") + (s.map.victoryText ?? text("default_victory_condition", "Be the only player to own towns."))
+            draw(kit.text(loss + "\n\n" + win, UIRect(d, ox, oy), MenuKit.Style(18)))
+        }
+        draw(kit.image(l("Player_Difficulty_Box"), name, ox, oy))
+        if let slot = l("Player_Difficulty") { draw(kit.image(kit.layer("icons.difficulty_60", Renderer.difficultyLayers[s.difficulty]), "icons.difficulty_60", ox + slot.x, oy + slot.y)) }
+        if let g = l("Creature_Guard_Released") {
+            let hot = UIRect(g, ox, oy).contains(hover.0, hover.1)
+            let n = s.guardsMove ? (hot ? "Creature_Guard_Highlighted_Pressed" : "Creature_Guard_Pressed") : (hot ? "Creature_Guard_Highlighted" : "Creature_Guard_Released")
+            draw(kit.image(l(n) ?? g, name, ox, oy))
+        }
+        if let g = l("creature_guard_text") {
+            draw(kit.text(s.guardsMove ? text("guards_move.shared", "Mobile Guards") : text("guards_dont_move.shared", "Stationary Guards"), UIRect(g, ox, oy), MenuKit.Style(g.height / 2, just: 1), clip: false))
+        }
+        for (n, ok) in [("Left", s.difficulty > 0), ("Right", s.difficulty < 4)] {
+            guard let r = l("\(n)_Released") else { continue }
+            draw(kit.layoutButton(name, n, ok ? look(UIRect(r, ox, oy)) : .disabled, ox, oy))
+        }
+        // the player rows, 74 px apart, sorted by team
+        let arrows = layers("button.Arrows"), flags = layers("icons.flags.38")
+        let humanColours = s.map.playerSpecs.filter { $0.canBeHuman }.count
         for (k, r) in setupRows(s).prefix(6).enumerated() {
             let spec = r.spec
-            guard let row = f["Player_\(k + 1)"] else { continue }
+            guard let row = l("Player_\(k + 1)") else { continue }
             let dy = row.y - p1.y
-            func at(_ l: UILayer?) -> UILayer? { l.map { UILayer(name: $0.name, kind: $0.kind, x: $0.x, y: $0.y + dy, width: $0.width, height: $0.height, bitmap: $0.bitmap) } }
             let colour = MenuView.colourNames[min(5, spec.colour)]
             let human = spec.colour == s.human
-            // the colour arrows (in the row's colour for the human, grey otherwise) and the alignment arrows
-            if let ca = f["Color_Arrows"], let arr = arrows {
-                for (dir, suffix) in [("Up", "Released"), ("Down", "Released")] {
-                    let changeable = human && s.map.playerSpecs.filter { $0.canBeHuman }.count > 1
-                    let name = human ? "\(colour)_\(dir)_\(changeable ? suffix : "Released")" : "Alignment_\(dir)_Disabled"
-                    if let l = arr.layers.first(where: { $0.name.lowercased() == name.lowercased() }) {
-                        draw(UILayer(name: "", kind: 4, x: ca.x - 4 + l.x, y: ca.y + dy - 4 + l.y, width: l.width, height: l.height, bitmap: l.bitmap), key: "arr|\(name)")
-                    }
-                }
+            if let bg = l("Player_Background") {
+                draw(MenuKit.clip(kit.image(bg, name, ox, oy + dy), to: UIRect(ox + row.x, oy + row.y, row.width, row.height)))
             }
-            if let aa = f["Alignment_Arrows"], let arr = arrows {
-                let changeable = human && (0..<6).filter { spec.alignments & (1 << $0) != 0 }.count > 1
+            if let aa = l("Alignment_Arrows") {
+                let ok = (0..<6).filter { spec.alignments & (1 << $0) != 0 }.count != 1
                 for dir in ["Up", "Down"] {
-                    if let l = arr.layers.first(where: { $0.name.lowercased() == "alignment_\(dir.lowercased())_\(changeable ? "released" : "disabled")" }) {
-                        draw(UILayer(name: "", kind: 4, x: aa.x - 4 + l.x, y: aa.y + dy - 4 + l.y, width: l.width, height: l.height, bitmap: l.bitmap), key: "arr|al|\(dir)")
-                    }
+                    if let a = MenuKit.find(arrows, "Alignment_\(dir)_\(ok ? "Released" : "Disabled")") { draw(kit.image(a, "button.Arrows", ox + aa.x, oy + aa.y + dy)) }
                 }
             }
-            // the banner: the colour's flag and the alignment's emblem on it
-            if let pf = f["Player_Flag"], let fl = flags {
+            if let pf = l("Player_Flag") {
                 let a = alignment(s, spec)
-                for n in [colour, a >= 0 ? MenuView.alignmentNames[a] : "Random"] {
-                    guard let l = fl[n] else { continue }
-                    draw(UILayer(name: "", kind: 4, x: pf.x + (pf.width - 54) / 2 + l.x, y: pf.y + dy + (pf.height - 65) / 2 + l.y, width: l.width, height: l.height, bitmap: l.bitmap), key: "flag55|\(n)")
+                for n in [colour, a >= 0 ? MenuView.alignmentNames[a] : "Random"] { draw(kit.image(MenuKit.find(flags, n), "icons.flags.38", ox + pf.x, oy + pf.y + dy)) }
+            }
+            if let ca = l("Color_Arrows") {
+                for dir in ["Up", "Down"] {
+                    if let a = MenuKit.find(arrows, "\(colour)_\(dir)_Released") { draw(kit.image(a, "button.Arrows", ox + ca.x, oy + ca.y + dy)) }
                 }
+                _ = humanColours
             }
-            if let bg = f["Player_Background"] {
-                let h = min(bg.height, 74)
-                draw(UILayer(name: "", kind: 4, x: bg.x, y: bg.y + dy, width: bg.width, height: h, bitmap: crop(bg.bitmap, height: h)), key: "ngo|namebox|\(h)")
+            if let tf = l("Team_Flag") {
+                for n in [colour, "team_\(min(6, r.team))"] { draw(kit.image(MenuKit.find(flags, n), "icons.flags.38", ox + tf.x, oy + tf.y + dy)) }
             }
-            label(human ? text("player.new_game", "Player") : text("computer.new_game", "Computer"), in: at(f["Player_Name"]), font: font36, centre: false)
-            if spec.canBeHuman, let cb = f["human_checkbox"], let b = layers("button.checkbox")?[human ? "Pressed" : "Released"] {
-                draw(UILayer(name: "", kind: 4, x: cb.x + (cb.width - b.width) / 2, y: cb.y + dy + (cb.height - b.height) / 2, width: b.width, height: b.height, bitmap: b.bitmap), key: "cb|\(human)")
+            if let pn = l("Player_Name") {
+                let label = human ? "\(text("main_menu_player.misc", "Player")) 1" : text("computer.new_game", "Computer")
+                draw(kit.text(label, UIRect(pn, ox, oy + dy), MenuKit.Style(pn.height)))
             }
-            if let tf = f["Team_Flag"], let fl = flags {
-                let team = r.team; _ = teams
-                for n in [colour, "team_\(min(6, team))"] {
-                    guard let l = fl[n] else { continue }
-                    let sc = 0.8
-                    let w = Int(Double(l.width) * sc), h = Int(Double(l.height) * sc)
-                    draw(UILayer(name: "", kind: 4, x: tf.x + (tf.width - Int(54 * sc)) / 2 + Int(Double(l.x) * sc), y: tf.y + dy + (tf.height - Int(65 * sc)) / 2 + Int(Double(l.y) * sc), width: w, height: h, bitmap: l.bitmap), key: "flag55|\(n)")
-                }
+            if spec.canBeHuman, let cb = l("human_checkbox") {
+                let hot = UIRect(ox + cb.x, oy + cb.y + dy, 34, 29).contains(hover.0, hover.1)
+                let n = human ? (hot ? "Highlighted_Pressed" : "Pressed") : (hot ? "Highlighted" : "Released")
+                draw(kit.image(kit.layer("checkbox", n) ?? kit.layer("button.checkbox", n), "button.checkbox", ox + cb.x, oy + cb.y + dy))
             }
         }
-        // the conditions and the description
-        let loss = "\(text("loss_condition.campaign", "Loss Condition")): \(s.map.lossText ?? text("default_loss_condition", "Lose all towns and armies."))"
-        let win = "\(text("win_condition.campaign", "Victory Condition")): \(s.map.victoryText ?? text("default_victory_condition", "Be the only player to own towns."))"
-        paragraph(loss + "\n\n" + win, in: f["victory_loss_Condition"], font: font18)
-        paragraph(s.map.description, in: f["Map_Description"], font: font18)
-        draw(f[s.guardsMove ? "Creature_Guard_Released" : "Creature_Guard_Pressed"], key: "ngo|guard|\(s.guardsMove)")
-        label(s.guardsMove ? text("guards_move.shared", "Mobile Guards") : text("guards_dont_move.shared", "Stationary Guards"), in: f["creature_guard_text"], font: font16)
-        draw(f["Player_Difficulty_Box"], key: "ngo|diffbox")
-        if let slot = f["Player_Difficulty"], let ic = layers("icons.difficulty_60")?[["easy", "Normal", "Hard", "expert", "impossible"][s.difficulty]] {
-            draw(UILayer(name: "", kind: 4, x: slot.x + (slot.width - 60) / 2 + ic.x, y: slot.y + (slot.height - 59) / 2 + ic.y, width: ic.width, height: ic.height, bitmap: ic.bitmap), key: "diff60|\(s.difficulty)")
-        }
-        draw(f[s.difficulty > 0 ? "Left_Released" : "Left_Disabled"], key: "ngo|l|\(s.difficulty > 0)")
-        draw(f[s.difficulty < 4 ? "Right_Released" : "Right_Disabled"], key: "ngo|r|\(s.difficulty < 4)")
-        let dn = [("easy", "Easy Game"), ("normal", "Intermediate Game"), ("hard", "Hard Game"), ("expert", "Expert Game"), ("impossible", "Impossible Game")][s.difficulty]
-        label(strings["\(dn.0).difficulty"] ?? dn.1, in: f["Difficulty_Text"], font: font16)
-        button(text("back", "Back"), in: f["Back_Button"])
-        button(text("begin", "Begin"), in: f["Begin_Button"])
     }
     func clickSetup(_ path: String, _ x: Float, _ y: Float) {
-        guard var s = setup, let f = layers("dialog.New_Game_Options"), let p1 = f["Player_1"] else { return }
-        origin = dialogOrigin
+        guard var s = setup, let f = layers("dialog.New_Game_Options"), let p1 = MenuKit.find(f, "Player_1") else { return }
+        let (ox, oy) = dialogOrigin(800, 600)
+        func l(_ n: String) -> UILayer? { MenuKit.find(f, n) }
         let humans = s.map.playerSpecs.filter { $0.canBeHuman }.map { $0.colour }
         for (k, r) in setupRows(s).prefix(6).enumerated() {
             let spec = r.spec
-            guard let row = f["Player_\(k + 1)"] else { continue }
+            guard let row = l("Player_\(k + 1)") else { continue }
             let dy = row.y - p1.y
-            func at(_ l: UILayer?) -> UILayer? { l.map { UILayer(name: $0.name, kind: $0.kind, x: $0.x, y: $0.y + dy, width: $0.width, height: $0.height, bitmap: $0.bitmap) } }
-            // the human checkbox: this colour plays
-            if spec.canBeHuman, inside(at(f["human_checkbox"]), x, y) { s.human = spec.colour }
-            // the human's colour arrows: the next / previous colour that can be human
-            if spec.colour == s.human, let ca = at(f["Color_Arrows"]), inside(ca, x, y), let i = humans.firstIndex(of: s.human) {
-                let up = y < Float(origin.1 + ca.y + ca.height / 2)
+            if spec.canBeHuman, hit(l("human_checkbox"), ox, oy + dy, x, y, w: 34, h: 29) { s.human = spec.colour }
+            if spec.colour == s.human, humans.count > 1, let ca = l("Color_Arrows"), hit(ca, ox, oy + dy, x, y), let i = humans.firstIndex(of: s.human) {
+                let up = y < Float(oy + dy + ca.y + ca.height / 2)
                 s.human = humans[(i + (up ? humans.count - 1 : 1)) % humans.count]
             }
-            // the alignment arrows (the human's row): through the alignments the map allows, and Random
-            if spec.colour == s.human, let aa = at(f["Alignment_Arrows"]), inside(aa, x, y) {
+            // the alignment arrows (any row): through the alignments the map allows, and Random
+            if let aa = l("Alignment_Arrows"), hit(aa, ox, oy + dy, x, y) {
                 let allowed = [-1] + (0..<6).filter { spec.alignments & (1 << $0) != 0 }
                 if allowed.count > 2 {
                     let cur = allowed.firstIndex(of: alignment(s, spec)) ?? 0
-                    let up = y < Float(origin.1 + aa.y + aa.height / 2)
+                    let up = y < Float(oy + dy + aa.y + aa.height / 2)
                     s.align[spec.colour] = allowed[(cur + (up ? allowed.count - 1 : 1)) % allowed.count]
                 }
             }
         }
-        if inside(f["Left_Released"], x, y) { s.difficulty = max(0, s.difficulty - 1) }
-        if inside(f["Right_Released"], x, y) { s.difficulty = min(4, s.difficulty + 1) }
-        if inside(f["Creature_Guard_Released"], x, y) { s.guardsMove.toggle() }
+        if hit(l("Left_Released"), ox, oy, x, y) { s.difficulty = max(0, s.difficulty - 1) }
+        if hit(l("Right_Released"), ox, oy, x, y) { s.difficulty = min(4, s.difficulty + 1) }
+        if hit(l("Creature_Guard_Released"), ox, oy, x, y) { s.guardsMove.toggle() }
         setup = s
-        if inside(f["Back_Button"], x, y) { screen = .scenarios; return }
-        if inside(f["Begin_Button"], x, y) {
+        if hit(l("Back_Button"), ox, oy, x, y, w: 166, h: 40) { screen = .scenarios; return }
+        if hit(l("Begin_Button"), ox, oy, x, y, w: 166, h: 40) {
             var a = [path, "--human", "\(s.human)", "--difficulty", "\(s.difficulty)"]
             if let al = s.align[s.human], al >= 0 { a += ["--align", "\(s.human):\(al)"] }
             start(a)
         }
     }
 
-    // MARK: load
+    // MARK: load (menus_spec D1)
 
     func drawLoad() {
-        guard let f = layers("dialog.load_game") else { return }
-        origin = ((1024 - 799) / 2, (768 - 598) / 2)
-        drawAll(f, key: "lg")
-        label(text("load_game.dialog", "Load Game"), in: f["title"], font: font22)
-        for row in 0..<11 {
-            let k = scroll + row
-            guard k < saves.count, let slot = f[String(format: "line %02d", row + 1)] else { continue }
-            if k == selected { fill(CGRect(x: origin.0 + slot.x, y: origin.1 + slot.y, width: slot.width, height: slot.height), (0.4, 0.4, 0.8, 1)) }
-            label(saves[k].name, in: slot, font: font16, colour: k == selected ? (250, 250, 250) : (12, 8, 4), centre: false)
-        }
-        button(text("load", "Load"), in: f["load_location"], enabled: selected < saves.count)
-        button(text("cancel", "Cancel"), in: f["cancel_location"])
+        let (ox, oy) = dialogOrigin(799, 598)
+        draw(FileDialogView.items(kit, save: false, files: saves, scroll: scroll, selected: selected < saves.count ? selected : nil, name: "", ox: ox, oy: oy))
     }
-    func clickLoad(_ x: Float, _ y: Float) {
-        guard let f = layers("dialog.load_game") else { return }
-        origin = ((1024 - 799) / 2, (768 - 598) / 2)
-        for row in 0..<11 where inside(f[String(format: "line %02d", row + 1)], x, y) { if scroll + row < saves.count { selected = scroll + row }; return }
-        if inside(f["cancel_location"], x, y) { screen = .main; return }
-        if inside(f["load_location"], x, y), selected < saves.count {
-            let file = Renderer.savesDirectory.appendingPathComponent("\(saves[selected].name).h4s")
-            if let s = try? SaveGame.read(file) { start([s.mapPath, "--load", file.path]) }
+    func clickLoad(_ x: Float, _ y: Float, double: Bool) {
+        let (ox, oy) = dialogOrigin(799, 598)
+        switch FileDialogView.hit(kit, save: false, files: saves.count, scroll: scroll, ox: ox, oy: oy, x, y) {
+        case .cancel: screen = .main
+        case .ok: loadSelected()
+        case .row(let k): selected = k; if double { loadSelected() }
+        case .scroll(let d): scroll = max(0, min(max(0, saves.count - 11), scroll + d))
+        case .none: break
         }
+    }
+    func loadSelected() {
+        guard selected < saves.count else { return }
+        let file = Renderer.savesDirectory.appendingPathComponent("\(saves[selected].name).h4s")
+        if let s = try? SaveGame.read(file) { start([s.mapPath, "--load", file.path]) }
     }
 
     // MARK: input and starting the game
 
     override func mouseMoved(with e: NSEvent) { hover = canvasPoint(e); needsDisplay = true }
+    override func mouseDragged(with e: NSEvent) { hover = canvasPoint(e); needsDisplay = true }
     override func updateTrackingAreas() {
         trackingAreas.forEach(removeTrackingArea)
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseMoved, .activeAlways, .inVisibleRect], owner: self))
     }
+    override func mouseDown(with e: NSEvent) { pressedAt = canvasPoint(e); needsDisplay = true }
     override func mouseUp(with e: NSEvent) {
         let (x, y) = canvasPoint(e)
+        pressedAt = nil
         defer { needsDisplay = true }
         if let p = popup { clickPopup(p, x, y); return }
+        if options != nil { clickOptions(x, y); return }
+        let double = e.clickCount >= 2
         switch screen {
         case .main: clickMain(x, y)
-        case .scenarios: clickScenarios(x, y)
+        case .scenarios: clickScenarios(x, y, double: double)
         case .campaigns(let set): clickCampaigns(set, x, y)
         case .briefing(let id, let index, let carry): clickBriefing(id, index, carry: carry, epilogue: false, x, y)
         case .epilogue(let id, let index, let carry): clickBriefing(id, index, carry: carry, epilogue: true, x, y)
-        case .load: clickLoad(x, y)
+        case .load: clickLoad(x, y, double: double)
         case .setup(let path): clickSetup(path, x, y)
         }
     }
     override func scrollWheel(with e: NSEvent) {
         guard abs(e.scrollingDeltaY) > 1 else { return }
-        let n = { () -> Int in if case .load = self.screen { return self.saves.count }; return self.maps.count }()
-        scroll = max(0, min(max(0, n - 10), scroll + (e.scrollingDeltaY < 0 ? 1 : -1)))
+        let (n, page) = { () -> (Int, Int) in if case .load = self.screen { return (self.saves.count, 11) }; return (self.maps.count, 10) }()
+        scroll = max(0, min(max(0, n - page), scroll + (e.scrollingDeltaY < 0 ? 1 : -1)))
         needsDisplay = true
     }
     override func keyDown(with e: NSEvent) {
-        if e.keyCode == 53 { popup = nil; screen = .main; needsDisplay = true }   // Esc
+        if e.keyCode == 53 {   // Esc: close what is open, else back to the menu
+            if popup != nil { popup = nil } else if options != nil { options = nil } else { screen = .main }
+            needsDisplay = true
+        } else if e.keyCode == 36 || e.keyCode == 76 {   // Enter: the screen's default button
+            switch screen {
+            case .scenarios: begin()
+            case .load: loadSelected()
+            default: break
+            }
+        }
     }
     /// Start the game process on a map (or a campaign scenario "campaign:<id>:<index>").
     func start(_ gameArgs: [String]) {

@@ -125,6 +125,7 @@ extension Renderer {
             else if inside(d["ok_button"], at: ox, oy, x, y), let c = chestChoice { g.resolveChest(gold: c); chestChoice = nil; adventureDialog = nil }
             return true
         case .hero(let i):
+            if armySplitClick(i, x: x, y: y) { return true }   // the split button: the split dialog
             let ox = (AdventureUI.width - 800) / 2, oy = (AdventureUI.height - 600) / 2
             // a ring shows that hero or stack
             if let d = ui.dialog("army.layout"), i < g.heroes.count {
@@ -162,141 +163,54 @@ extension Renderer {
     /// The texts the map's scripts show, one box at a time: layers.dialog.generic is a frame of
     /// corners, edges and a background tile (repeated to the size), the text wrapped inside, an OK
     /// button under it.
-    static let messageWidth = 560
-    struct MessageBox { var x, y, w, h: Int; var lines: [String]; var font: H4Font; var title: String?; var artifact: Int?; var bandY, bandH, fit: Int }
-    /// The box as the original draws it: the parchment frame (dialog.generic), a title banner when
-    /// the message has one, the text in a scroll band with rolls at both ends (text_background.large),
-    /// a found artifact in its frame with its name, OK under it.
-    func messageLayout() -> (x: Int, y: Int, w: Int, h: Int, lines: [String], font: H4Font)? {
-        messageBox().map { ($0.x, $0.y, $0.w, $0.h, $0.lines, $0.font) }
-    }
+    struct MessageBox { var x, y, w, h: Int; var d: BasicDialog; var title: String?; var artifact: Int? }
+    /// The box as t_basic_dialog lays it out: the text fitted and wrapped (font 18), the band, a
+    /// title banner when the message has one, a found artifact's bare icon with its name under it,
+    /// the buttons in creation order (a question: Cancel, then OK); centred on the screen.
     func messageBox() -> MessageBox? {
-        guard let g = game, let text = prompt?.text ?? g.scripts.messages.first, let ui = ui else { return nil }
-        let font = ui.font(20)
-        let w = Renderer.messageWidth
+        guard let g = game, let text = prompt?.text ?? g.scripts.messages.first else { return nil }
         let title = prompt == nil ? g.messageTitles[text] : nil, artifact = prompt == nil ? g.messageArtifacts[text] : nil
-        let lines = text.components(separatedBy: "\n").flatMap { $0.isEmpty ? [""] : AdventureUI.wrap($0, font: font, width: w - 150) }
-        let extra = (title != nil ? 46 : 0) + (artifact != nil ? 120 : 0) + 30 + 64
-        let fit = max(1, min(lines.count, (AdventureUI.height - 60 - extra - 40) / font.lineHeight))
-        let bandH = fit * font.lineHeight + 40
-        let h = extra + bandH
-        let across = inCombat ? AdventureUI.width : AdventureUI.mapViewportWidth
-        let x = (across - w) / 2, y = (AdventureUI.height - h) / 2
-        return MessageBox(x: x, y: y, w: w, h: h, lines: lines, font: font, title: title, artifact: artifact, bandY: y + 26 + (title != nil ? 46 : 0), bandH: bandH, fit: fit)
+        var items: [(picture: UILayer?, caption: String)] = []
+        if let a = artifact { items.append((artifactIcon(a), g.artifactName(a))) }
+        guard let d = basicDialog(text: text, title: title, items: items, buttons: prompt?.cancel == true ? ["cancel", "ok"] : ["ok"]) else { return nil }
+        let x = max(0, (AdventureUI.width - d.W) / 2), y = max(0, (AdventureUI.height - d.H) / 2)
+        return MessageBox(x: x, y: y, w: d.W, h: d.H, d: d, title: title, artifact: artifact)
     }
-    func okRect() -> (x: Int, y: Int, w: Int, h: Int)? {
-        guard let m = messageLayout() else { return nil }
-        if prompt?.cancel == true { return (m.x + m.w / 2 - 66 - 20, m.y + m.h - 58, 66, 40) }
-        return (m.x + (m.w - 66) / 2, m.y + m.h - 58, 66, 40)
+    func messageButton(_ name: String) -> (x: Int, y: Int, w: Int, h: Int)? {
+        guard let m = messageBox(), let k = m.d.buttons.firstIndex(of: name) else { return nil }
+        let r = m.d.buttonPlaces[k]
+        return (m.x + r.x, m.y + r.y, r.w, r.h)
     }
-    func cancelRect() -> (x: Int, y: Int, w: Int, h: Int)? {
-        guard prompt?.cancel == true, let m = messageLayout() else { return nil }
-        return (m.x + m.w / 2 + 20, m.y + m.h - 58, 66, 40)
-    }
-    func cropped(_ b: Bitmap, _ w: Int, _ h: Int) -> Bitmap {
-        var out = Bitmap(width: w, height: h)
-        for y in 0..<min(h, b.height) { for x in 0..<min(w, b.width) {
-            let s = (y * b.width + x) * 4, d = (y * w + x) * 4
-            out.pixels[d..<(d + 4)] = b.pixels[s..<(s + 4)]
-        } }
-        return out
-    }
-    /// The generic dialog frame (layers.dialog.generic): background tiled over the inside, edges
-    /// between the corners, the corners.
+    func okRect() -> (x: Int, y: Int, w: Int, h: Int)? { messageButton("ok") }
+    func cancelRect() -> (x: Int, y: Int, w: Int, h: Int)? { messageButton("cancel") }
+    func cropped(_ b: Bitmap, _ w: Int, _ h: Int) -> Bitmap { Renderer.crop(b, x: 0, y: 0, w: w, h: h) }
+    /// The generic dialog frame (layers.dialog.generic as a t_window_background of that size).
     func frameQuads(x mx: Int, y my: Int, w mw: Int, h mh: Int) -> [Quad] {
-        guard let ui = ui, let d = ui.dialog("generic") else { return [] }
-        var out: [Quad] = []
-        func piece(_ name: String, _ x: Int, _ y: Int, w: Int? = nil, h: Int? = nil) {
-            guard let l = d[name] else { return }
-            let ww = min(w ?? l.width, l.width), hh = min(h ?? l.height, l.height)
-            let key = "gen|\(name)|\(ww)|\(hh)"
-            out.append(Quad(texture: uiTexture(key, { ww == l.width && hh == l.height ? l.bitmap : cropped(l.bitmap, ww, hh) }), x: x, y: y, w: ww, h: hh))
-        }
-        if let bg = d["Background"] {
-            var y = 6
-            while y < mh - 6 {
-                var x = 6
-                while x < mw - 6 { piece("Background", mx + x, my + y, w: min(bg.width, mw - 6 - x), h: min(bg.height, mh - 6 - y)); x += bg.width }
-                y += bg.height
-            }
-        }
-        if let top = d["Top"], let left = d["Left"] {
-            var x = 31
-            while x < mw - 26 { let w = min(top.width, mw - 26 - x); piece("Top", mx + x, my, w: w); piece("Bottom", mx + x, my + mh - 12, w: w); x += top.width }
-            var y = 28
-            while y < mh - 36 { let h = min(left.height, mh - 36 - y); piece("Left", mx, my + y, h: h); piece("Right", mx + mw - 11, my + y, h: h); y += left.height }
-        }
-        piece("Top_Left", mx, my); piece("Top_Right", mx + mw - 26, my)
-        piece("Bottom_Left", mx, my + mh - 36); piece("Bottom_Right", mx + mw - 26, my + mh - 36)
-        _ = ui
-        return out
+        guard let ui = ui, let d = ui.dialog("generic"), mw > 0, mh > 0 else { return [] }
+        return [Quad(texture: uiTexture("generic|\(mw)x\(mh)", { nineSlice(d, w: mw, h: mh) }), x: mx, y: my, w: mw, h: mh)]
     }
     func messageBoxQuads() -> [Quad] {
         guard let ui = ui, let m = messageBox() else { return [] }
-        var out = frameQuads(x: m.x, y: m.y, w: m.w, h: m.h)
-        // the title on its banner (adventure.day_scroll: its ends and middle stretched to the title)
-        if let t = m.title { let banner = ui.dayScroll
-            let tw = ui.font(20).measure(t) + 80, bx = m.x + (m.w - tw) / 2, by = m.y + 10
-            if let mid = banner["Background"] { out.append(Quad(texture: uiTexture("banner|mid", { mid.bitmap }), x: bx + 10, y: by, w: tw - 20, h: mid.height)) }
-            if let l = banner["left"] ?? banner["Left"] { out.append(Quad(texture: uiTexture("banner|l", { l.bitmap }), x: bx, y: by, w: l.width, h: l.height)) }
-            if let r = banner["Right"] { out.append(Quad(texture: uiTexture("banner|r", { r.bitmap }), x: bx + tw - r.width, y: by, w: r.width, h: r.height)) }
-            let f = ui.font(20), w = f.measure(t)
-            out.append(Quad(texture: uiTexture("dlgtext|20|\(t)|12", { f.render(t, colour: (12, 8, 4)) }), x: m.x + (m.w - w) / 2, y: by + 12, w: w, h: f.size))
-        }
-        // the band
-        let bandW = m.w - 60
-        if let box = ui.popupBitmap(clientW: bandW - 70, clientH: m.bandH - 40, size: "large") {
-            out.append(Quad(texture: uiTexture("band|\(box.bitmap.width)x\(box.bitmap.height)", { box.bitmap }), x: m.x + (m.w - box.bitmap.width) / 2, y: m.bandY + (m.bandH - box.bitmap.height) / 2, w: box.bitmap.width, h: box.bitmap.height))
-        }
-        let key = m.lines.first ?? ""
+        let key = m.d.lines.first ?? ""
         if messageKey != key { messageKey = key; messageScroll = 0 }
-        messageScroll = max(0, min(max(0, m.lines.count - m.fit), messageScroll))
-        for (i, line) in m.lines.dropFirst(messageScroll).prefix(m.fit).enumerated() where !line.isEmpty {
-            let w = m.font.measure(line)
-            out.append(Quad(texture: uiTexture("msg|\(m.font.size)|\(line)", { m.font.render(line, colour: (12, 8, 4)) }), x: m.x + (m.w - w) / 2, y: m.bandY + 20 + i * m.font.lineHeight, w: w, h: m.font.size))
-        }
-        if m.lines.count > m.fit {
-            if messageScroll > 0 { out.append(Quad(texture: solid(120, 80, 30), x: m.x + m.w - 70, y: m.bandY + 16, w: 8, h: 8)) }
-            if messageScroll + m.fit < m.lines.count { out.append(Quad(texture: solid(120, 80, 30), x: m.x + m.w - 70, y: m.bandY + m.bandH - 24, w: 8, h: 8)) }
-        }
-        // a found artifact: its frame (button.Frame_52), icon and name
-        if let a = m.artifact, let r = itemRect() {
-            if let fr = ui.button("Frame_52") { out.append(Quad(texture: uiTexture("frame52", { fr.bitmap }), x: r.x, y: r.y, w: fr.width, h: fr.height)) }
-            if let ic = artifactIcon(a) { out.append(Quad(texture: uiTexture("art|\(a & 0xffff)", { ic.bitmap }), x: r.x + (77 - ic.width) / 2, y: r.y + (77 - ic.height) / 2, w: ic.width, h: ic.height)) }
-            let n = game?.artifactName(a) ?? "", f = ui.font(18), w = f.measure(n)
-            out.append(Quad(texture: uiTexture("dlgtext|18|\(n)|12", { f.render(n, colour: (12, 8, 4)) }), x: m.x + (m.w - w) / 2, y: r.y + 84, w: w, h: f.size))
-        }
-        for (rect, name) in [(okRect(), "ok"), (cancelRect(), "cancel")] {
-            guard let r = rect, let b = ui.button(name, state: hoverButton(r) ? "Highlighted" : "Released") ?? ui.button(name) else { continue }
-            out.append(Quad(texture: uiTexture("button|\(name)|\(b.name)", { b.bitmap }), x: r.x + (r.w - b.width) / 2, y: r.y + (r.h - b.height) / 2, w: b.width, h: b.height))
-        }
+        messageScroll = max(0, min(max(0, m.d.lines.count - m.d.fit), messageScroll))
+        var out = basicDialogQuads(m.d, x: m.x, y: m.y, scroll: messageScroll)
         // a button's balloon once the pointer rests on it (table.Interface shared.ok / cancel)
         for (rect, key, fallback) in [(okRect(), "shared.ok", "Okay"), (cancelRect(), "shared.cancel", "Cancel")] {
-            guard let r = rect, hoverButton(r), Date().timeIntervalSince(pointerSince) > 0.8 else { continue }
-            let s = game?.tables?.interfaceTexts[key]?.balloon ?? fallback
-            let f = ui.font(16), w = f.measure(s) + 12, h = f.size + 8, bx = Int(pointerCanvas.0) + 12, by = Int(pointerCanvas.1) - h - 4
-            out += [Quad(texture: solid(20, 12, 4), x: bx - 1, y: by - 1, w: w + 2, h: h + 2), Quad(texture: solid(255, 252, 240), x: bx, y: by, w: w, h: h),
-                    Quad(texture: uiTexture("dlgtext|16|\(s)|12", { f.render(s, colour: (12, 8, 4)) }), x: bx + 6, y: by + 4, w: w - 12, h: f.size)]
+            guard let r = rect, hoverButton(r), balloonDue else { continue }
+            out += helpBalloonQuads(game?.tables?.interfaceTexts[key]?.balloon ?? fallback, at: pointerCanvas)
         }
-        // the item's help, when right-clicked, in a band of its own below
-        if let help = messageItemHelp, let a = m.artifact {
-            let text = "\(game?.artifactName(a) ?? ""): \(help)"
-            let f = ui.font(18), lines = AdventureUI.wrap(text, font: f, width: m.w - 150)
-            if let box = ui.popupBitmap(clientW: m.w - 130, clientH: lines.count * f.lineHeight, size: "large") {
-                let by = min(AdventureUI.height - box.bitmap.height - 4, (itemRect()?.y ?? m.y) + 60)
-                out += frameQuads(x: m.x, y: by - 14, w: m.w, h: box.bitmap.height + 28)
-                out.append(Quad(texture: uiTexture("band|\(box.bitmap.width)x\(box.bitmap.height)", { box.bitmap }), x: m.x + (m.w - box.bitmap.width) / 2, y: by, w: box.bitmap.width, h: box.bitmap.height))
-                for (i, line) in lines.enumerated() {
-                    let w = f.measure(line)
-                    out.append(Quad(texture: uiTexture("msg|18|\(line)", { f.render(line, colour: (12, 8, 4)) }), x: m.x + (m.w - w) / 2, y: by + box.clientY + i * f.lineHeight, w: w, h: f.size))
-                }
-            }
+        // the item's help, when right-clicked: a popup of its own at the item
+        if let help = messageItemHelp, let a = m.artifact, let r = itemRect(), let d = basicDialog(text: "\(game?.artifactName(a) ?? ""): \(help)") {
+            let px = min(max(0, r.x + r.w / 2 - d.W / 2), AdventureUI.width - d.W), py = min(r.y + r.h / 2, AdventureUI.height - d.H)
+            out += basicDialogQuads(d, x: px, y: max(0, py))
         }
+        _ = ui
         return out
     }
     func itemRect() -> (x: Int, y: Int, w: Int, h: Int)? {
-        guard let m = messageBox(), m.artifact != nil else { return nil }
-        return (m.x + (m.w - 77) / 2, m.bandY + m.bandH + 10, 77, 77)
+        guard let m = messageBox(), m.artifact != nil, let p = m.d.itemPlaces.first, let pic = m.d.items.first?.picture else { return nil }
+        return (m.x + p.x, m.y + p.y, pic.width, pic.height)
     }
     /// The pointer over an OK / Cancel place (the button shows its highlighted face).
     func hoverButton(_ r: (x: Int, y: Int, w: Int, h: Int)) -> Bool {

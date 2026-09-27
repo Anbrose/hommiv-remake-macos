@@ -89,6 +89,8 @@ public final class RuleTables {
     public let spellHelp: [String: String]
     /// The spells' flavour lines (table.Spells "Flavor"), shown under the help in the book.
     public var spellFlavor: [String: String] = [:]
+    /// The spell book's line per spell (the "Spell Book Hero Text" column: "%Spell_name\nDoes %power damage.").
+    public var spellBookText: [String: String] = [:]
     public static let skillLevelNames = ["basic", "advanced", "expert", "master", "grandmaster"]
     /// Creature ability display names ("Normal Melee", "No Obstacle Penalty") -> the game's
     /// keywords ("normal_melee", "siege_machine"), from table.creature_abilities.
@@ -234,15 +236,16 @@ public final class RuleTables {
             }
         }
         banks = bk
-        var sh: [String: String] = [:], sf: [String: String] = [:]
+        var sh: [String: String] = [:], sf: [String: String] = [:], sbt: [String: String] = [:]
         if let d = try? archive.payload("table.Spells.h4d") {
             let t = RuleTable(data: d)
             for row in t.rows where !row.isEmpty && !row[0].isEmpty {
                 sh[row[0].lowercased()] = t.value(row, "Help Text")
-                let fl = t.value(row, "Flavor"); if !fl.isEmpty { sf[row[0].lowercased()] = fl }
+                let fl = t.value(row, "Flavor Text"); if !fl.isEmpty { sf[row[0].lowercased()] = fl }
+                let bt = t.value(row, "Spell Book Hero Text"); if !bt.isEmpty { sbt[row[0].lowercased()] = bt }
             }
         }
-        spellHelp = sh; spellFlavor = sf
+        spellHelp = sh; spellFlavor = sf; spellBookText = sbt
         var ak: [String: String] = [:], info: [String: (name: String, help: String)] = [:]
         if let d = try? archive.payload("table.creature_abilities.h4d") {
             for row in RuleTable(data: d).rows where row.count >= 2 && !row[0].isEmpty {

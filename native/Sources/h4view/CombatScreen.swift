@@ -31,16 +31,97 @@ final class CombatScreen {
     var dead: Set<Int> = []
     var result: (won: Bool, rounds: Int)?
     var showResults = false
-    /// Floating combat messages: text, where, since when, and the icon of layers.icons.combat_messages
-    /// beside it ("damage" the broken heart, "Death" the skull; nil none), and the line (0 top).
-    var floaters: [(text: String, x: Float, y: Float, since: Date, icon: String?, line: Int, red: Bool)] = []
-    /// The message pair of a blow (heroes4.exe 0x5661f0): "-%i" with the broken heart for the damage
-    /// and, when any die, "-%i" with the skull for the creatures killed.
-    /// The numbers take the colour of the struck army: red for the player's (red) side, white for the other.
-    func blowMessages(damage: Int, killed: Int, at c: (Float, Float), since: Date, side: Int) {
-        if damage > 0 { floaters.append(("-\(damage)", c.0, c.1, since, "damage", 0, side == 0)) }
-        if killed > 0 { floaters.append(("-\(killed)", c.0, c.1, since, "Death", 1, side == 0)) }
+    /// Floating combat messages (heroes4.exe 0x566b60 / 0x5661f0): one or two lines of text, each
+    /// with an icon of layers.icons.combat_messages to its right; anchored at the stack's position
+    /// (its footprint's top corner, raised by the actor's height), drifting up-left 1 px per 100 ms
+    /// for 300000 / animation speed ms; the text in the stack owner's player colour with a black halo.
+    struct Floater {
+        var lines: [(text: String, icon: String?)]
+        var world: (Float, Float)      // lattice point of the anchor
+        var height: Float              // scene px above it
+        var since: Date
+        var colour: (UInt8, UInt8, UInt8)
     }
+    var floaters: [Floater] = []
+    /// The options gating the numbers (show_damage_numbers, show_death_numbers, show_other_numbers; on by default).
+    var showDamageNumbers = true, showDeathNumbers = true, showOtherNumbers = true
+    /// "Show combat grid" (show_grid) and "Show movement shading" (show_movement_grid).
+    var showGrid = ProcessInfo.processInfo.environment["H4NOGRID"] == nil
+    /// How long a floating message lives: 300000 / animation speed ms (2 s at 150).
+    var floaterLife: Double { 300.0 / Double(max(1, animationSpeed)) }
+    /// The player colour index of each side's owner (0 red ... 5 teal, 6 gray for neutral).
+    func sideColour(_ side: Int) -> Int {
+        if side == 0 { return hero.map { max(0, min(5, $0.owner)) } ?? 0 }
+        if let e = enemy { return max(0, min(5, e.owner)) }
+        return 6
+    }
+    /// Floating text colours by player colour (table 0xaa6d44).
+    static let messageColours: [(UInt8, UInt8, UInt8)] = [(255, 0, 0), (32, 62, 255), (100, 255, 48), (255, 160, 33), (255, 39, 255), (3, 217, 255), (217, 217, 217)]
+    static let labelColourNames = ["red", "blue", "green", "orange", "purple", "teal", "gray"]
+    /// A message about a stack (0x566b60): anchored at its position, in its owner's colour.
+    func floatOver(_ u: Battle.Unit, _ lines: [(String, String?)], since: Date) {
+        guard !lines.isEmpty else { return }
+        let p = unitPos[u.id] ?? shownPos[u.id] ?? (Float(u.x), Float(u.y))
+        floaters.append(Floater(lines: lines, world: p, height: actorHeight(u.actor), since: since, colour: CombatScreen.messageColours[sideColour(u.side)]))
+    }
+    /// The message pair of a blow (heroes4.exe 0x5661f0): "-%i" with the broken heart for the damage
+    /// and, when any die, "-%i" with the skull under it, right-aligned.
+    func blowMessages(damage: Int, killed: Int, unit u: Battle.Unit, since: Date) {
+        guard damage > 0 || killed > 0 else { return }
+        var lines: [(String, String?)] = []
+        if showDamageNumbers { lines.append(("-\(damage)", "damage")) }
+        if killed > 0, showDeathNumbers { lines.append(("-\(killed)", "Death")) }
+        floatOver(u, lines, since: since)
+    }
+    /// The actor's height (combat_actor byte 3: squire 96, titan 140), scene px.
+    var actorHeights: [String: Float] = [:]
+    func actorHeight(_ name: String) -> Float {
+        if let h = actorHeights[name] { return h }
+        let h = payload("combat_actor.\(name).h4d").map { $0.count > 3 ? Float($0[$0.startIndex + 3]) : 96 } ?? 96
+        actorHeights[name] = h
+        return h
+    }
+
+    /// The panel's action message (0x5d47c0 / 0x6065b0): one line at a time about one stack, shown
+    /// for ms x 100 / animation speed (Defend and Wait post 1500 ms); while it shows, the panel's
+    /// three icons and numbers give way to it and the ring shows its stack.
+    var actionMessage: (unit: Int, text: String, until: Date)?
+    func postAction(_ unit: Int, _ key: String, _ fallback: String, now: Date, ms: Double = 1500, replacing: [String: String] = [:]) {
+        var t = strings[key] ?? fallback
+        for (k, v) in replacing { t = t.replacingOccurrences(of: k, with: v) }
+        actionMessage = (unit, t, now.addingTimeInterval(ms / 10 / Double(max(1, animationSpeed))))
+    }
+    /// The last blow of the action playing (a blow back at its striker is a retaliation).
+    var lastBlow: (attacker: Int, target: Int)?
+
+    /// Each stack's attack mode (+0xb6c): 0 shoot, 1 strike and return, 2 melee, 3 cast spell, 4 move.
+    var attackMode: [Int: Int] = [:]
+    /// The mode button shown for a stack (0x5655e0): its mode, spell mode only for a caster, shoot
+    /// only when it can shoot now (else melee).
+    func shownMode(_ u: Battle.Unit) -> Int {
+        guard let b = battle else { return 2 }
+        var k = attackMode[u.id] ?? 0
+        if k == 3, b.castable(u).isEmpty { k = 0 }
+        if k == 0, !b.canShoot(u) { k = 2 }
+        return k
+    }
+    /// The modes a stack can choose from, in the menu's order.
+    func modes(_ u: Battle.Unit) -> [Int] {
+        guard let b = battle else { return [2] }
+        var out: [Int] = []
+        if u.stats.shooter { out.append(0) }
+        if u.stats.has("strike_and_return") { out.append(1) }
+        out.append(2)
+        if !b.castable(u).isEmpty { out.append(3) }
+        out.append(4)
+        _ = b
+        return out
+    }
+    /// Auto combat (the toggle): the player's side acts on its own while it is on.
+    var autoCombat = false
+    /// The battle was ended by surrender (the player's) and what it cost.
+    var surrendered = false
+
     /// Spell-style effects playing over a unit (morale shows "sorrow" / "spiritual fervor").
     var effects: [(name: String, unit: Int, since: Date)] = []
     /// Idle creatures stand in their "wait" loop; the battle's idle timer (heroes4.exe 0x563870)
@@ -52,6 +133,8 @@ final class CombatScreen {
     var hovered: Int?
     /// The unit whose creature window is open (right click), if any.
     var info: Int?
+    /// The creature window's curse and blessing scrollbar positions.
+    var infoPages = (0, 0)
     /// The town a retreating hero goes to.
     var retreatTown: Int?
     /// When the results dialog appeared (its movie runs from then).
@@ -158,6 +241,18 @@ final class CombatScreen {
         return labelSheets[colour]
     }
     var healthSheet: LayerFile? { labels("health") }
+    /// Other layer files (layers.<name>), cached.
+    var layerFiles: [String: LayerFile] = [:]
+    func layers(_ name: String) -> LayerFile? {
+        if layerFiles[name] == nil, let d = payload("layers.\(name).h4d") { layerFiles[name] = try? LayerFile(data: d) }
+        return layerFiles[name]
+    }
+    /// The hero a hero stack stands for (its army's heroes are matched by keyword).
+    func heroFor(_ u: Battle.Unit) -> Hero? {
+        guard u.stats.isHero else { return nil }
+        let pool = u.side == 0 ? (hero.map { [$0] + $0.companions } ?? []) : (enemy.map { [$0] + $0.companions } ?? [])
+        return pool.first { $0.keyword == u.keyword } ?? (u.side == 0 ? hero : enemy)
+    }
 
     /// Obstacle kinds from combat_header (loaded once).
     lazy var obstacleKinds: [Battlefield.ObstacleKind] = payload("combat_header_table_cache.combat_header.h4d").map(Battlefield.obstacleKinds) ?? []
@@ -211,7 +306,7 @@ final class CombatScreen {
         var pieces = (1...6).map { "combat.music.\($0)" }
         let r = seed % 6; pieces = Array(pieces[r...] + pieces[..<r])
         sound?.playMusic(first: "combat.start", then: pieces)
-        queue = []; playing = nil; unitPos = [:]; unitState = [:]; resultShownAt = nil; dead = []; dying = []; pendingDeaths = []; hits = []; pendingCount = []; shownPos = [:]; shownCount = [:]; result = nil; showResults = false; floaters = []; effects = []
+        queue = []; playing = nil; unitPos = [:]; unitState = [:]; resultShownAt = nil; dead = []; dying = []; pendingDeaths = []; hits = []; pendingCount = []; shownPos = [:]; shownCount = [:]; result = nil; showResults = false; floaters = []; effects = []; actionMessage = nil; attackMode = [:]; autoCombat = false; surrendered = false; lastBlow = nil
         pump()
     }
 
@@ -249,7 +344,7 @@ final class CombatScreen {
         var pieces = (1...6).map { "combat.music.\($0)" }
         let r = seed % 6; pieces = Array(pieces[r...] + pieces[..<r])
         sound?.playMusic(first: "combat.start", then: pieces)
-        queue = []; playing = nil; unitPos = [:]; unitState = [:]; resultShownAt = nil; dead = []; dying = []; pendingDeaths = []; hits = []; pendingCount = []; shownPos = [:]; shownCount = [:]; result = nil; showResults = false; floaters = []; effects = []
+        queue = []; playing = nil; unitPos = [:]; unitState = [:]; resultShownAt = nil; dead = []; dying = []; pendingDeaths = []; hits = []; pendingCount = []; shownPos = [:]; shownCount = [:]; result = nil; showResults = false; floaters = []; effects = []; actionMessage = nil; attackMode = [:]; autoCombat = false; surrendered = false; lastBlow = nil
         pump()
     }
 
@@ -292,7 +387,7 @@ final class CombatScreen {
         var pieces = (1...6).map { "combat.music.\($0)" }
         let r = seed % 6; pieces = Array(pieces[r...] + pieces[..<r])
         sound?.playMusic(first: "combat.start", then: pieces)
-        queue = []; playing = nil; unitPos = [:]; unitState = [:]; resultShownAt = nil; dead = []; dying = []; pendingDeaths = []; hits = []; pendingCount = []; shownPos = [:]; shownCount = [:]; result = nil; showResults = false; floaters = []; effects = []
+        queue = []; playing = nil; unitPos = [:]; unitState = [:]; resultShownAt = nil; dead = []; dying = []; pendingDeaths = []; hits = []; pendingCount = []; shownPos = [:]; shownCount = [:]; result = nil; showResults = false; floaters = []; effects = []; actionMessage = nil; attackMode = [:]; autoCombat = false; surrendered = false; lastBlow = nil
         pump()
     }
 
@@ -300,7 +395,7 @@ final class CombatScreen {
     func pump() {
         guard let b = battle else { return }
         take(b.takeEvents())
-        if playing == nil, queue.isEmpty, b.finished == nil, let u = b.current, u.side == 1 || u.hypnotized { b.autoAct(); take(b.takeEvents()) }
+        if playing == nil, queue.isEmpty, b.finished == nil, let u = b.current, u.side == 1 || u.hypnotized || autoCombat { b.autoAct(); take(b.takeEvents()) }
     }
     /// Queue new events. The battle has already moved the units, so a unit about to move is held
     /// where it starts until its move plays (otherwise it shows at its end for a frame and jumps back).
@@ -370,14 +465,15 @@ final class CombatScreen {
             begin(e, now: now)
         }
         if playing == nil { pump() }
-        if playing == nil, queue.isEmpty { shownPos.removeAll(); shownCount.removeAll(); acting = nil }
+        if playing == nil, queue.isEmpty { shownPos.removeAll(); shownCount.removeAll(); acting = nil; lastBlow = nil }
         landHits(now)
         if fidgeting == nil, now >= nextFidget {
             let waiting = b.units.filter { $0.alive && unitState[$0.id] == nil && unitPos[$0.id] == nil && !$0.disabled }
             if waiting.isEmpty { nextFidget = now.addingTimeInterval(0.5) }
             else { fidget(waiting[idleRandom.next() % waiting.count].id, now: now); fidgeting = unitState.first { $0.value.state == "fidget" }?.key }
         }
-        floaters.removeAll { now.timeIntervalSince($0.since) > 1.5 }
+        floaters.removeAll { now.timeIntervalSince($0.since) > floaterLife }
+        if let m = actionMessage, now >= m.until { actionMessage = nil }
         effects.removeAll { now.timeIntervalSince($0.since) > effectDuration($0.name) }
     }
 
@@ -442,6 +538,7 @@ final class CombatScreen {
             playing = Anim(event: e, started: now, duration: max(0.2, stateDuration(du.actor, "die", du.facing)))
         case .defend(let id):
             unitState[id] = ("block", now, true)
+            postAction(id, "combat_action.defend", "Defend", now: now)
             sound?.actor(b.unit(id).actor, "block")
             let bu = b.unit(id)
             playing = Anim(event: e, started: now, duration: max(0.1, stateDuration(bu.actor, "block", bu.facing)))
@@ -449,36 +546,34 @@ final class CombatScreen {
             // bad morale plays the sorrow effect, good morale spiritual fervor (0x5f3710 -> 0x575a70 with 0x91 / 0x94)
             let name = good ? "spiritual fervor" : "sorrow"
             effects.append((name, id, now))
-            let u = b.unit(id)
-            floaters.append((strings[good ? "combat_action.good_morale" : "combat_action.bad_morale"] ?? (good ? "Good Morale" : "Bad Morale"), shownCentre(u).0, shownCentre(u).1, now, nil, 0, false))
+            // no floating text: the panel's message line says it
+            postAction(id, good ? "combat_action.good_morale" : "combat_action.bad_morale", good ? "Good Morale" : "Bad Morale", now: now)
             playing = Anim(event: e, started: now, duration: effectDuration(name))
         case .effect(let id, let name, let dmg, let killed, let left):
             if effectSprite(name) != nil { effects.append((name, id, now)) }
             sound?.play("spell.\(name)")
-            let c = shownCentre(b.unit(id))
             shownCount[id] = left
-            blowMessages(damage: dmg, killed: killed, at: c, since: now, side: b.unit(id).side)
+            blowMessages(damage: dmg, killed: killed, unit: b.unit(id), since: now)
             playing = Anim(event: e, started: now, duration: min(1.2, effectSprite(name) != nil ? effectDuration(name) : 0.4))
         case .cast(let id, let spell, _):
             // the caster's cast_spell state, the spell's sound
             let u = b.unit(id)
             let def = RuleTables.spells[spell]
             unitState[id] = ("cast_spell", now, true)
+            postAction(id, "combat_action.cast_spell", "Cast %Spell", now: now, replacing: ["%Spell": def.name, "%spell": def.name])
             if !playSpellSound(def) { sound?.actor(u.actor, "cast_spell") }
             playing = Anim(event: e, started: now, duration: max(0.3, min(1.2, stateDuration(u.actor, "cast_spell", u.facing))))
         case .spellHit(let id, let spell, let dmg, let killed, let left):
             let def = RuleTables.spells[spell]
             let name = spellAnimation(def)
             if let n = name { effects.append((n, id, now)) }
-            let c = shownCentre(b.unit(id))
             shownCount[id] = left
-            if dmg > 0 { blowMessages(damage: dmg, killed: killed, at: c, since: now, side: b.unit(id).side); unitState[id] = ("flinch", now, true) }
-            else if dmg < 0 { floaters.append(("+\(-dmg)", c.0, c.1, now, nil, 0, false)) }
+            if dmg > 0 { blowMessages(damage: dmg, killed: killed, unit: b.unit(id), since: now); unitState[id] = ("flinch", now, true) }
+            else if dmg < 0, showOtherNumbers { floatOver(b.unit(id), [("+\(-dmg)", "heal")], since: now) }   // healed hit points
             playing = Anim(event: e, started: now, duration: name.map { min(1.4, effectDuration($0)) } ?? 0.35)
         case .resisted(let id, _):
             effects.append(("resist_spell", id, now))
-            let c = shownCentre(b.unit(id))
-            floaters.append((strings["spell_resisted.combat"] ?? "Resisted", c.0, c.1, now, nil, 0, false))
+            postAction(id, "combat_action.magic_resistance", "Magic Resistance", now: now)
             playing = Anim(event: e, started: now, duration: min(1.2, effectDuration("resist_spell")))
         case .gateHit(let id, let dmg, let broken):
             let u = b.unit(id)
@@ -486,14 +581,17 @@ final class CombatScreen {
             sound?.actor(u.actor, "melee")
             if let c = b.field.gateCells.first {
                 let gx = Float(c / Battlefield.size) + 1, gy = Float(c % Battlefield.size) + 5
-                floaters.append(("-\(dmg)", gx, gy, now.addingTimeInterval(0.3), "damage", 0, false))
+                // wall / gate damage: white, no icon (t_castle_gate 0x5bff70)
+                if showOtherNumbers { floaters.append(Floater(lines: [("-\(dmg)", nil)], world: (gx, gy), height: 80, since: now.addingTimeInterval(0.3), colour: (255, 255, 255))) }
             }
-            if broken { floaters.append((strings["gate_destroyed.combat"] ?? "The gate is destroyed!", u.centre.0, u.centre.1, now.addingTimeInterval(0.4), nil, 1, false)) }
+            _ = broken
             playing = Anim(event: e, started: now, duration: max(0.5, stateDuration(u.actor, "melee", u.facing)))
         case .summon(let id):
             effects.append(("summon", id, now))
             playing = Anim(event: e, started: now, duration: 0.6)
-        case .wait, .newRound:
+        case .wait(let id):
+            postAction(id, "combat_action.wait", "Wait", now: now)
+        case .newRound:
             break
         case .finished(let won):
             result = (won, b.round)
@@ -543,7 +641,12 @@ final class CombatScreen {
         let attackTime = max(0.2, stateDuration(a.actor, state, a.facing))
         let flinchTime = left > 0 ? stateDuration(t.actor, "flinch", t.facing) : 0
         hits.append((target: target, at: now.addingTimeInterval(hitAt), left: left))
-        blowMessages(damage: dmg, killed: killed, at: tc, since: now.addingTimeInterval(hitAt), side: t.side)
+        blowMessages(damage: dmg, killed: killed, unit: t, since: now.addingTimeInterval(hitAt))
+        // the panel: "Melee Attack" / "Ranged Attack", or "Retaliate" for a blow back at the striker
+        let back = lastBlow.map { $0.target == id && $0.attacker == target } ?? false
+        if back { postAction(id, ranged ? "combat_action.ranged_retaliation" : "combat_action.melee_retaliation", "Retaliate", now: now) }
+        else { postAction(id, ranged ? "combat_action.ranged_attack" : "combat_action.melee_attack", ranged ? "Ranged Attack" : "Melee Attack", now: now) }
+        lastBlow = (id, target)
         pendingCount.append((target, left, now.addingTimeInterval(hitAt)))
         return max(attackTime, hitAt + flinchTime)
     }

@@ -2,7 +2,52 @@ import Foundation
 import Metal
 import H4Engine
 
+/// The combat screen (combat_ui_spec.md): the battlefield clipped to battle_scene (0,0)-(885,768),
+/// the grid and movement shading overlays, the units with their ground marks and labels, the
+/// floating messages, then the frame (Background, Border), the buttons and the side panel.
 extension Renderer {
+    typealias RGB = (UInt8, UInt8, UInt8)
+    /// The font cache (0x875bc0): table 0xa84798 holds one nominal height per loaded font, in the
+    /// order of the 14 font.Prose_Antique files (10, 12, ..., 36); a size picks the font whose value
+    /// is the largest no bigger than it (9 -> Prose_Antique.10, 23 -> .24, 30 -> .32).
+    static let proseHeights = [9, 11, 12, 14, 16, 18, 20, 23, 25, 27, 29, 30, 33, 34]
+    func proseFont(_ n: Int) -> H4Font {
+        ui!.font(n)   // 0x875bc0's slot table (AdventureUI.fontSlots)
+    }
+    /// A text window (t_text_window 0x8859f0): word-wrapped to its width, left or centred
+    /// (+0xc4), top-aligned or centred vertically as a block (+0xd4); black unless told, the halo
+    /// only when one is given (0x886b10).
+    func textWindow(_ s: String, _ x: Int, _ y: Int, _ w: Int, _ h: Int, font f: H4Font, centre: Bool = true, vcentre: Bool = false,
+                    colour: RGB = (0, 0, 0), halo: RGB? = nil) -> [Quad] {
+        guard !s.isEmpty else { return [] }
+        let lines = s.components(separatedBy: "\n").flatMap { AdventureUI.wrap($0, font: f, width: w) }
+        var top = y
+        if vcentre, lines.count * f.lineHeight < h { top = y + (h - lines.count * f.lineHeight) / 2 }
+        var out: [Quad] = []
+        let hk = halo.map { "\($0.0).\($0.1).\($0.2)" } ?? "-"
+        for (k, line) in lines.enumerated() where !line.isEmpty {
+            let lw = f.measure(line)
+            let lx = centre ? x + max(0, (w - lw) / 2) : x
+            out.append(Quad(texture: uiTexture("tw|\(f.size)|\(colour.0).\(colour.1).\(colour.2)|\(hk)|\(line)", { f.render(line, colour: colour, halo: halo) }),
+                            x: lx, y: top + k * f.lineHeight, w: lw, h: f.size))
+        }
+        return out
+    }
+    func textWindow(_ s: String, in l: UILayer?, _ ox: Int = 0, _ oy: Int = 0, font f: H4Font, centre: Bool = true, vcentre: Bool = false,
+                    colour: RGB = (0, 0, 0), halo: RGB? = nil) -> [Quad] {
+        guard let l = l else { return [] }
+        return textWindow(s, ox + l.x, oy + l.y, l.width, l.height, font: f, centre: centre, vcentre: vcentre, colour: colour, halo: halo)
+    }
+    /// A layer by name, whatever the case (0x58e950).
+    func layer(_ d: LayerFile?, _ name: String) -> UILayer? {
+        guard let d = d else { return nil }
+        return d[name] ?? d.layers.first { $0.name.lowercased() == name.lowercased() }
+    }
+    /// A layer drawn at a point, optionally scaled (0x58fa40's scaled layer cache).
+    func image(_ l: UILayer, key: String, _ x: Int, _ y: Int, scale s: Float = 1) -> Quad {
+        Quad(texture: uiTexture(key, { l.bitmap }), x: x, y: y, w: max(1, Int(Float(l.width) * s)), h: max(1, Int(Float(l.height) * s)))
+    }
+
     /// The sprite of a combat actor's state for a facing, loaded on demand.
     func combatSprite(_ cs: CombatScreen, actor: String, state: String, facing: String) -> (Sprite, String)? {
         guard let a = cs.actor(actor), let r = resolver else { return nil }
@@ -19,11 +64,10 @@ extension Renderer {
     /// Quads of the combat screen.
     func combatQuads(now: Date) -> [Quad] {
         unitHeads = []
-        guard let cs = combat, let b = cs.battle, let ui = ui, let f = cs.field else { return [] }
+        guard let cs = combat, let b = cs.battle, ui != nil, let f = cs.field else { return [] }
         var out: [Quad] = []
         let sc = CombatScreen.sceneScale
-        // the ground: a ship's backdrop, or the terrain's tiles diamond by diamond with
-        // alternate diamonds a shade darker (the original's chequered field)
+        // the ground: a ship's backdrop, or the terrain's tiles
         if let bd = f.backdrop {
             out.append(Quad(texture: uiTexture("battlefield|\(cs.fieldName)", { bd.bitmap }), x: 0, y: 0, w: Int(Float(bd.width) * sc), h: Int(Float(bd.height) * sc)))
         } else if let patch = cs.groundPatch(terrain: f.terrain, variant: f.variant, alt: 1) {
@@ -37,15 +81,6 @@ extension Renderer {
                 let tex = uiTexture("ground|\(f.terrain)|\(f.variant)|\(ti)", { patch.tiles[min(ti, patch.tiles.count - 1)] })
                 out.append(Quad(texture: tex, x: Int(px - 32 * sc), y: Int(py - 16 * sc), w: Int(64 * sc) + 1, h: Int(32 * sc) + 1))
             } }
-            // the checker: table.combat_grid_colors tints odd and even cells per terrain
-            let key = CombatScreen.terrainKeys[f.terrain] ?? "grass"
-            let tint = cs.gridColors?.byTerrain[key] ?? GridColors.Entry(alpha: 4, odd: nil, even: (12, 36, 12))
-            let alpha = UInt8(min(255, tint.alpha * 16))
-            for x in 0..<Battlefield.size { for y in 0..<Battlefield.size where Battlefield.onField(x, y) {
-                guard let c = (x + y) % 2 == 1 ? tint.odd : tint.even else { continue }
-                let (px, py) = CombatScreen.point(Float(x) + 0.5, Float(y) + 0.5)
-                out.append(Quad(texture: cellDiamond("grid|\(c.0)|\(c.1)|\(c.2)|\(alpha)", c.0, c.1, c.2, alpha), x: Int(px - 16 * sc), y: Int(py - 8 * sc), w: Int(32 * sc), h: Int(16 * sc)))
-            } }
         }
         // a citadel's or castle's moat: terrain cells x 50...53 down the whole field (water tiles)
         if !f.moat.isEmpty, let water = cs.groundPatch(terrain: 0, variant: 0, alt: 1) {
@@ -56,18 +91,27 @@ extension Renderer {
                 out.append(Quad(texture: uiTexture("moat|\(ti)", { water.tiles[min(ti, water.tiles.count - 1)] }), x: Int(px - 32 * sc), y: Int(py - 16 * sc), w: Int(64 * sc) + 1, h: Int(32 * sc) + 1))
             } }
         }
-        // the acting unit's reach as the game's purple-grey cells (the "movement shadow" option):
-        // every cell its footprint can cover
+        // the grid (option show_grid, 0x588b60): table.combat_grid_colors per terrain, cell (x, y) in
+        // colour [(x + y) & 1] (0 the odd entry, 1 the even), cells an obstacle blocks untinted; the
+        // overlay's level n of 15
+        if cs.showGrid {
+            let key = f.backdrop != nil ? "water" : (CombatScreen.terrainKeys[f.terrain] ?? "grass")
+            let tint = cs.gridColors?.byTerrain[key] ?? GridColors.Entry(alpha: 4, odd: nil, even: (12, 36, 12))
+            let alpha = UInt8(min(255, tint.alpha * 255 / 15))
+            for x in 0..<Battlefield.size { for y in 0..<Battlefield.size where Battlefield.onField(x, y) && b.field.isOpen(x, y) {
+                guard let c = (x + y) & 1 == 0 ? tint.odd : tint.even else { continue }
+                let (px, py) = CombatScreen.point(Float(x) + 0.5, Float(y) + 0.5)
+                out.append(Quad(texture: cellDiamond("grid|\(c.0)|\(c.1)|\(c.2)|\(alpha)", c.0, c.1, c.2, alpha), x: Int(px - 16 * sc), y: Int(py - 8 * sc), w: Int(32 * sc), h: Int(16 * sc)))
+            } }
+        }
+        // movement shading (show_movement_grid, 0x57bae0): every cell the acting stack can reach this
+        // turn in (50,50,200) at level 5 of 15
         if showReach, let cur = b.current, cur.side == 0, !cs.busy, cs.result == nil {
-            var cells = Set<Int>()
+            let a = UInt8(5 * 255 / 15)
             for (k, _) in b.reachable(cur) {
                 let x = k / Battlefield.size, y = k % Battlefield.size
-                for i in 0..<cur.size { for j in 0..<cur.size { cells.insert((x + i) * Battlefield.size + y + j) } }
-            }
-            for k in cells {
-                let x = k / Battlefield.size, y = k % Battlefield.size
                 let (px, py) = CombatScreen.point(Float(x) + 0.5, Float(y) + 0.5)
-                out.append(Quad(texture: cellDiamond("reach", 120, 110, 170, 120), x: Int(px - 16 * sc), y: Int(py - 8 * sc), w: Int(32 * sc), h: Int(16 * sc)))
+                out.append(Quad(texture: cellDiamond("reach", 50, 50, 200, a), x: Int(px - 16 * sc), y: Int(py - 8 * sc), w: Int(32 * sc), h: Int(16 * sc)))
             }
         }
         // obstacles and units, back to front
@@ -91,6 +135,7 @@ extension Renderer {
                 drawn.append((CombatScreen.point(Float(gx) + 1, Float(gy) + 5).1, q))
             }
         }
+        let labels = combatLabels(cs, b, now: now)
         // every unit, the dead too: a dead stack stays on the field as the last frame of its
         // die sequence (the combat actor has no other corpse state), under the living
         for u in b.units {
@@ -100,10 +145,8 @@ extension Renderer {
             let (px, py) = CombatScreen.point(pos.0 + Float(u.size) / 2, pos.1 + Float(u.size) / 2)
             var q: [Quad] = []
             // the ground marks, sized to the footprint (combat_object.<active|target>_shadow.<2...7>):
-            // the acting unit's, and the red one under the creature the pointer would strike
+            // the acting unit's, and the red one under the creature the pointer targets
             let shadowSize = min(7, max(2, u.size))
-            // these sprites are anchored at the footprint's top corner (target_shadow.3: origin -51,-8,
-            // image x -32...33, y 7...41 -- centred on a 3-cell diamond hanging from its top vertex)
             let (tx, ty) = CombatScreen.point(pos.0, pos.1)
             let targeted = combatTarget == u.id && cs.shownAlive(u)
             if targeted, let ring = arrowSprite("target_shadow.\(shadowSize)", prefix: "combat_object"), let fr = ring.frames.first {
@@ -134,35 +177,10 @@ extension Renderer {
                 let ox = px + Float(s.origin.x) * sc, oy = py + Float(s.origin.y) * sc
                 if let sh = shadow { q.append(Quad(texture: texture(for: sh, of: entry), x: Int(ox + Float(sh.box.left) * sc), y: Int(oy + Float(sh.box.top) * sc), w: Int(Float(sh.bitmap.width) * sc), h: Int(Float(sh.bitmap.height) * sc))) }
                 if let fr = frame { q.append(Quad(texture: texture(for: fr, of: entry), x: Int(ox + Float(fr.box.left) * sc), y: Int(oy + Float(fr.box.top) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc))) }
-                // where the stack's head is on screen (the messages about it float from there)
                 let c = cs.shownCentre(u)
                 unitHeads.append((c.0, c.1, px, frame.map { oy + Float($0.box.top) * sc } ?? (py - 100 * sc)))
-                // the label above the head: a waving banner in the owner's colour with the stack
-                // size, the acting unit's taller "selected" one; heroes show health and mana bars
-                if shownAlive, let sheet = cs.labels(u.side == 0 ? AdventureUI.playerColourNames[0].lowercased() : "gray") {
-                    let selected = cs.shownCurrent == u.id && cs.result == nil
-                    let k = Int(now.timeIntervalSince1970 * 8) % (selected ? 8 : 4) + 1
-                    if let l = sheet[selected ? "selected_\(k)" : "frame_\(k)"] {
-                        // the sheet's origin sits 44 px above the sprite's top; the text box is the sheet's "text" hotspot
-                        let top = frame.map { oy + Float($0.box.top) * sc } ?? (py - 100 * sc)
-                        let lx = Int(px) - 22, ly = Int(top) - 44
-                        q.append(Quad(texture: uiTexture("label|\(u.side == 0 ? "red" : "gray")|\(l.name)", { l.bitmap }), x: lx + l.x, y: ly + l.y, w: l.width, h: l.height))
-                        let boxX = lx + 2, boxY = ly + 11, boxW = 34, boxH = 21
-                        if u.stats.isHero, let hs = cs.healthSheet, let bg = hs["background"], let hb = hs["health_bar"], let mb = hs["mana_bar"] {
-                            let bx = boxX + (boxW - bg.width) / 2, by = boxY + (boxH - bg.height) / 2
-                            q.append(Quad(texture: uiTexture("label|health|bg", { bg.bitmap }), x: bx, y: by, w: bg.width, h: bg.height))
-                            let hf = max(0, min(1, Float(u.stats.hitPoints - u.stats.wounds) / Float(max(1, u.stats.hitPoints))))
-                            if hf > 0 { q.append(Quad(texture: uiTexture("label|health|hb", { hb.bitmap }), x: bx + hb.x, y: by + hb.y, w: Int(Float(hb.width) * hf), h: hb.height)) }
-                            q.append(Quad(texture: uiTexture("label|health|mb", { mb.bitmap }), x: bx + mb.x, y: by + mb.y, w: mb.width / 2, h: mb.height))
-                        } else {
-                            let count = String(cs.shownCount[u.id] ?? u.stats.count)
-                            let labelFont = ui.font(18)
-                            let w = labelFont.measure(count)
-                            q.append(Quad(texture: uiTexture("count18|\(count)|white", { labelFont.render(count, colour: (255, 255, 255)) }), x: boxX + (boxW - w) / 2, y: boxY + (boxH - labelFont.size) / 2, w: w, h: labelFont.size))
-                        }
-                    }
-                }
             }
+            q += labels[u.id] ?? []
             drawn.append((py + (shownAlive ? 0 : -1000), q))
         }
         for (_, q) in drawn.sorted(by: { $0.0 < $1.0 }) { out += q }
@@ -171,59 +189,18 @@ extension Renderer {
             guard let sp = cs.effectSprite(fx.name), !sp.frames.isEmpty else { continue }
             let frames = sp.frames
             let info = cs.effectInfo[fx.name]
-            // the file's frame order at its pace; the anchor point of the frame canvas on the stack's centre
             let order = info?.order.isEmpty == false ? info!.order : Array(frames.indices)
             let step = Int(now.timeIntervalSince(fx.since) * 1000) / max(1, info?.ms ?? 83)
             let fr = frames[max(0, min(frames.count - 1, order[min(order.count - 1, step)]))]
             let width = frames.map { $0.box.right }.max() ?? fr.box.right, height = frames.map { $0.box.bottom }.max() ?? fr.box.bottom
             let u = b.unit(fx.unit)
-            // the reference point is the footprint's leftmost corner on screen, level with its centre
             let corners = [(Float(u.x), Float(u.y)), (Float(u.x + u.size), Float(u.y)), (Float(u.x), Float(u.y + u.size)), (Float(u.x + u.size), Float(u.y + u.size))].map { CombatScreen.point($0.0, $0.1) }
             let px = corners.map { $0.0 }.min() ?? 0, py = CombatScreen.point(u.centre.0, u.centre.1).1
             let anchor = info.map { $0.anchor.0 != 0 || $0.anchor.1 != 0 ? $0.anchor : (width / 2, height - 8) } ?? (width / 2, height - 8)
             out.append(Quad(texture: texture(for: fr, of: "spell.\(fx.name)"), x: Int(px) - anchor.0 + fr.box.left, y: Int(py) - anchor.1 + fr.box.top, w: fr.bitmap.width, h: fr.bitmap.height))
         }
-        // damage numbers
-        // floating messages: large white numbers with the message icon to their right, rising
-        let messageFont = ui.font(24)
-        for fl in cs.floaters where now >= fl.since {
-            let age = Float(max(0, now.timeIntervalSince(fl.since)))
-            var (px, py) = CombatScreen.point(fl.x, fl.y)
-            // over the stack it is about: centred on it, starting above its banner
-            if let h = unitHeads.min(by: { abs($0.cx - fl.x) + abs($0.cy - fl.y) < abs($1.cx - fl.x) + abs($1.cy - fl.y) }), abs(h.cx - fl.x) + abs(h.cy - fl.y) < 1.5 {
-                px = h.sx; py = h.top + 20
-            }
-            let icon = fl.icon.flatMap { iconSheet("combat_messages")[$0.lowercased()] }
-            let w = messageFont.measure(fl.text), iw = icon?.width ?? 0
-            let x0 = Int(px) - (w + iw) / 2, y0 = Int(py - 80 - age * 25) + fl.line * 30
-            let colour: (UInt8, UInt8, UInt8) = fl.red ? (230, 40, 30) : (255, 255, 255)
-            out.append(Quad(texture: uiTexture("float|\(fl.text)|shadow", { messageFont.render(fl.text, colour: (0, 0, 0)) }), x: x0 + 1, y: y0 + 1, w: w, h: messageFont.size))
-            out.append(Quad(texture: uiTexture("float|\(fl.text)|\(fl.red)", { messageFont.render(fl.text, colour: colour) }), x: x0, y: y0, w: w, h: messageFont.size))
-            if let ic = icon { out.append(Quad(texture: uiTexture("msgicon|\(ic.name)", { ic.bitmap }), x: x0 + w + 2, y: y0 + (messageFont.size - ic.height) / 2, w: ic.width, h: ic.height)) }
-        }
-        // the frame and the panel
-        for l in cs.frame.layers where l.isImage && l.name != "Ring_Released" && l.name != "creature_icon" {   // creature_icon is only a placeholder box
-            out.append(Quad(texture: uiTexture("combatframe|\(l.name)", { l.bitmap }), x: l.x, y: l.y, w: l.width, h: l.height))
-        }
-        if let cur = cs.shownCurrent.map({ b.unit($0) }), cs.result == nil {
-            // the portrait centred in the ring, the ring over it
-            if let ring = cs.hotspot("Ring_Released") {
-                let icon = cur.stats.isHero ? ui.portrait(keyword: cur.keyword, alignment: cs.hero?.alignment ?? "life") : ui.creatureIcon(cur.keyword)
-                if let icon = icon { out.append(Quad(texture: uiTexture("icon|\(icon.name)", { icon.bitmap }), x: ring.x + (ring.width - icon.width) / 2, y: ring.y + (ring.height - icon.height) / 2, w: icon.width, h: icon.height)) }
-                out.append(Quad(texture: uiTexture("combatframe|ring", { ring.bitmap }), x: ring.x, y: ring.y, w: ring.width, h: ring.height))
-            }
-            let health = "\(cur.stats.hitPoints - cur.stats.wounds)/\(cur.stats.hitPoints)"
-            out += centred(health, in: cs.hotspot("Health_Text"), at: 0, 0, font: ui.numberFont)
-            out += centred("\(cur.shots)", in: cs.hotspot("Shots_Text"), at: 0, 0, font: ui.numberFont)
-            out += centred("\(cur.caster?.spellPoints ?? 0)", in: cs.hotspot("Spell_Points_Text"), at: 0, 0, font: ui.numberFont)
-        }
-        for (hs, name) in [("cast_spell", "cast_spell"), ("defend", "defend"), ("wait", "wait"), ("melee", "melee"), ("auto_attack", "auto"), ("combat_options", "options"), ("retreat", "retreat"), ("surrender", "surrender")] {
-            guard let slot = cs.hotspot(hs) else { continue }
-            let disabled = ["cast_spell", "options"].contains(name) || (name == "melee" && !(b.current?.shots ?? 0 > 0))
-            if let img = ui.button("combat.\(name)", state: disabled ? "Disabled" : "Released") {
-                out.append(Quad(texture: uiTexture("button|combat.\(name)|\(disabled)", { img.bitmap }), x: slot.x + (slot.width - img.width) / 2, y: slot.y + (slot.height - img.height) / 2, w: img.width, h: img.height))
-            }
-        }
+        out += floaterQuads(cs, now: now)
+        out += combatPanelQuads(cs, b, now: now)
         out += combatInfoQuads()
         out += hoverQuads()
         if cs.showResults { out += combatResultQuads() }
@@ -233,9 +210,135 @@ extension Renderer {
         return out
     }
 
+    // MARK: stack labels (t_combat_label, B1)
+
+    /// "%i" with thousands separators, or shortened to one decimal and k / M / G when that is
+    /// wider than the text rect (0x401660).
+    func labelCount(_ n: Int, font f: H4Font, width: Int) -> String {
+        let full = Renderer.grouped(n)
+        guard n >= 1000, f.measure(full) > width else { return full }
+        var v = Double(n), k = 0
+        let units = ["", "k", "M", "G"]
+        while v >= 1000, k < 3 { v /= 1000; k += 1 }
+        let s = String(format: "%.1f", (v * 10).rounded(.down) / 10)
+        return (s.hasSuffix(".0") ? String(s.dropLast(2)) : s) + units[k]
+    }
+
+    /// Every living stack's label, keyed by unit: the banner of its owner's colour sheet
+    /// (icons.combat_labels.<colour>, scaled by the zoom), the acting stack's bobbing "selected"
+    /// frames at 100 ms each; the count in white with a black halo (creatures) or the health and
+    /// mana bars (heroes). Anchored at the footprint centre raised by (actor height + 52) x zoom,
+    /// offset by half the frame box; a label overlapping one before it moves down below it.
+    func combatLabels(_ cs: CombatScreen, _ b: Battle, now: Date) -> [Int: [Quad]] {
+        let s = CombatScreen.sceneScale
+        func sc(_ v: Int) -> Int { Int(Float(v) * s) }
+        var rects: [(x: Int, y: Int, w: Int, h: Int)] = []
+        var out: [Int: [Quad]] = [:]
+        for u in b.units where cs.shownAlive(u) && cs.unitPos[u.id] == nil {
+            let colour = CombatScreen.labelColourNames[cs.sideColour(u.side)]
+            guard let sheet = cs.labels(colour), let frame = sheet["frame_1"] else { continue }
+            let pos = cs.shownPos[u.id] ?? (Float(u.x), Float(u.y))
+            let (px, py) = CombatScreen.point(pos.0 + Float(u.size) / 2, pos.1 + Float(u.size) / 2)
+            let ax = Int(px), ay = Int(py - (cs.actorHeight(u.actor) + 52) * s)
+            // the frame list's union box at this scale, halved (C truncation)
+            let bx0 = sc(frame.x), by0 = sc(frame.y), bw = sc(frame.x + frame.width) - bx0, bh = sc(frame.y + frame.height) - by0
+            let offX = -bw / 2, offY = -bh / 2
+            var r = (x: ax + offX + bx0, y: ay + offY + by0, w: bw, h: bh)
+            // overlap avoidance (0x5673c0): down below any label it overlaps, then scan again
+            var moved = true, guardN = 0
+            while moved, guardN < 50 {
+                moved = false; guardN += 1
+                if r.y < 0 { r.y = 0 }
+                for o in rects where r.x < o.x + o.w && o.x < r.x + r.w && r.y < o.y + o.h && o.y < r.y + r.h {
+                    r.y += o.y + o.h - r.y + 1; moved = true; break
+                }
+            }
+            rects.append(r)
+            let dy = r.y - (ay + offY + by0)
+            let ox = ax + offX, oy = ay + offY + dy
+            var q: [Quad] = []
+            let selected = cs.shownCurrent == u.id && cs.result == nil
+            let k = Int(now.timeIntervalSince1970 * 10) % 8 + 1
+            if let l = selected ? sheet["selected_\(k)"] : frame {
+                q.append(image(l, key: "label|\(colour)|\(l.name)", ox + sc(l.x), oy + sc(l.y), scale: s))
+            }
+            if u.stats.isHero {
+                // the bars: `background` at the sheet's health_bar hotspot, each bar cropped to value / max
+                if let hs = cs.healthSheet, let bg = hs["background"], let hb = hs["health_bar"], let mb = hs["mana_bar"], let at = sheet["health_bar"] {
+                    let bx = ox + sc(at.x), by = oy + sc(at.y)
+                    q.append(image(bg, key: "label|health|bg", bx, by, scale: s))
+                    let hp = max(1, u.stats.hitPoints), cur = max(0, min(hp, hp - u.stats.wounds))
+                    let maxSP = max(1, maxSpellPoints(u)), sp = min(u.caster?.spellPoints ?? 0, maxSP)
+                    for (bar, v, m, key) in [(hb, cur, hp, "hb"), (mb, sp, maxSP, "mb")] {
+                        let w = bar.width * v / m
+                        guard w > 0 else { continue }
+                        q.append(Quad(texture: uiTexture("label|health|\(key)|\(w)", { Renderer.crop(bar.bitmap, width: w) }), x: bx + sc(bar.x), y: by + sc(bar.y), w: max(1, sc(w)), h: max(1, sc(bar.height))))
+                    }
+                }
+            } else if let t = sheet["text"] {
+                let tx = sc(t.x), ty = sc(t.y), tw = sc(t.x + t.width) - tx, th = sc(t.y + t.height) - ty
+                let f = proseFont(th)
+                let n = labelCount(cs.shownCount[u.id] ?? u.stats.count, font: f, width: tw)
+                let w = f.measure(n)
+                q.append(Quad(texture: uiTexture("labelcount|\(f.size)|\(n)", { f.render(n, colour: (255, 255, 255), halo: (0, 0, 0)) }), x: ox + tx + (tw - w) / 2, y: oy + ty, w: w, h: f.size))
+            }
+            out[u.id] = q
+        }
+        return out
+    }
+    static func crop(_ bm: Bitmap, width w: Int) -> Bitmap {
+        var out = Bitmap(width: max(1, min(w, bm.width)), height: bm.height)
+        for y in 0..<bm.height { for x in 0..<out.width { for c in 0..<4 { out.pixels[(y * out.width + x) * 4 + c] = bm.pixels[(y * bm.width + x) * 4 + c] } } }
+        return out
+    }
+
+    // MARK: floating messages (B2)
+
+    /// Prose_Antique 40 x zoom (30 at 0.75), the owner's colour with a black halo; the icon right
+    /// of the text, top-aligned; a deaths line right-aligned under the damage line; every message
+    /// drifting (-1,-1) px per 100 ms; a message overlapping one before it moves down below it.
+    func floaterQuads(_ cs: CombatScreen, now: Date) -> [Quad] {
+        let f = proseFont(Int(885 * 40 / 1180))
+        let icons = iconSheet("combat_messages")
+        var rects: [(x: Int, y: Int, w: Int, h: Int)] = []
+        var out: [Quad] = []
+        for fl in cs.floaters where now >= fl.since {
+            let (px, py) = CombatScreen.point(fl.world.0, fl.world.1)
+            let step = Int(now.timeIntervalSince(fl.since) * 10)
+            // the lines: text window auto-sized to the text, the icon's bitmap window at its top-right
+            var parts: [(text: String, w: Int, icon: UILayer?, lx: Int, ly: Int)] = []
+            var y = 0
+            var w1 = 0
+            for (k, line) in fl.lines.enumerated() {
+                let tw = f.measure(line.text)
+                let ic = line.icon.flatMap { icons[$0.lowercased()] }
+                let lx = k == 0 ? 0 : max(0, w1 - tw)
+                if k == 0 { w1 = tw }
+                parts.append((line.text, tw, ic, lx, y))
+                y += f.size
+            }
+            let bw = parts.map { $0.lx + $0.w + ($0.icon.map { $0.x + $0.width } ?? 0) }.max() ?? 0
+            let bh = max(y, parts.map { $0.ly + ($0.icon.map { $0.y + $0.height } ?? 0) }.max() ?? 0)
+            var r = (x: Int(px) - step, y: Int(py - fl.height * CombatScreen.sceneScale) - step, w: bw, h: bh)
+            r.x = max(0, min(885 - bw, r.x)); r.y = max(0, r.y)
+            var moved = true, guardN = 0
+            while moved, guardN < 30 {
+                moved = false; guardN += 1
+                for o in rects where r.x < o.x + o.w && o.x < r.x + r.w && r.y < o.y + o.h && o.y < r.y + r.h { r.y = o.y + o.h; moved = true; break }
+            }
+            rects.append(r)
+            for p in parts {
+                let c = fl.colour
+                out.append(Quad(texture: uiTexture("floattext|\(f.size)|\(c.0).\(c.1).\(c.2)|\(p.text)", { f.render(p.text, colour: c, halo: (0, 0, 0)) }), x: r.x + p.lx, y: r.y + p.ly, w: p.w, h: f.size))
+                if let ic = p.icon { out.append(image(ic, key: "msgicon|\(ic.name)", r.x + p.lx + p.w + ic.x, r.y + p.ly + ic.y)) }
+            }
+        }
+        return out
+    }
+
     /// A 32x16 diamond (one combat cell) in a colour.
     func cellDiamond(_ key: String, _ r: UInt8, _ g: UInt8, _ bl: UInt8, _ a: UInt8) -> MTLTexture {
-        uiTexture("cell|\(key)", {
+        uiTexture("cell|\(key)|\(a)", {
             var bm = Bitmap(width: 32, height: 16)
             for y in 0..<16 {
                 for x in 0..<32 {
@@ -267,181 +370,16 @@ extension Renderer {
         return (Int((wx - Float(u.size) / 2).rounded()), Int((wy - Float(u.size) / 2).rounded()))
     }
 
-    /// layers.dialog.Combat_results: victor and loser portraits, losses.
-    /// The combat results (layers.dialog.Combat_results): the title, the outcome text, the battle's
-    /// movie in Cut_Scene (movies.h4r: win_battle / lose_battle / retreat, intro once then the
-    /// loop), the winner left and the loser right in their frames with "Victorious" / "Defeated"
-    /// under them, and each side's "Casualties": every stack with the creatures it lost.
-    func combatResultQuads() -> [Quad] {
-        guard let cs = combat, let b = cs.battle, let ui = ui, let d = ui.dialog("Combat_results"), let r = cs.result else { return [] }
-        let ox = (AdventureUI.width - 798) / 2, oy = (AdventureUI.height - 599) / 2
-        var out = dialogImages(d, key: "results", at: ox, oy)
-        out += centred(text("combat_results_title.combat", "Combat Results"), in: d["Title"], at: ox, oy, font: ui.font(18))
-        var line = r.won ? text("player_won_battle.combat", "You have vanquished your foe!") + "  \(b.experience) experience." : "Your army was defeated after \(r.rounds) rounds."
-        if b.retreated, let h = cs.hero, let t = cs.retreatTown, let g = game {
-            line = text("one_hero_retreats.combat", "%Hero_name retreats shamefully to %town_name.")
-                .replacingOccurrences(of: "%Hero_name", with: h.name).replacingOccurrences(of: "%town_name", with: g.towns[t].name)
-        }
-        out += paragraph(line, in: d["Combat_Results_Text"], at: ox, oy, font: ui.dateFont)
-        // the movie
-        if let slot = d["Cut_Scene"], let movies = movies {
-            let kind = r.won ? "win_battle" : b.retreated ? "retreat" : "lose_battle"
-            let since = cs.resultShownAt ?? Date()
-            if cs.resultShownAt == nil { cs.resultShownAt = since }
-            let t = Date().timeIntervalSince(since)
-            var frame: (Movie, Int)? = nil
-            if let intro = movies.movie("\(kind)_intro") {
-                let n = Int(t * intro.fps)
-                if n < intro.frames.count { frame = (intro, n) }
-                else if let loop = movies.movie("\(kind)_loop") {
-                    frame = (loop, Int((t - Double(intro.frames.count) / intro.fps) * loop.fps) % loop.frames.count)
-                } else { frame = (intro, intro.frames.count - 1) }
-            }
-            if let (m, i) = frame {
-                out.append(Quad(texture: uiTexture("movie|\(kind)|\(ObjectIdentifier(m).hashValue)|\(i)", { m.frames[i] }), x: ox + slot.x + (slot.width - m.width) / 2, y: oy + slot.y + (slot.height - m.height) / 2, w: m.width, h: m.height))
-            }
-        }
-        let winner = r.won ? 0 : 1, loser = 1 - winner
-        func icon(_ u: Battle.Unit, size: Int) -> UILayer? {
-            u.stats.isHero ? (ui.portrait(keyword: u.keyword, alignment: cs.hero?.alignment ?? "life", size: size) ?? ui.portrait(keyword: u.keyword, alignment: cs.hero?.alignment ?? "life"))
-                           : (ui.creatureIcon(u.keyword, size: size) ?? ui.creatureIcon(u.keyword))
-        }
-        // the side's leader in its frame, and the label under it
-        func leader(side: Int, frame: String, label: String, text words: String) {
-            if let f = d[frame], let lead = b.units.first(where: { $0.side == side }), let ic = icon(lead, size: 82) {
-                out.append(Quad(texture: uiTexture("icon82|\(ic.name)", { ic.bitmap }), x: ox + f.x + (f.width - ic.width) / 2, y: oy + f.y + (f.height - ic.height) / 2, w: ic.width, h: ic.height))
-                out.append(Quad(texture: uiTexture("dlg|results|\(frame)", { f.bitmap }), x: ox + f.x, y: oy + f.y, w: f.width, h: f.height))
-            }
-            out += centred(words, in: d[label], at: ox, oy, font: ui.font(18))
-        }
-        leader(side: winner, frame: "Winner_Frame", label: "Victor", text: text("victorious.combat", "Victorious"))
-        leader(side: loser, frame: "Loser_Frame", label: "Defeated", text: text("defeated.combat", "Defeated"))
-        out += centred(text("creatures_lost_victor.combat", "Casualties"), in: d["Victor_Losses"], at: ox, oy, font: ui.dateFont)
-        out += centred(text("creatures_lost_victor.combat", "Casualties"), in: d["Defeated_Losses"], at: ox, oy, font: ui.dateFont)
-        // casualties: each stack of the side (up to 8, four to a row) with what it lost
-        func losses(side: Int, in slot: String) {
-            guard let s = d[slot] else { return }
-            let units = b.units.filter { $0.side == side }
-            let cols = 4, stepX = s.width / cols, stepY = s.height / 2
-            for (k, u) in units.prefix(8).enumerated() {
-                let cx = ox + s.x + stepX * (k % cols) + stepX / 2, top = oy + s.y + stepY * (k / cols) + 4
-                if let ic = icon(u, size: 52) { out.append(Quad(texture: uiTexture("icon|\(ic.name)", { ic.bitmap }), x: cx - ic.width / 2, y: top, w: ic.width, h: ic.height)) }
-                let lost = u.stats.isHero ? (u.alive ? "0" : text("combat_label.dead", "dead")) : "\(u.initialCount - u.stats.count)"
-                let w = ui.numberFont.measure(lost)
-                out.append(Quad(texture: shade, x: cx - w / 2 - 4, y: top + 54, w: w + 8, h: ui.numberFont.size + 2))
-                out.append(Quad(texture: uiTexture("count|\(lost)", { ui.numberFont.render(lost, colour: (255, 236, 200)) }), x: cx - w / 2, y: top + 55, w: w, h: ui.numberFont.size))
-            }
-        }
-        losses(side: winner, in: "Winner_Rings"); losses(side: loser, in: "Loser_Rings")
-        if let ok = d["ok_button"], let btn = ui.button("ok") {
-            out.append(Quad(texture: uiTexture("button|ok|Released", { btn.bitmap }), x: ox + ok.x + (ok.width - btn.width) / 2, y: oy + ok.y + (ok.height - btn.height) / 2, w: btn.width, h: btn.height))
-        }
-        return out
-    }
-
-    /// A click on the combat screen (canvas coordinates).
-    func combatClick(x: Float, y: Float) {
-        guard let cs = combat, let b = cs.battle, let g = game else { return }
-        if prompt != nil { _ = messageBoxClick(x: x, y: y); return }
-        if cs.info != nil { cs.info = nil; return }   // a click closes the creature window (OK or anywhere)
-        if cs.showResults {
-            closeCombat(); return
-        }
-        guard !cs.busy, cs.result == nil, let cur = b.current, cur.side == 0 else { return }
-        if let spell = casting {   // aiming a spell: a stack it can land on, anything else cancels
-            casting = nil
-            if x < 885, let t = unitUnder(b, x: x, y: y), b.canTarget(spell, by: cur, t) { b.cast(spell, on: t.id, tables: g.tables); cs.pump() }
-            return
-        }
-        if let slot = cs.hotspot("combat_options"), x >= Float(slot.x), x < Float(slot.x + slot.width), y >= Float(slot.y), y < Float(slot.y + slot.height) {
-            optionsOpen = settings; return
-        }
-        if let slot = cs.hotspot("cast_spell"), x >= Float(slot.x), x < Float(slot.x + slot.width), y >= Float(slot.y), y < Float(slot.y + slot.height) {
-            sound?.play("miscellaneous.button"); openCombatBook(); return
-        }
-        for (hs, action) in [("defend", "defend"), ("wait", "wait"), ("auto_attack", "auto"), ("retreat", "retreat"), ("surrender", "surrender"), ("melee", "melee")] {
-            guard let slot = cs.hotspot(hs), x >= Float(slot.x), x < Float(slot.x + slot.width), y >= Float(slot.y), y < Float(slot.y + slot.height) else { continue }
-            switch action {
-            case "defend": b.defend()
-            case "wait": b.wait()
-            case "auto": b.autoResolve()
-            case "retreat": askRetreat()
-            case "surrender": prompt = (text("no_surrender_to_neutral.combat", "You cannot surrender to neutral armies."), false, nil)   // monsters take no surrender
-            case "melee": combatMeleeMode.toggle()
-            default: break
-            }
-            cs.pump(); return
-        }
-        guard x < Float(cs.hotspot("battle_scene")?.width ?? 885) else { return }
-        if onGate(b, x: x, y: y), b.nextToGate(cur) || b.canShoot(cur) { b.attackGate(); cs.pump(); return }
-        if let target = enemyUnder(b, x: x, y: y) {
-            if b.canShoot(cur), !combatMeleeMode { _ = b.shoot(target.id) } else { _ = b.attack(target.id) }
-            combatMeleeMode = false
-        } else {
-            let c = footprintAt(cur, x: x, y: y)
-            _ = b.move(to: c.0, c.1)
-        }
-        cs.pump()
-        _ = g
-    }
-
     func text(_ key: String, _ fallback: String) -> String { game?.tables?.strings[key] ?? fallback }
-
-    /// Retreat (the original's texts): only a hero can retreat, to the player's nearest town,
-    /// losing all the troops, after "wish_to_retreat.combat"; without a town, "no_town_after_retreat.combat".
-    func askRetreat() {
-        guard let cs = combat, let b = cs.battle, let g = game, let h = cs.hero else { return }
-        guard let town = g.retreatTown(for: h) else {
-            prompt = (text("no_town_after_retreat.combat", "You must have a town to retreat."), false, nil); return
-        }
-        cs.retreatTown = town
-        let q = text("wish_to_retreat.combat", "Are you sure you want to retreat to %town_name?  You will lose all your troops!")
-            .replacingOccurrences(of: "%town_name", with: g.towns[town].name)
-        prompt = (q, true, { [weak self] in b.retreat(); self?.combat?.pump() })
-    }
-
-    /// Leave the combat screen and apply the result to the map.
-    func closeCombat() {
-        if let cs = combat, let b = cs.battle, let g = game, let h = cs.hero, let town = cs.siegeTown {   // a siege
-            let won = b.finished ?? false
-            for (hh, u) in zip([h] + h.companions, b.units.filter { $0.side == 0 && $0.stats.isHero }) { if let c = u.caster { hh.spellPoints = c.spellPoints } }
-            func survivors(_ side: Int) -> [Hero.Stack] { b.units.filter { $0.side == side && !$0.stats.isHero && $0.alive && !$0.summoned }.map { Hero.Stack(creature: $0.keyword, count: $0.stats.count) } }
-            g.finishSiege(hero: h, town: town, won: won, army: survivors(0), garrison: survivors(1), value: b.experience)
-            cs.battle = nil; cs.siegeTown = nil
-            return
-        }
-        if let cs = combat, let b = cs.battle, let g = game, let h = cs.hero, let e = cs.enemy {   // an enemy hero's army
-            let won = b.finished ?? false
-            for (hh, u) in zip([h] + h.companions, b.units.filter { $0.side == 0 && $0.stats.isHero }) { if let c = u.caster { hh.spellPoints = c.spellPoints } }
-            func survivors(_ side: Int) -> [Hero.Stack] { b.units.filter { $0.side == side && !$0.stats.isHero && $0.alive && !$0.summoned }.map { Hero.Stack(creature: $0.keyword, count: $0.stats.count) } }
-            // the loser's casualties: creatures killed x their Experience
-            let loser = won ? 1 : 0
-            let value = b.units.filter { $0.side == loser && !$0.stats.isHero }.reduce(0) { $0 + ($1.initialCount - $1.stats.count) * $1.stats.experience }
-            g.finishHeroBattle(hero: h, enemy: e, won: won, army: survivors(0), enemyArmy: survivors(1), value: value)
-            cs.battle = nil; cs.enemy = nil
-            return
-        }
-        guard let cs = combat, let b = cs.battle, let g = game, let h = cs.hero, let p = cs.placed, let t = g.tables else { combat?.battle = nil; return }
-        if b.retreated, let town = cs.retreatTown {
-            g.retreat(hero: h, monsterAt: cs.monsterIndex, monstersLeft: b.units.first { $0.side == 1 }?.stats.count ?? 0, to: town)
-            cs.battle = nil; return
-        }
-        let won = b.finished ?? false
-        // the heroes keep the spell points they have left; summoned stacks go
-        for (hh, u) in zip([h] + h.companions, b.units.filter { $0.side == 0 && $0.stats.isHero }) { if let c = u.caster { hh.spellPoints = c.spellPoints } }
-        let army = b.units.filter { $0.side == 0 && !$0.stats.isHero && $0.alive && !$0.summoned }.map { Hero.Stack(creature: $0.keyword, count: $0.stats.count) }
-        let left = b.units.first { $0.side == 1 }?.stats.count ?? 0
-        g.finishBattle(hero: h, monsterAt: cs.monsterIndex, p, won: won, army: army, monstersLeft: left, experience: b.experience, rounds: b.round)
-        _ = t
-        cs.battle = nil
-    }
 
     /// The status line over an enemy: "Attack <creature> for N - M damage" (the game's
     /// attack.combat and text_damage_range texts), the range from the damage rules.
     func combatStatusText(x: Float, y: Float) -> String? {
         guard let cs = combat, let b = cs.battle, !cs.busy, cs.result == nil, let cur = b.current, cur.side == 0, x < 885, let t = game?.tables else { return nil }
         guard let target = enemyUnder(b, x: x, y: y) else { return nil }
-        let ranged = b.canShoot(cur) && !combatMeleeMode
+        let mode = cs.shownMode(cur)
+        guard mode != 4 else { return nil }
+        let ranged = b.canShoot(cur) && mode == 0
         let (lo, hi) = b.damageRange(cur, target, ranged: ranged)
         let range = lo == hi ? (t.strings["text_damage_range_1"] ?? "%damage damage").replacingOccurrences(of: "%damage", with: "\(lo)")
                              : (t.strings["text_damage_range_2"] ?? "%damage_low - %damage_high damage").replacingOccurrences(of: "%damage_low", with: "\(lo)").replacingOccurrences(of: "%damage_high", with: "\(hi)")
@@ -452,15 +390,17 @@ extension Renderer {
     /// Which combat cursor fits the cell under the pointer.
     func combatCursor(x: Float, y: Float) -> String {
         combatTarget = nil
-        guard let cs = combat, let b = cs.battle, cs.info == nil, prompt == nil, spellBook == nil, !cs.busy, cs.result == nil, let cur = b.current, cur.side == 0, x < 885 else { return "combat.normal" }
+        guard let cs = combat, let b = cs.battle, cs.info == nil, prompt == nil, spellBook == nil, !cs.busy, cs.result == nil, !cs.autoCombat, let cur = b.current, cur.side == 0, x < 885 else { return "combat.normal" }
         if let spell = casting {
             if let t = unitUnder(b, x: x, y: y), b.canTarget(spell, by: cur, t) { combatTarget = t.id; return "combat.cast_spell" }
             return "combat.no_cast"
         }
-        if onGate(b, x: x, y: y), b.nextToGate(cur) || b.canShoot(cur) { return "combat.attack_Gate" }
-        if let t = enemyUnder(b, x: x, y: y) {
+        let mode = cs.shownMode(cur)
+        if mode != 4, onGate(b, x: x, y: y), b.nextToGate(cur) || b.canShoot(cur) { return "combat.attack_Gate" }
+        if mode != 4, let t = enemyUnder(b, x: x, y: y) {
             combatTarget = t.id
-            if b.canShoot(cur), !combatMeleeMode {
+            if mode == 3 { return "combat.cast_spell" }
+            if b.canShoot(cur), mode == 0 {
                 // the shooting pointer's frames are the damage divisor: 1, 2, 4, 8 (range and obstacles)
                 let div = b.rangeDivisor(cur, t)
                 cursorFrameIndex = div >= 8 ? 3 : div >= 4 ? 2 : div >= 2 ? 1 : 0
@@ -474,7 +414,6 @@ extension Renderer {
         // walking: the number beside the pointer is the turns needed to get there
         let c = footprintAt(cur, x: x, y: y)
         guard let cost = b.cost(cur, to: c.0, c.1) else { return "combat.normal" }
-        // the pointer's frame is the turns needed: 1, 2, 3, 4+ (layers.cursor.combat.walk / fly)
         cursorFrameIndex = min(4, max(1, Int((cost / Float(max(1, cur.move))).rounded(.up)))) - 1
         return cur.stats.has("flying") ? "combat.fly" : "combat.walk"
     }
@@ -483,7 +422,6 @@ extension Renderer {
     func onGate(_ b: Battle, x: Float, y: Float) -> Bool {
         guard !b.field.gateCells.isEmpty, !b.field.gateDestroyed else { return false }
         let c = CombatScreen.cell(at: x, y)
-        // the gate stands tall: the cell under the pointer or a few cells in front of it
         for d in 0...4 where b.field.gateCells.contains(Battlefield.key(c.0 - d, c.1 - d)) { return true }
         return false
     }

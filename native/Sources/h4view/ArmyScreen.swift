@@ -30,7 +30,7 @@ extension Renderer {
     /// A layout layer at its own box (bitmap windows; kind-1 layers with a palette are images too).
     func layoutImage(_ d: LayerFile, _ name: String, _ ox: Int, _ oy: Int) -> [Quad] {
         guard let l = d[name] ?? d.layers.first(where: { $0.name.lowercased() == name.lowercased() }) else { return [] }
-        return [Quad(texture: uiTexture("army|\(l.name)", { l.bitmap }), x: ox + l.x, y: oy + l.y, w: l.width, h: l.height)]
+        return [Quad(texture: uiTexture("army|\(l.name)|\(l.x),\(l.y),\(l.width)x\(l.height)", { l.bitmap }), x: ox + l.x, y: oy + l.y, w: l.width, h: l.height)]
     }
     /// A button file's state image with its top-left at a hotspot's top-left.
     func buttonAt(_ file: String, _ state: String, _ l: UILayer?, _ ox: Int, _ oy: Int) -> [Quad] {

@@ -552,6 +552,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         out += shopQuads()
         out += sanctuaryQuads()
         out += levelUpQuads()
+        out += splitQuads()
         out += choiceQuads()
         out += messageBoxQuads()
         out += saveDialogQuads()
@@ -650,7 +651,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// The creature dialog (layers.dialog.army_right_click) opened by a right click on a
     /// wandering stack; drawn centred on the canvas.
     var creatureDialog: (creature: CreatureDef, count: Int, extra: [(creature: CreatureDef, count: Int)])?
-    static let dialogOrigin = ((AdventureUI.width - 464) / 2, (AdventureUI.height - 494) / 2)
+    static let dialogOrigin = Renderer.armyInfoOrigin
 
     /// Is a canvas point on the open creature dialog (and on its Close button)?
     func onDialog(_ x: Float, _ y: Float) -> (inside: Bool, close: Bool) {
@@ -671,74 +672,12 @@ final class Renderer: NSObject, MTKViewDelegate {
         let key = bands.first { n < $0.0 }?.1 ?? "thousands"
         return strings["\(key).creatures"] ?? key
     }
+    /// A wandering stack (or a garrison's troops): a neutral army at level 0 -- size words, no numbers.
     func creatureDialogQuads() -> [Quad] {
-        guard let cd = creatureDialog, let ui = ui, let d = ui.dialog("army_right_click") else { return [] }
-        let (ox, oy) = Renderer.dialogOrigin
-        var out: [Quad] = []
-        func image(_ name: String) {
-            guard let l = d[name] else { return }
-            out.append(Quad(texture: uiTexture("dlg|armyrc|\(name)", { l.bitmap }), x: ox + l.x, y: oy + l.y, w: l.width, h: l.height))
-        }
-        func text(_ s: String, in name: String, font: H4Font, colour: (UInt8, UInt8, UInt8) = (40, 24, 8)) {
-            guard let l = d[name], !s.isEmpty else { return }
-            let w = font.measure(s)
-            out.append(Quad(texture: uiTexture("dlgtext|\(font.size)|\(s)", { font.render(s, colour: colour) }), x: ox + l.x + (l.width - w) / 2, y: oy + l.y + (l.height - font.size) / 2, w: w, h: font.size))
-        }
-        image("Background")
-        // (the banners' image carries a dark outline along its top and left edges: left out)
-        if let l = d["creature_circles"] {
-            out.append(Quad(texture: uiTexture("dlg|armyrc|circles-trim", {
-                var b = l.bitmap
-                for y in 0..<b.height { for x in 0..<b.width where y < 3 || x < 3 { b.pixels[(y * b.width + x) * 4 + 3] = 0 } }
-                return b
-            }), x: ox + l.x, y: oy + l.y, w: l.width, h: l.height))
-        }
-        image("Skills_Frame")
-        for n in ["Damage", "Melee_Attack", "Melee_Defense", "Hit_Points", "Speed", "Movement", "Shots", "Ranged_Attack", "Ranged_Defense", "Spell_Points", "Experience"] { image(n) }
-        // OK only (a neutral army has nothing to ask of)
-        if let slot = d["Close_Button"], let b = ui.button("ok") {
-            out.append(Quad(texture: uiTexture("button|ok|\(b.name)", { b.bitmap }), x: ox + slot.x + (slot.width - b.width) / 2, y: oy + slot.y + (slot.height - b.height) / 2, w: b.width, h: b.height))
-        }
-        let c = cd.creature
-        func cap(_ s: String) -> String { s.prefix(1).uppercased() + s.dropFirst() }
-        let strings = game?.tables?.strings ?? [:]
-        text(strings["right_click_title.neutral_army"] ?? "Neutral Army", in: "Title", font: ui.font(22), colour: (12, 8, 4))
-        // the army in seven gold rings over the banners (creature_circles), each stack's size as a word
-        var stacks = [(c, cd.count)]
-        for e in cd.extra { stacks.append((e.creature, e.count)) }
-        // (the background has seven circles 60 px apart, centred at x = 53 + 60k, y = 89: each ring
-        // piece is drawn full size on one, its portrait hole (41,41 of its frame) on the centre)
-        let pieces = (0..<7).map { $0 == 0 ? "Left" : $0 == 6 ? "Right" : "Middle" }
-        for (k, pn) in pieces.enumerated() {
-            let cx = ox + 53 + 60 * k, cy = oy + 89
-            if k < stacks.count, let p = ui.creatureIcon(stacks[k].0.keyword) {
-                out.append(Quad(texture: uiTexture("cicon|\(stacks[k].0.keyword)", { p.bitmap }), x: cx - p.width / 2, y: cy - p.height / 2, w: p.width, h: p.height))
-            }
-            if let ring = ui.creatureRing(pn) {
-                out.append(Quad(texture: uiTexture("cring|\(pn)", { ring.bitmap }), x: cx - 41 + ring.x, y: cy - 41 + ring.y, w: ring.width, h: ring.height))
-            }
-            if k < stacks.count {
-                let word = Renderer.armySizeWord(stacks[k].1, strings)
-                let f = ui.font(14), w = f.measure(word)
-                out.append(Quad(texture: uiTexture("dlgtext|14|\(word)|12", { f.render(word, colour: (12, 8, 4)) }), x: cx - w / 2, y: cy + 46, w: w, h: f.size))
-            }
-        }
-        text(cap(c.plural), in: "Level", font: ui.font(20), colour: (12, 8, 4))
-        text(cap(c.alignment), in: "Alignment", font: ui.font(20), colour: (12, 8, 4))
-        // its abilities in the five places
-        let skills = iconSheet("skills.creature.52")
-        for (k, ab) in (RuleTables.creatureAbilities[c.keyword.lowercased()] ?? []).prefix(5).enumerated() {
-            if let l = skills[ab.lowercased()], let slot = d["Skill_\(k + 1)"] {
-                out.append(Quad(texture: uiTexture("skill|\(ab)", { l.bitmap }), x: ox + slot.x + (slot.width - l.width) / 2, y: oy + slot.y + (slot.height - l.height) / 2, w: l.width, h: l.height))
-            }
-        }
-        // morale and luck as their (unknown) icons; the numbers are not shown for a neutral army
-        let icons = iconSheet("morale.34")
-        for slot in ["Morale", "Luck"] {
-            guard let l = d[slot], let ic = icons["0 \(slot.lowercased())"] ?? icons.values.first(where: { $0.name.lowercased().hasSuffix(slot.lowercased()) }) else { continue }
-            out.append(Quad(texture: uiTexture("moraleicon|\(ic.name)", { ic.bitmap }), x: ox + l.x + (l.width - ic.width) / 2, y: oy + l.y + (l.height - ic.height) / 2, w: ic.width, h: ic.height))
-        }
-        return out
+        guard let cd = creatureDialog else { return [] }
+        let members: [ArmyMember] = [.stack(cd.creature, cd.count)] + cd.extra.map { .stack($0.creature, $0.count) }
+        let title = game?.tables?.strings["right_click_title.neutral_army"] ?? "Neutral Army"
+        return armyInfoQuads(members: members, level: 0, title: title, selected: 0, owner: nil)
     }
 
     /// Which of the game's cursors fits what is under a map point: attack over a wandering
@@ -827,33 +766,23 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
         else { text = g.describe(cellX: c.0, cellY: c.1) }
         guard let t = text else { return }
-        var lines: [String] = []
-        for para in t.body { lines += AdventureUI.wrap(para, font: ui.numberFont, width: 220); lines.append("") }
-        if lines.last == "" { lines.removeLast() }
-        let w = max(ui.dateFont.measure(t.title), lines.map { ui.numberFont.measure($0) }.max() ?? 0)
-        let h = ui.dateFont.lineHeight + 4 + lines.count * ui.numberFont.lineHeight
-        // near the cursor, kept inside the map viewport
-        var x = Int(canvas.0) + 16, y = Int(canvas.1) + 16
-        if x + w + 40 > AdventureUI.mapViewportWidth { x = Int(canvas.0) - w - 40 }
-        if y + h + 30 > AdventureUI.height { y = Int(canvas.1) - h - 30 }
-        popup = (t.title, lines, max(0, x), max(0, y))
+        // one string, first letter capitalised (0x8e135e), in a basic dialog centred on the pointer
+        // with its top edge there, kept on the screen (0x5595d0 vmode 0, 0x721a40)
+        let body = ([t.title] + t.body.filter { $0 != t.title }).filter { !$0.isEmpty }.joined(separator: "\n")
+        let whole = body.prefix(1).uppercased() + body.dropFirst()
+        guard let d = basicDialog(text: whole) else { return }
+        var x = Int(canvas.0) - d.W / 2, y = Int(canvas.1)
+        x = max(0, min(x, AdventureUI.width - d.W)); y = max(0, min(y, AdventureUI.height - d.H))
+        popup = (t.title, [whole], x, y)
+        popupSize = (d.W, d.H)
+        _ = ui
     }
 
     /// The quads of the right-click box.
     func popupQuads() -> [Quad] {
-        guard let p = popup, let ui = ui else { return [] }
-        let w = max(ui.dateFont.measure(p.title), p.lines.map { ui.numberFont.measure($0) }.max() ?? 0)
-        let h = ui.dateFont.lineHeight + 4 + p.lines.count * ui.numberFont.lineHeight
-        guard let box = ui.popupBitmap(clientW: w, clientH: h) else { return [] }
-        popupSize = (box.bitmap.width, box.bitmap.height)
-        var out = [Quad(texture: uiTexture("popup|\(w)x\(h)", { box.bitmap }), x: p.x, y: p.y, w: box.bitmap.width, h: box.bitmap.height)]
-        let cx = p.x + box.clientX, cy = p.y + box.clientY
-        let tw = ui.dateFont.measure(p.title)
-        out.append(Quad(texture: uiTexture("date|\(p.title)", { ui.dateFont.render(p.title, colour: (40, 24, 8)) }), x: cx + (w - tw) / 2, y: cy, w: tw, h: ui.dateFont.size))
-        for (i, line) in p.lines.enumerated() where !line.isEmpty {
-            out.append(Quad(texture: uiTexture("num|\(line)", { ui.numberFont.render(line, colour: (40, 24, 8)) }), x: cx, y: cy + ui.dateFont.lineHeight + 4 + i * ui.numberFont.lineHeight, w: ui.numberFont.measure(line), h: ui.numberFont.size))
-        }
-        return out
+        guard let p = popup, let d = basicDialog(text: p.lines.first ?? p.title) else { return [] }
+        popupSize = (d.W, d.H)
+        return basicDialogQuads(d, x: p.x, y: p.y)
     }
 
     /// A click on the map at a map-canvas point: visit the object there, or walk to the cell.

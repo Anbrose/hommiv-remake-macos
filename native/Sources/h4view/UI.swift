@@ -94,9 +94,15 @@ final class AdventureUI {
 
     /// Other sizes of the game's font, loaded on demand.
     var fonts: [Int: H4Font] = [:]
+    /// heroes4.exe 0x875bc0(size): the largest slot <= size of the table at 0xa84798, each slot bound
+    /// to a resource by the initialisers 0x874a80..0x8759a0 (menus_spec.md A.0).
+    static let fontSlots: [(Int, String)] = [(9, "Small Fonts5"), (11, "Small Fonts6"), (12, "Prose_Antique.12"), (14, "Prose_Antique.14"),
+        (16, "Prose_Antique.16"), (18, "Prose_Antique.18"), (20, "Prose_Antique.20"), (23, "Prose_Antique.22"), (25, "Prose_Antique.24"),
+        (27, "Prose_Antique.26"), (29, "Prose_Antique.28"), (30, "Prose_Antique.30"), (33, "Prose_Antique.32"), (34, "Prose_Antique.34")]
     func font(_ size: Int) -> H4Font {
         if let f = fonts[size] { return f }
-        let f = (try? H4Font(data: archive.payload("font.Prose_Antique.\(size).h4d"))) ?? dateFont
+        let slot = AdventureUI.fontSlots.last { $0.0 <= size } ?? AdventureUI.fontSlots[0]
+        let f = (try? H4Font(data: archive.payload("font.\(slot.1).h4d"))) ?? dateFont
         fonts[size] = f
         return f
     }

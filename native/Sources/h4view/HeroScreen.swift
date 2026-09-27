@@ -280,7 +280,12 @@ extension Renderer {
     /// and clipped; up to three figures in the i_of_n places (fewer while their frames do not fit),
     /// facing sw, each mostly in its wait loop, now and then another action or a walk in place.
     func creatureModelQuads(_ keyword: String, _ d: LayerFile, _ ox: Int, _ oy: Int) -> [Quad] {
-        guard let g = game, let ui = ui, let box = d["creature_box"], let c = g.tables?.creature(keyword) else { return [] }
+        guard let box = d["creature_box"] else { return [] }
+        return creatureModelQuads(keyword, box: box, ox, oy)
+    }
+    /// The model window (0x604f10) in any box: the backdrop scaled by min(w, h) / 280, the figures.
+    func creatureModelQuads(_ keyword: String, box: UILayer, _ ox: Int, _ oy: Int) -> [Quad] {
+        guard let g = game, let ui = ui, let c = g.tables?.creature(keyword) else { return [] }
         var out: [Quad] = []
         let sc = Float(min(box.width, box.height)) / 280
         let back = (try? ui.archive.payload("layers.control.creature_model.\(c.alignment.lowercased()).h4d")).flatMap { try? LayerFile(data: $0) }

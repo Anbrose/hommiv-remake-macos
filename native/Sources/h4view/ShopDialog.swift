@@ -1,10 +1,16 @@
 import Foundation
 import H4Engine
 
-/// The blacksmith / conservatory shop (layers.dialog.Blacksmith.Layout, the panel
-/// Blacksmith.<Generic|school> drawn in its Picture; heroes4.exe 0x670b80): four item rows and five
-/// potion rows, each its artifact's picture, price and a count set with the arrows (0..9999); the
-/// visiting army below to pick who receives them; Purchase pays the total from the kingdom's gold.
+/// The blacksmith / conservatory shop (t_dialog_blacksmith 0x670b80 / 0x670d90,
+/// layers.dialog.Blacksmith.Layout; object_dialogs_spec §2): Background and Border, the panel
+/// Blacksmith.Generic's BG_Picture at Picture (49,42), four item rows and five potion rows -- the
+/// art file's button state at the row's top-left + its own offset, a parchment's spell icon at
+/// Icon_<row>, the arrows at their hotspots' corners, center_box with the count (20), the price (the
+/// rect's height) -- the title (25), the kingdom's gold (16) and the total (20), button.ok and
+/// button.buy (disabled until something is affordable), the visiting army's ring row at (148,479),
+/// the chosen hero's portrait at (44,472) under large_portrait_frame. All black, no halo.
+/// (A town's blacksmith (t_blacksmith_window) keeps its alignment panel with rows named after the
+/// artifacts.)
 struct ShopState {
     var offer: ShopOffer
     var counts = Array(repeating: 0, count: 12)
@@ -21,22 +27,25 @@ struct ShopState {
                 RuleTables.artifactIds.firstIndex(of: norm(l.name)).map { ($0, l.name) }
             }
         } else {
-            rows = offer.items.enumerated().map { ($0.element, "Item_\($0.offset + 1)") } + offer.potions.enumerated().map { ($0.element, "Potion_\($0.offset + 1)") }
+            // Item_2 shows the object's separate artifact (the weapon, the stock's 4th), Item_1/3/4 the stock's 0..2 (0x671671)
+            var items = offer.items
+            if items.count == 4 { items = [items[0], items[3], items[1], items[2]] }
+            rows = items.enumerated().map { ($0.element, "Item_\($0.offset + 1)") } + offer.potions.enumerated().map { ($0.element, "Potion_\($0.offset + 1)") }
         }
     }
     var receivers: [Hero] { [offer.hero] + offer.hero.companions }
+    var generic: Bool { rows.first.map { $0.slot.hasPrefix("Item_") || $0.slot.hasPrefix("Potion_") } ?? true }
 }
 
 extension Renderer {
-    var shopOrigin: (Int, Int) { ((AdventureUI.width - 800) / 2, (AdventureUI.height - 600) / 2) }
+    var shopOrigin: (Int, Int) { dialogOrigin800 }
 
-    /// A shop picture (layers.dialog.Blacksmith.<name>), matched without regard to case or apostrophes.
+    /// A shop picture (layers.dialog.Blacksmith.<keyword>[.<item|potion>]), matched without regard to case or apostrophes.
     func shopArt(_ artifact: Int, potionRow: Bool) -> LayerFile? {
         guard let ui = ui else { return nil }
-        if RuleTables.artifactBase(artifact) == 0x7c { return ui.dialog(potionRow ? "Blacksmith.parchment.potion" : "Blacksmith.parchment.item") }
         let base = RuleTables.artifactBase(artifact)
         guard base < RuleTables.artifactIds.count else { return nil }
-        func norm(_ s: String) -> String { s.lowercased().replacingOccurrences(of: "'", with: "") }
+        func norm(_ s: String) -> String { s.lowercased().replacingOccurrences(of: "'", with: "").replacingOccurrences(of: " ", with: "_") }
         let want = norm(RuleTables.artifactIds[base])
         if ui.shopNames == nil {
             var names: [String: String] = [:]
@@ -48,83 +57,91 @@ extension Renderer {
             }
             ui.shopNames = names
         }
-        return ui.shopNames?[want].flatMap { ui.dialog($0) }
+        let file = ui.shopNames?[want + (potionRow ? ".potion" : ".item")] ?? ui.shopNames?[want]
+        return file.flatMap { ui.dialog($0) }
     }
 
     /// A panel layer by name, whatever its case.
-    func shopLayer(_ p: LayerFile, _ name: String) -> UILayer? { p[name] ?? p.layers.first { $0.name.lowercased() == name.lowercased() } }
+    func shopLayer(_ p: LayerFile, _ name: String) -> UILayer? { dLayer(p, name) }
     func shopPanel(_ s: ShopState) -> LayerFile? { ui?.dialog("Blacksmith.\(s.offer.panel)") ?? ui?.dialog("Blacksmith.Generic") }
+    func shopPicture(_ d: LayerFile) -> (Int, Int) {
+        let (ox, oy) = shopOrigin
+        let pic = d["Picture"]
+        return (ox + (pic?.x ?? 49), oy + (pic?.y ?? 42))
+    }
+    func shopCanBuy(_ s: ShopState) -> Bool {
+        let t = shopTotal(s)
+        return s.receiver < s.receivers.count && t > 0 && t <= (game?.resources["Gold", default: 0] ?? 0)
+    }
 
     func shopQuads() -> [Quad] {
         guard let s = shop, let g = game, let ui = ui, let d = ui.dialog("Blacksmith.Layout") else { return [] }
         let (ox, oy) = shopOrigin
-        var out = dialogImages(d, key: "shop", at: ox, oy, skip: ["DONT USE", "DONTUSE", "Picture", "Army_display", "Army_display_single"])
-        // the shop panel inside Picture
-        let pic = d["Picture"]
-        let px = ox + (pic?.x ?? 49), py = oy + (pic?.y ?? 42)
+        var out: [Quad] = []
+        out += dImage(d, "shop", "Background", ox, oy)
+        out += dImage(d, "shop", "Border", ox, oy)
+        let (px, py) = shopPicture(d)
         if let panel = shopPanel(s) {
-            out += dialogImages(panel, key: "shoppanel|\(s.offer.panel)", at: px, py, skip: Set(panel.layers.map(\.name).filter { $0 != "BG_Picture" }))
+            out += dImage(panel, "shoppanel.\(s.offer.panel)", "BG_Picture", px, py)
             for (k, r) in s.rows.enumerated() {
-                let potion = r.slot.hasPrefix("Potion") || (r.slot.lowercased().contains("potion") || r.slot.lowercased().contains("vial"))
-                if let box = shopLayer(panel, r.slot), let art = shopArt(r.artifact, potionRow: potion) {
-                    let artName = art.layers.first?.name ?? ""
-                    // an item's picture fills its 160 x 160 box; a potion's bottle alone stands in its smaller one
-                    // (a town's panel has its shelves drawn already: the picture alone, placed by its frame)
-                    let named = panel["Item_1"] == nil
-                    for n in potion || named ? ["Released"] : ["Layer 1", "Released"] {
-                        guard let l = art[n] else { continue }
-                        let full = potion && !named ? l : art["Layer 1"] ?? art["Box"] ?? art["Black Outline"] ?? l
-                        let x0 = px + box.x + (box.width - full.width) / 2, y0 = py + box.y + (box.height - full.height) / 2
-                        out.append(Quad(texture: uiTexture("shopart|\(r.artifact & 0xffff)|\(artName)|\(n)", { l.bitmap }), x: x0 + l.x - full.x, y: y0 + l.y - full.y, w: l.width, h: l.height))
+                if s.generic {
+                    let potion = r.slot.hasPrefix("Potion")
+                    guard let box = shopLayer(panel, r.slot) else { continue }
+                    // the row's button: the art's state image at the row's top-left + its own box
+                    if let art = shopArt(r.artifact, potionRow: potion) {
+                        out += dImageOffset(art["Released"] ?? dLayer(art, "released"), "shopart.\(RuleTables.artifactBase(r.artifact)).\(potion)", x: px + box.x, y: py + box.y)
                     }
-                    // a parchment shows its spell
-                    if let sp = RuleTables.artifactSpell(r.artifact), sp < RuleTables.spells.count,
+                    // a parchment's spell (0x551de0 at Icon_<row>)
+                    if let sp = RuleTables.artifactSpell(r.artifact), sp < RuleTables.spells.count, let ib = dRect(panel, "Icon_\(r.slot)"),
                        let ic = spellIcon(RuleTables.spells[sp].name) ?? spellIcon(RuleTables.spells[sp].keyword) {
-                        let cx = px + box.x + box.width / 2, cy = py + box.y + box.height / 2 + (potion ? 10 : 18)
-                        out.append(Quad(texture: uiTexture("spellicon|\(ic.name)", { ic.bitmap }), x: cx - ic.width / 2, y: cy - ic.height / 2, w: ic.width, h: ic.height))
+                        out += dImageAt(ic, "spell52", x: px + ib.x, y: py + ib.y)
                     }
-                } else if let box = shopLayer(panel, r.slot), let icon = artifactIcon(r.artifact) {
-                    out.append(Quad(texture: uiTexture("art|\(r.artifact & 0xffff)", { icon.bitmap }), x: px + box.x + (box.width - icon.width) / 2, y: py + box.y + (box.height - icon.height) / 2, w: icon.width, h: icon.height))
-                }
-                out += centred("\(g.artifactCost(r.artifact))", in: shopLayer(panel, "Text_\(r.slot)"), at: px, py, font: ui.numberFont)
-                out += centred("\(s.counts[k])", in: shopLayer(panel, "Number_\(r.slot)"), at: px, py, font: ui.numberFont, colour: (255, 230, 160))
-                for (arrow, file, on) in [("L_Arrow_", "l_arrow", s.counts[k] > 0), ("R_Arrow_", "r_arrow", s.counts[k] < 9999)] {
-                    guard let box = shopLayer(panel, "\(arrow)\(r.slot)"), let a = ui.dialog("Blacksmith.\(file)"), let l = a[on ? "Released" : "Disbaled"] ?? a["Released"] else { continue }
-                    out.append(Quad(texture: uiTexture("shoparrow|\(file)|\(on)", { l.bitmap }), x: px + box.x + (box.width - l.width) / 2, y: py + box.y + (box.height - l.height) / 2, w: l.width, h: l.height))
-                }
-            }
-        }
-        out += centred(s.offer.title, in: d["title_banner"], at: ox, oy, font: ui.dateFont)
-        // the army: heroes first, then creatures; the chosen receiver framed
-        if let box = d["Army_display_single"] {
-            let slotW = box.width / 7
-            var icons: [(UILayer?, String)] = s.receivers.map { (ui.portrait(keyword: $0.keyword, alignment: $0.alignment), "") }
-            icons += s.offer.hero.army.map { (ui.creatureIcon($0.creature), String($0.count)) }
-            for (k, ic) in icons.prefix(7).enumerated() {
-                let cx = ox + box.x + k * slotW + slotW / 2, cy = oy + box.y + box.height / 2
-                if k == s.receiver {
-                    out.append(Quad(texture: solid(230, 200, 60), x: cx - 29, y: cy - 29, w: 58, h: 58))
-                }
-                if let l = ic.0 {
-                    out.append(Quad(texture: uiTexture("shopicon|\(k)|\(l.name)|\(ic.1)", { l.bitmap }), x: cx - l.width / 2, y: cy - l.height / 2, w: l.width, h: l.height))
-                }
-                if !ic.1.isEmpty {
-                    let w = ui.numberFont.measure(ic.1)
-                    out.append(Quad(texture: uiTexture("dlgtext|\(ui.numberFont.size)|\(ic.1)|255", { ui.numberFont.render(ic.1, colour: (255, 255, 255)) }), x: cx + 26 - w, y: cy + 26 - ui.numberFont.size, w: w, h: ui.numberFont.size))
+                    if let l = dRect(panel, "L_Arrow_\(r.slot)") { out += dImageOffset(dLayer(dFile("dialog.Blacksmith.l_arrow"), "Released"), "shoparrow.l", x: px + l.x, y: py + l.y) }
+                    if let rr = dRect(panel, "R_Arrow_\(r.slot)") { out += dImageOffset(dLayer(dFile("dialog.Blacksmith.r_arrow"), "Released"), "shoparrow.r", x: px + rr.x, y: py + rr.y) }
+                    if let n = dRect(panel, "Number_\(r.slot)"), let bx = dLayer(dFile("dialog.Blacksmith.center_box"), "Box") {
+                        out += dImageAt(bx, "shopbox", x: px + n.x, y: py + n.y)
+                        out += dText("\(s.counts[k])", DRect(n.x, n.y, bx.width, bx.height), font: dFont(2 * bx.height / 3), vcentre: true, px, py)
+                    }
+                    if let t = dRect(panel, "Text_\(r.slot)") {
+                        out += dText("\(g.artifactCost(r.artifact))", t, font: dFont(t.h), vcentre: true, px, py)
+                    }
+                } else {
+                    out += townShopRow(s, k, r, panel, px, py)
                 }
             }
         }
-        if s.receiver < s.receivers.count, let slot = d["Hero_Portrait"] {
+        out += dText(s.offer.title, dRect(d, "title_banner"), font: dFont(26), ox, oy)
+        out += dText("\(g.resources["Gold", default: 0])", dRect(d, "Kingdom_gold_text"), font: dFont(16), ox, oy)
+        out += dText("\(shopTotal(s))", dRect(d, "total_spent_text"), font: dFont(22), vcentre: true, ox, oy)
+        if let c = dRect(d, "Close_button") { out += dButton("ok", "Released", x: ox + c.x, y: oy + c.y) }
+        if let b = dRect(d, "Purchase_Button_Pressed") { out += dButton("buy", shopCanBuy(s) ? "Released" : "disabled", x: ox + b.x, y: oy + b.y) }
+        // the visiting army's ring row, the chosen hero's portrait under the frame
+        out += ringRowQuads(shopRing(), items: ringItems(s.offer.hero), selected: s.receiver)
+        if s.receiver < s.receivers.count, let slot = dRect(d, "Hero_Portrait") {
             let h = s.receivers[s.receiver]
-            if let p = ui.portrait(keyword: h.keyword, alignment: h.alignment, size: 82) {
-                out.append(Quad(texture: uiTexture("portrait82|\(h.keyword)", { p.bitmap }), x: ox + slot.x + (slot.width - p.width) / 2, y: oy + slot.y + (slot.height - p.height) / 2, w: p.width, h: p.height))
-            }
+            if let p = ui.portrait(keyword: h.keyword, alignment: h.alignment, size: 82) { out += dImageAt(p, "portrait82.\(h.alignment)", x: ox + slot.x, y: oy + slot.y) }
         }
-        out += centred("\(g.resources["Gold", default: 0])", in: d["Kingdom_gold_text"], at: ox, oy, font: ui.numberFont)
-        out += centred("\(shopTotal(s))", in: d["total_spent_text"], at: ox, oy, font: ui.numberFont)
-        if let l = d["Close_button"], let b = ui.button("close") {
-            out.append(Quad(texture: uiTexture("button|\(b.name)|close", { b.bitmap }), x: ox + l.x + (l.width - b.width) / 2, y: oy + l.y + (l.height - b.height) / 2, w: b.width, h: b.height))
+        out += dImage(d, "shop", "large_portrait_frame", ox, oy)
+        return out
+    }
+    /// The ring row: at x 148, centred on y 519 (80 high).
+    func shopRing() -> [(piece: String, fx: Int, fy: Int)] {
+        let (ox, oy) = shopOrigin
+        return ringRow(x: ox + 148, y: oy + 519 - 40)
+    }
+    /// A town blacksmith's row (its panel names the rows after the artifacts, with the shelves drawn).
+    func townShopRow(_ s: ShopState, _ k: Int, _ r: (artifact: Int, slot: String), _ panel: LayerFile, _ px: Int, _ py: Int) -> [Quad] {
+        guard let g = game else { return [] }
+        var out: [Quad] = []
+        if let box = shopLayer(panel, r.slot), let art = shopArt(r.artifact, potionRow: false), let l = art["Released"] {
+            let full = art["Layer 1"] ?? art["Box"] ?? l
+            let x0 = px + box.x + (box.width - full.width) / 2, y0 = py + box.y + (box.height - full.height) / 2
+            out += dImageAt(l, "shopart.\(RuleTables.artifactBase(r.artifact)).town", x: x0 + l.x - full.x, y: y0 + l.y - full.y)
         }
+        if let t = dRect(panel, "Text_\(r.slot)") { out += dText("\(g.artifactCost(r.artifact))", t, font: dFont(t.h), vcentre: true, px, py) }
+        if let n = dRect(panel, "Number_\(r.slot)") { out += dText("\(s.counts[k])", n, font: dFont(20), vcentre: true, px, py) }
+        if let l = dRect(panel, "L_Arrow_\(r.slot)") { out += dImageOffset(dLayer(dFile("dialog.Blacksmith.l_arrow"), "Released"), "shoparrow.l", x: px + l.x, y: py + l.y) }
+        if let rr = dRect(panel, "R_Arrow_\(r.slot)") { out += dImageOffset(dLayer(dFile("dialog.Blacksmith.r_arrow"), "Released"), "shoparrow.r", x: px + rr.x, y: py + rr.y) }
         return out
     }
     func shopTotal(_ s: ShopState) -> Int {
@@ -135,27 +152,42 @@ extension Renderer {
     func shopClick(x: Float, y: Float) {
         guard var s = shop, let g = game, let d = ui?.dialog("Blacksmith.Layout") else { shop = nil; return }
         let (ox, oy) = shopOrigin
-        let pic = d["Picture"]
-        let px = ox + (pic?.x ?? 49), py = oy + (pic?.y ?? 42)
+        let (px, py) = shopPicture(d)
         if let panel = shopPanel(s) {
             for (k, r) in s.rows.enumerated() {
-                if inside(shopLayer(panel, "L_Arrow_\(r.slot)"), at: px, py, x, y), s.counts[k] > 0 { s.counts[k] -= 1 }
-                if inside(shopLayer(panel, "R_Arrow_\(r.slot)"), at: px, py, x, y) || inside(shopLayer(panel, r.slot), at: px, py, x, y), s.counts[k] < 9999 { s.counts[k] += 1 }
+                let lx = x - Float(px), ly = y - Float(py)
+                if let l = dRect(panel, "L_Arrow_\(r.slot)"), DRect(l.x, l.y, 23, 34).contains(lx, ly), s.counts[k] > 0 { s.counts[k] -= 1 }
+                let onItem: Bool = {
+                    guard s.generic, let box = dRect(panel, r.slot), let art = shopArt(r.artifact, potionRow: r.slot.hasPrefix("Potion")), let rel = art["Released"] else {
+                        return inside(shopLayer(panel, r.slot), at: px, py, x, y)
+                    }
+                    return DRect(box.x + rel.x, box.y + rel.y, rel.width, rel.height).contains(lx, ly)
+                }()
+                if let rr = dRect(panel, "R_Arrow_\(r.slot)"), DRect(rr.x, rr.y, 23, 34).contains(lx, ly) || onItem, s.counts[k] < 9999 { s.counts[k] += 1 }
             }
         }
-        if let box = d["Army_display_single"], inside(box, at: ox, oy, x, y) {
-            let k = Int((x - Float(ox + box.x)) / Float(box.width / 7))
-            if k < s.receivers.count { s.receiver = k }
+        for (k, slot) in shopRing().enumerated() where k < s.receivers.count && DRect(slot.fx + 15, slot.fy + 15, 52, 52).contains(x, y) { s.receiver = k }
+        if let b = dRect(d, "Purchase_Button_Pressed"), DRect(ox + b.x, oy + b.y, 78, 46).contains(x, y), shopCanBuy(s) {
+            g.buy(s.rows.enumerated().map { ($0.element.artifact, s.counts[$0.offset]) }, for: s.receivers[s.receiver])
+            s.counts = Array(repeating: 0, count: 12)
+            sound?.play("dialogue.marketplace")
         }
-        if inside(d["Purchase_Button_Released"], at: ox, oy, x, y), s.receiver < s.receivers.count {
-            let total = shopTotal(s)
-            if total > 0, total <= g.resources["Gold", default: 0] {
-                g.buy(s.rows.enumerated().map { ($0.element.artifact, s.counts[$0.offset]) }, for: s.receivers[s.receiver])
-                s.counts = Array(repeating: 0, count: 12)
-                sound?.play("dialogue.marketplace")
-            }
-        }
-        if inside(d["Close_button"], at: ox, oy, x, y) { shop = nil; return }
+        if let c = dRect(d, "Close_button"), DRect(ox + c.x, oy + c.y, 76, 44).contains(x, y) { shop = nil; return }
         shop = s
+    }
+    /// Balloons: the artifact's name on its picture, More / Less on the arrows, Okay / Buy.
+    func shopTip(x: Float, y: Float) -> String? {
+        guard let s = shop, let d = ui?.dialog("Blacksmith.Layout"), let panel = shopPanel(s) else { return nil }
+        let (ox, oy) = shopOrigin
+        let (px, py) = shopPicture(d)
+        let lx = x - Float(px), ly = y - Float(py)
+        for r in s.rows {
+            if let l = dRect(panel, "L_Arrow_\(r.slot)"), DRect(l.x, l.y, 23, 34).contains(lx, ly) { return interfaceText("blacksmith", "item_down")?.balloon }
+            if let l = dRect(panel, "R_Arrow_\(r.slot)"), DRect(l.x, l.y, 23, 34).contains(lx, ly) { return interfaceText("blacksmith", "item_up")?.balloon }
+            if inside(shopLayer(panel, r.slot), at: px, py, x, y) { return artifactName(r.artifact).name }
+        }
+        if let c = dRect(d, "Close_button"), DRect(ox + c.x, oy + c.y, 76, 44).contains(x, y) { return interfaceText("shared", "ok")?.balloon }
+        if let b = dRect(d, "Purchase_Button_Pressed"), DRect(ox + b.x, oy + b.y, 78, 46).contains(x, y) { return interfaceText("shared", "buy")?.balloon }
+        return nil
     }
 }

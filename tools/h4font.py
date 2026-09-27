@@ -22,7 +22,7 @@ import h4sprite
 
 def parse(b):
     size = b[3]
-    for start in range(11, 400):
+    for start in range(11, 2000):
         q = start
         glyphs = []
         while q + 16 <= len(b):

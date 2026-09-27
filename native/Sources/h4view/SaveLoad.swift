@@ -71,62 +71,27 @@ extension Renderer {
     var saveOrigin: (Int, Int) { ((AdventureUI.width - 799) / 2, (AdventureUI.height - 598) / 2) }
 
     func saveDialogQuads() -> [Quad] {
-        guard let sd = saveDialog, let ui = ui, let d = ui.dialog(sd.mode == .save ? "save_game" : "load_game") else { return [] }
+        guard let sd = saveDialog, let kit = kit else { return [] }
         let (ox, oy) = saveOrigin
-        var out = dialogImages(d, key: sd.mode == .save ? "save" : "load", at: ox, oy)
-        let strings = game?.tables?.strings ?? [:]
-        out += centred(sd.mode == .save ? strings["save_game.dialog"] ?? "Save Game" : strings["load_game.dialog"] ?? "Load Game", in: d["title"], at: ox, oy, font: ui.font(22))
-        let fmt = DateFormatter(); fmt.dateFormat = "yyyy-MM-dd HH:mm"
-        for row in 0..<11 {
-            let k = sd.scroll + row
-            guard k < sd.files.count, let line = d[String(format: "line %02d", row + 1)], let nameSlot = d["file_name"], let timeSlot = d["file_time"] else { continue }
-            let y = oy + line.y
-            if sd.selected == k { out.append(Quad(texture: shade, x: ox + nameSlot.x, y: y, w: timeSlot.x + timeSlot.width - nameSlot.x, h: line.height)) }
-            let colour: (UInt8, UInt8, UInt8) = sd.selected == k ? (255, 236, 160) : (40, 24, 8)
-            let f = sd.files[k]
-            out.append(Quad(texture: uiTexture("savename|\(f.name)|\(colour.0)", { ui.dateFont.render(f.name, colour: colour) }), x: ox + nameSlot.x + 36, y: y + (line.height - ui.dateFont.size) / 2, w: ui.dateFont.measure(f.name), h: ui.dateFont.size))
-            let t = fmt.string(from: f.date)
-            out.append(Quad(texture: uiTexture("savetime|\(t)|\(colour.0)", { ui.dateFont.render(t, colour: colour) }), x: ox + timeSlot.x + 8, y: y + (line.height - ui.dateFont.size) / 2, w: ui.dateFont.measure(t), h: ui.dateFont.size))
-        }
-        if sd.mode == .save, let box = d["edit_box"] {
-            let text = sd.name + (Int(Date().timeIntervalSince1970 * 2) % 2 == 0 ? "|" : "")
-            out.append(Quad(texture: uiTexture("saveedit|\(text)", { ui.dateFont.render(text, colour: (40, 24, 8)) }), x: ox + box.x + 8, y: oy + box.y + (box.height - ui.dateFont.size) / 2, w: ui.dateFont.measure(text), h: ui.dateFont.size))
-        }
-        // OK (save / load) and Cancel: the game's check and cross buttons in their places
-        for (slot, btn) in [(sd.mode == .save ? "save_location" : "load_location", "ok"), ("cancel_location", "cancel")] {
-            guard let l = d[slot], let b = ui.button(btn) else { continue }
-            out.append(Quad(texture: uiTexture("button|\(btn)|Released", { b.bitmap }), x: ox + l.x + (l.width - b.width) / 2, y: oy + l.y + (l.height - b.height) / 2, w: b.width, h: b.height))
-        }
-        return out
+        return quads(FileDialogView.items(kit, save: sd.mode == .save, files: sd.files, scroll: sd.scroll, selected: sd.selected, name: sd.name, ox: ox, oy: oy))
     }
 
     /// A click while the dialog is open (canvas coordinates); returns true when it was open.
     func saveDialogClick(x: Float, y: Float, double: Bool) -> Bool {
-        guard var sd = saveDialog, let ui = ui, let d = ui.dialog(sd.mode == .save ? "save_game" : "load_game") else { return false }
+        guard var sd = saveDialog, let kit = kit else { return false }
         let (ox, oy) = saveOrigin
-        func inside(_ n: String) -> Bool {
-            guard let l = d[n] else { return false }
-            return x >= Float(ox + l.x) && x < Float(ox + l.x + l.width) && y >= Float(oy + l.y) && y < Float(oy + l.y + l.height)
-        }
-        if inside("cancel_location") { saveDialog = nil; sound?.play("miscellaneous.button"); return true }
-        if inside(sd.mode == .save ? "save_location" : "load_location") { sound?.play("miscellaneous.button"); confirmSaveDialog(); return true }
-        if let nameSlot = d["file_name"], let timeSlot = d["file_time"] {
-            for row in 0..<11 {
-                guard let line = d[String(format: "line %02d", row + 1)] else { continue }
-                let k = sd.scroll + row
-                if k < sd.files.count, x >= Float(ox + nameSlot.x), x < Float(ox + timeSlot.x + timeSlot.width), y >= Float(oy + line.y), y < Float(oy + line.y + line.height) {
-                    sd.selected = k
-                    if sd.mode == .save { sd.name = sd.files[k].name }
-                    saveDialog = sd
-                    if double { confirmSaveDialog() }
-                    return true
-                }
-            }
-        }
-        if inside("scrollbar_location"), let bar = d["scrollbar_location"] {
-            let up = y < Float(oy + bar.y + bar.height / 2)
-            sd.scroll = max(0, min(max(0, sd.files.count - 11), sd.scroll + (up ? -1 : 1)))
+        switch FileDialogView.hit(kit, save: sd.mode == .save, files: sd.files.count, scroll: sd.scroll, ox: ox, oy: oy, x, y) {
+        case .cancel: saveDialog = nil; sound?.play("miscellaneous.button")
+        case .ok: sound?.play("miscellaneous.button"); confirmSaveDialog()
+        case .row(let k):
+            sd.selected = k
+            if sd.mode == .save { sd.name = sd.files[k].name }
             saveDialog = sd
+            if double { confirmSaveDialog() }
+        case .scroll(let d):
+            sd.scroll = max(0, min(max(0, sd.files.count - 11), sd.scroll + d))
+            saveDialog = sd
+        case .none: break
         }
         return true
     }

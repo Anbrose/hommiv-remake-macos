@@ -38,6 +38,8 @@ public struct CreatureDef {
     public let experience: Int
     /// 0 for the original creatures, 1 and 2 below the table's "Expansion N Creatures below" rows.
     public var expansion = 0
+    /// The price in every material (table columns Gold, Wood, Ore, Crystal, Sulfur, Mercury, Gems; only non-zero ones).
+    public var cost: [String: Int] = [:]
     public let shots: Int, spellPoints: Int
     public let shortHelp: String, longHelp: String   // "Flying, Spellcaster" and the paragraph about it
 }
@@ -91,6 +93,8 @@ public final class RuleTables {
     public var spellFlavor: [String: String] = [:]
     /// The spell book's line per spell (the "Spell Book Hero Text" column: "%Spell_name\nDoes %power damage.").
     public var spellBookText: [String: String] = [:]
+    /// table.Spells "Mage Guild Hero Text" (0x8652a0), when the table has that column.
+    public var spellGuildText: [String: String] = [:]
     public static let skillLevelNames = ["basic", "advanced", "expert", "master", "grandmaster"]
     /// Creature ability display names ("Normal Melee", "No Obstacle Penalty") -> the game's
     /// keywords ("normal_melee", "siege_machine"), from table.creature_abilities.
@@ -168,6 +172,11 @@ public final class RuleTables {
                         shortHelp: cr.value($0, "Short Help Text"), longHelp: cr.value($0, "Long Help Text"))
         }
         for i in creatures.indices { creatures[i].expansion = expansionOf[creatures[i].keyword] ?? 0 }
+        if let rows = Optional(cr.rows.filter { !cr.value($0, "Level").isEmpty }), rows.count == creatures.count {
+            for (i, row) in rows.enumerated() {
+                for m in ["Gold", "Wood", "Ore", "Crystal", "Sulfur", "Mercury", "Gems"] where int(cr.value(row, m)) != 0 { creatures[i].cost[m] = int(cr.value(row, m)) }
+            }
+        }
         let he = RuleTable(data: try archive.payload("table.heroes.h4d"))
         heroes = he.rows.filter { $0.count > 3 && !$0[0].isEmpty }.map {
             var h = HeroDef(keyword: $0[0], name: $0[1], sex: $0[2].lowercased(), heroClass: $0[3].lowercased())
@@ -236,16 +245,17 @@ public final class RuleTables {
             }
         }
         banks = bk
-        var sh: [String: String] = [:], sf: [String: String] = [:], sbt: [String: String] = [:]
+        var sh: [String: String] = [:], sf: [String: String] = [:], sbt: [String: String] = [:], sgt: [String: String] = [:]
         if let d = try? archive.payload("table.Spells.h4d") {
             let t = RuleTable(data: d)
             for row in t.rows where !row.isEmpty && !row[0].isEmpty {
                 sh[row[0].lowercased()] = t.value(row, "Help Text")
                 let fl = t.value(row, "Flavor Text"); if !fl.isEmpty { sf[row[0].lowercased()] = fl }
                 let bt = t.value(row, "Spell Book Hero Text"); if !bt.isEmpty { sbt[row[0].lowercased()] = bt }
+                let gt = t.value(row, "Mage Guild Hero Text"); if !gt.isEmpty { sgt[row[0].lowercased()] = gt }
             }
         }
-        spellHelp = sh; spellFlavor = sf; spellBookText = sbt
+        spellHelp = sh; spellFlavor = sf; spellBookText = sbt; spellGuildText = sgt
         var ak: [String: String] = [:], info: [String: (name: String, help: String)] = [:]
         if let d = try? archive.payload("table.creature_abilities.h4d") {
             for row in RuleTable(data: d).rows where row.count >= 2 && !row[0].isEmpty {

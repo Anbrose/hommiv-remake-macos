@@ -8,56 +8,51 @@ import H4Engine
 extension Renderer {
     var hireOrigin: (Int, Int) { ((AdventureUI.width - 707) / 2, (AdventureUI.height - 600) / 2) }
 
+    /// The dialog (t_hire_hero_dialog 0x743f40, town_screens_spec §4.2), in its children's order: the big
+    /// portrait at selected_portrait's top-left, the scrollbar, the gender checkboxes and labels, the name,
+    /// class and title, the class skills, the biography, the price, Buy and Close, the class highlight, the
+    /// class portraits, then Foreground, selected_ring and Skill_Frame over them. Black text with the
+    /// (200,200,200) halo, the title without.
     func hireQuads() -> [Quad] {
         guard let o = hire, let g = game, let t = g.tables, let ui = ui, let d = ui.dialog("hire_hero") else { return [] }
         let (ox, oy) = hireOrigin
-        var out = dialogImages(d, key: "hire", at: ox, oy, skip: ["Foreground", "Might_Highlight", "Magic_Highlight", "Skill_Frame", "Gold", "selected_ring"])
-        out += centred(text("tavern.misc", "Tavern"), in: d["Title"], at: ox, oy, font: ui.dateFont)
-        func img(_ n: String, at x: Int? = nil, _ y: Int? = nil) {
-            guard let l = d[n] else { return }
-            out.append(Quad(texture: uiTexture("dlg|hire|\(n)", { l.bitmap }), x: x ?? ox + l.x, y: y ?? oy + l.y, w: l.width, h: l.height))
-        }
-        for c in 0...10 {
-            let key = RuleTables.heroClasses[c].keyword
-            guard let slot = d["\(key)_portrait"], let list = o.candidates[c], let k = o.index[c], k < list.count else { continue }
-            let hd = t.heroes[list[k]]
-            if let p = ui.portrait(keyword: hd.keyword, alignment: RuleTables.heroClasses[c].alignment) {
-                out.append(Quad(texture: uiTexture("portrait|\(hd.keyword)", { p.bitmap }), x: ox + slot.x + (slot.width - p.width) / 2, y: oy + slot.y + (slot.height - p.height) / 2, w: p.width, h: p.height))
-            }
-        }
-        img("Foreground")
-        // the chosen class: its highlight (might classes the square one, magic the round one)
+        let halo = Renderer.halo200
         let c = o.selected, key = RuleTables.heroClasses[c].keyword
-        if let slot = d["\(key)_portrait"] {
-            let magic = [1, 3, 5, 7, 9].contains(c)
-            if let hl = d[magic ? "Magic_Highlight" : "Might_Highlight"] { img(hl.name, at: ox + slot.x + (magic ? -13 : -14), oy + slot.y + (magic ? -13 : -15)) }
+        var out = dImage(d, "hire", "Background", ox, oy)
+        let list = o.candidates[c] ?? [], k = o.index[c] ?? 0
+        let hd = k < list.count ? t.heroes[list[k]] : nil
+        if let hd = hd, let slot = d["selected_portrait"] {
+            out += dImageAt(ui.portrait(keyword: hd.keyword, alignment: RuleTables.heroClasses[c].alignment, size: 82), "p82", x: ox + slot.x, y: oy + slot.y)
         }
-        img("selected_ring"); img("Skill_Frame"); img("Gold")
-        if let list = o.candidates[c], let k = o.index[c], k < list.count {
-            let hd = t.heroes[list[k]]
-            if let slot = d["selected_portrait"], let p = ui.portrait(keyword: hd.keyword, alignment: RuleTables.heroClasses[c].alignment, size: 82) {
-                out.append(Quad(texture: uiTexture("portrait82|\(hd.keyword)", { p.bitmap }), x: ox + slot.x + (slot.width - p.width) / 2, y: oy + slot.y + (slot.height - p.height) / 2, w: p.width, h: p.height))
-            }
-            out += centred(hd.name, in: d["hero_name"], at: ox, oy, font: ui.dateFont)
-            out += centred(text(key, key.capitalized), in: d["hero_class"], at: ox, oy, font: ui.numberFont)
-            out += paragraph(hd.biography, in: d["biography"], at: ox, oy, font: ui.numberFont)
+        if let kit = kit, let sb = d["scrollbar"] { out += quads(kit.vScrollbar(ox + sb.x, oy + sb.y, sb.height, first: k, visible: 1, total: max(1, list.count))) }
+        let f18 = ui.font(18)
+        for (box, lab, on, word) in [("male_checkbox", "male_text", o.female[c] != true, "tavern_male.text"), ("female_checkbox", "female_text", o.female[c] == true, "tavern_female.text")] {
+            if let b = d[box] { out += townButton("checkbox", x: ox + b.x, y: oy + b.y, pressed: on) }
+            out += dText(text(word, word.contains("female") ? "Female" : "Male"), rect(d[lab], ox, oy), font: f18, centre: false, halo: halo, 0, 0)
         }
-        for (k, s) in RuleTables.heroClasses[c].skills.prefix(3).enumerated() {
-            guard let slot = d["Skill_\(k + 1)"] else { continue }
+        if let hd = hd { out += dText(hd.name, rect(d["hero_name"], ox, oy), font: ui.font(25), centre: true, halo: halo, 0, 0) }
+        out += dText(text(key, key.replacingOccurrences(of: "_", with: " ").capitalized), rect(d["hero_class"], ox, oy), font: f18, centre: true, halo: halo, 0, 0)
+        out += dText(text("tavern.misc", "Tavern"), rect(d["Title"], ox, oy), font: ui.font(23), centre: true, 0, 0)
+        for (n, s) in RuleTables.heroClasses[c].skills.prefix(3).enumerated() {
+            guard let slot = d["Skill_\(n + 1)"] else { continue }
             for l in skillIcon(s, level: 1) { out.append(Quad(texture: uiTexture("skillicon|\(l.name)|\(s)", { l.bitmap }), x: ox + slot.x + l.x, y: oy + slot.y + l.y, w: l.width, h: l.height)) }
         }
-        out += centred("\(o.prices[c])", in: d["gold_number"], at: ox, oy, font: ui.numberFont)
-        for (box, lab, on, word) in [("male_checkbox", "male_text", o.female[c] != true, "tavern_male.text"), ("female_checkbox", "female_text", o.female[c] == true, "tavern_female.text")] {
-            if let b = d[box], let bt = ui.button("checkbox", state: on ? "Pressed" : "Released") {
-                out.append(Quad(texture: uiTexture("button|checkbox|\(on)", { bt.bitmap }), x: ox + b.x + (b.width - bt.width) / 2, y: oy + b.y + (b.height - bt.height) / 2, w: bt.width, h: bt.height))
-            }
-            out += paragraph(text(word, word.contains("female") ? "Female" : "Male"), in: d[lab], at: ox, oy, font: ui.numberFont)
+        if let hd = hd { out += dText(hd.biography, rect(d["biography"], ox, oy), font: ui.font(20), centre: false, halo: halo, 0, 0, clip: true) }
+        out += dImage(d, "hire", "Gold", ox, oy)
+        out += dText("\(o.prices[c])", rect(d["gold_number"], ox, oy), font: ui.font(21), centre: true, halo: halo, 0, 0)
+        out += townButton("buy", x: ox + 447, y: oy + 344, disabled: g.resources["Gold", default: 0] < o.prices[c])
+        out += townButton("close", x: ox + 616, y: oy + 541)
+        // the chosen class's highlight (a magic class the round one), both moved to its portrait + (-14,-15)
+        if let slot = d["\(key)_portrait"] {
+            let magic = [1, 3, 5, 7, 9].contains(c)
+            out += dImageAt(d[magic ? "Magic_Highlight" : "Might_Highlight"], "hire", x: ox + slot.x - 14, y: oy + slot.y - 15)
         }
-        let afford = g.resources["Gold", default: 0] >= o.prices[c]
-        for (slot, name, state) in [("buy_button", "buy", afford ? "Released" : "Disabled"), ("ok_button", "ok", "Released")] {
-            guard let l = d[slot], let b = ui.button(name, state: state) ?? ui.button(name) else { continue }
-            out.append(Quad(texture: uiTexture("button|\(name)|\(b.name)", { b.bitmap }), x: ox + l.x + (l.width - b.width) / 2, y: oy + l.y + (l.height - b.height) / 2, w: b.width, h: b.height))
+        for cl in 0...10 {
+            let ck = RuleTables.heroClasses[cl].keyword
+            guard let slot = d["\(ck)_portrait"], let l = o.candidates[cl], let n = o.index[cl], n < l.count else { continue }
+            out += dImageAt(ui.portrait(keyword: t.heroes[l[n]].keyword, alignment: RuleTables.heroClasses[cl].alignment), "p52", x: ox + slot.x, y: oy + slot.y)
         }
+        for n in ["Foreground", "selected_ring", "Skill_Frame"] { out += dImage(d, "hire", n, ox, oy) }
         return out
     }
 
@@ -68,15 +63,15 @@ extension Renderer {
         if inside(d["male_checkbox"], at: ox, oy, x, y) || inside(d["male_text"], at: ox, oy, x, y) { g.switchGender(&o, female: false) }
         if inside(d["female_checkbox"], at: ox, oy, x, y) || inside(d["female_text"], at: ox, oy, x, y) { g.switchGender(&o, female: true) }
         if let sb = d["scrollbar"], inside(sb, at: ox, oy, x, y), let list = o.candidates[o.selected], !list.isEmpty {
-            let up = y < Float(oy + sb.y + sb.height / 2)
+            let up = (kit?.vScrollbarHit(ox + sb.x, oy + sb.y, sb.height, x, y) ?? 1) < 0
             o.index[o.selected] = ((o.index[o.selected] ?? 0) + (up ? list.count - 1 : 1)) % list.count
         }
-        if inside(d["buy_button"], at: ox, oy, x, y), g.resources["Gold", default: 0] >= o.prices[o.selected] {
+        if townButtonHit("buy", x: ox + 447, y: oy + 344, x, y), g.resources["Gold", default: 0] >= o.prices[o.selected] {
             let visitor = o.town == nil ? g.heroes.first : nil
             if let h = g.hire(o, with: visitor) { g.log.append("\(h.name) joins you"); sound?.play("dialogue.tavern") }
             hire = nil; return
         }
-        if inside(d["ok_button"], at: ox, oy, x, y) || x < Float(ox) || x > Float(ox + 707) || y < Float(oy) || y > Float(oy + 600) { hire = nil; return }
+        if townButtonHit("close", x: ox + 616, y: oy + 541, x, y) { hire = nil; return }
         hire = o
     }
 }

@@ -28,7 +28,10 @@ public final class H4Font {
             if q == d.count, list.count >= 200 { found = list }
         }
         guard let g = found else { throw H4Error.corrupt("font: no glyph chain") }
-        glyphs = g
+        // a chain found one or more glyphs late (Small Fonts6: its space record does not pass the test)
+        // is short at the front: blank glyphs keep code c at index c - 32
+        let missing = max(0, 224 - g.count)
+        glyphs = (0..<missing).map { _ in Glyph(width: 3, height: g[0].height, advance: 0, alpha: [UInt8](repeating: 0, count: 3 * g[0].height)) } + g
     }
 
     public func glyph(_ c: Character) -> Glyph {

@@ -1053,7 +1053,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         let inTown = townOpen != nil && town != nil
         refreshShroud()
         let mapList = inTown || inCombat ? [] : quads(at: time)
-        let uiList = inCombat ? combatQuads(now: now) : inTown ? townQuads() : uiQuads()
+        let uiList = inCombat ? combatQuads(now: now) : inTown ? townScreenQuads() : uiQuads()
         // where this frame's buttons are (any quad drawn with a layers.button.* picture), for the click sound
         buttonRects = uiList.filter { buttonTextures.contains(ObjectIdentifier($0.texture)) }.map { ($0.x, $0.y, $0.w, $0.h) }
         // the adventure panel's own buttons are painted into its frame; their hotspots mark them

@@ -476,7 +476,8 @@ if let out = snapshot {
             renderer.shop = ShopState(offer: o, panel: renderer.ui?.dialog("Blacksmith.\(a)"))
             print("town shop \(a): \(renderer.shop!.rows.map { game.artifactName($0.artifact) })")
         }
-        if openRecruit, let i = renderer.townOpen, let slot = townScreen?.hotspot("dwelling_1") { _ = i; renderer.townClick(x: Float(slot.x + 5), y: Float(slot.y + 5)) }
+        if let s = ProcessInfo.processInfo.environment["H4TOWNDLG"] { renderer.townSnapshot(s) }   // snapshot: a town dialog (TownScreen.townSnapshot)
+        if openRecruit, let i = renderer.townOpen, let slot = townScreen?.hotspot("dwelling_1") { _ = i; renderer.townScreenClick(x: Float(slot.x + 5), y: Float(slot.y + 5)) }
     }
     lap("textures uploaded")
     var snapTime = 0.0
@@ -625,7 +626,7 @@ final class MapView: MTKView {
         else if renderer.townOpen == nil, renderer.popup == nil, renderer.creatureDialog == nil, renderer.adventureDialog == nil, renderer.ui == nil || cx < Float(AdventureUI.mapViewportWidth) {
             name = renderer.cursorKind(mapPoint: renderer.pan + mouse / renderer.zoom)
         }
-        renderer.townHover = renderer.townOpen != nil && renderer.townDialog == nil ? renderer.townBuilding(at: cx, mouse.y / renderer.uiScale)?.name : nil
+        renderer.townHover = renderer.townOpen != nil && renderer.townDialog == nil ? renderer.townBuildingAt(cx, mouse.y / renderer.uiScale)?.name : nil
         renderer.townBalloon = renderer.townOpen != nil ? ((cx, mouse.y / renderer.uiScale), Date()) : nil   // the help balloon waits for the pointer to rest
         if let i = renderer.cursorFrameIndex, let s = cursors?.set(name) {
             cursorName = name; cursorFrame = min(i, s.frames.count - 1); s.frames[cursorFrame].set()
@@ -751,7 +752,7 @@ final class MapView: MTKView {
         }
         if let ui = renderer.ui {   // the panel: only its buttons react
             let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale
-            if renderer.townOpen != nil { renderer.townClick(x: cx, y: cy); return }
+            if renderer.townOpen != nil { renderer.townScreenClick(x: cx, y: cy); return }
             if cx >= Float(AdventureUI.mapViewportWidth) {
                 if ui.hit("end_turn", x: cx, y: cy) { renderer.endTurnFlip = Date(); g.endTurn() }
                 else if ui.hit("System_menu_button", x: cx, y: cy) { renderer.openSystemMenu() }
@@ -852,6 +853,7 @@ final class MapView: MTKView {
     override func keyDown(with e: NSEvent) {
         if renderer.saveDialogKey(e) { return }
         if renderer.dialogKey(e.keyCode) { return }   // the spell book's and the object dialogs' hot keys
+        if renderer.townKey(e.charactersIgnoringModifiers ?? "") { return }   // the town screen's hot keys (M marketplace)
         let step: Float = 64 / renderer.zoom
         // the original's hot keys on the map: S save, L load
         if !renderer.inCombat, renderer.townOpen == nil, renderer.prompt == nil {

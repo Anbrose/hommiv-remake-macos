@@ -522,14 +522,10 @@ final class Renderer: NSObject, MTKViewDelegate {
         var out: [Quad] = []
         out += adventureFrameQuads(ui, g)
         // a resource's name once the pointer rests on its pile (material_display/<res>)
-        if Date().timeIntervalSince(pointerSince) > 0.8 {
+        if balloonDue {
             for name in ui.resourceNames {
                 guard let h = frameLayer(ui, name), pointerCanvas.0 >= Float(h.x), pointerCanvas.0 < Float(h.x + h.width), pointerCanvas.1 >= Float(h.y), pointerCanvas.1 < Float(h.y + h.height) else { continue }
-                let s = g.tables?.interfaceTexts["material_display.\(name.lowercased())"]?.balloon ?? name
-                let fb = ui.font(18), w = fb.measure(s) + 12, hh = fb.size + 8
-                let bx = Int(pointerCanvas.0) - w - 4, by = Int(pointerCanvas.1) - hh / 2
-                out += [Quad(texture: solid(20, 12, 4), x: bx - 1, y: by - 1, w: w + 2, h: hh + 2), Quad(texture: solid(255, 252, 240), x: bx, y: by, w: w, h: hh),
-                        Quad(texture: uiTexture("dlgtext|18|\(s)|12", { fb.render(s, colour: (12, 8, 4)) }), x: bx + 6, y: by + 4, w: w - 12, h: fb.size)]
+                out += helpBalloonQuads(g.tables?.interfaceTexts["material_display.\(name.lowercased())"]?.balloon ?? name, at: pointerCanvas)
             }
         }
         // messages, newest at the bottom, over the top of the map

@@ -40,15 +40,11 @@ extension Renderer {
             let disabled = (name == "underground" && g.map.levels < 2) || (name == "spell" && !canCast) || (name == "move_army" && hero == nil)
             let over = pointerCanvas.0 >= Float(slot.x) && pointerCanvas.0 < Float(slot.x + slot.width) && pointerCanvas.1 >= Float(slot.y) && pointerCanvas.1 < Float(slot.y + slot.height)
             let state = disabled ? "Disabled" : over ? "Highlighted" : "Released"
-            if over, Date().timeIntervalSince(pointerSince) > 0.8 { balloon = g.tables?.interfaceTexts["adventure_map.\(help)"]?.balloon }
+            if over, balloonDue { balloon = g.tables?.interfaceTexts["adventure_map.\(help)"]?.balloon }
             guard let b = ui.button(name, state: state) ?? ui.buttonLayer(name, state) ?? ui.button(name) else { continue }
             out.append(Quad(texture: uiTexture("button|\(name)|\(b.name)", { b.bitmap }), x: slot.x + b.x, y: slot.y + b.y, w: b.width, h: b.height))
         }
-        if let s = balloon, !s.isEmpty {   // the help balloon left of the pointer
-            let f = ui.font(16), w = f.measure(s) + 12, h = f.size + 8, bx = Int(pointerCanvas.0) - w - 8, by = Int(pointerCanvas.1) - h - 4
-            out += [Quad(texture: solid(20, 12, 4), x: bx - 1, y: by - 1, w: w + 2, h: h + 2), Quad(texture: solid(255, 252, 240), x: bx, y: by, w: w, h: h),
-                    Quad(texture: uiTexture("dlgtext|16|\(s)|12", { f.render(s, colour: (12, 8, 4)) }), x: bx + 6, y: by + 4, w: w - 12, h: f.size)]
-        }
+        if let s = balloon { out += helpBalloonQuads(s, at: pointerCanvas) }
         return out
     }
 

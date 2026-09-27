@@ -9,21 +9,45 @@ enum AdventureDialog {
 }
 
 extension Renderer {
-    /// The panel's button column (layers.button.<name> at the adventure.1024 hotspots).
-    static let panelButtons: [(hotspot: String, button: String)] = [
-        ("System_menu_button", "system_menu"), ("Game_menu_button", "game_menu"), ("underground_button", "underground"),
-        ("spell_button", "spell"), ("move_army_button", "move_army"), ("Marketplace_button", "marketplace"), ("overview_button", "overview")]
+    /// The panel's buttons (0x4aa200): hotspot, button file, help item (table.Interface adventure_map/<item>).
+    static let panelButtons: [(hotspot: String, button: String, help: String)] = [
+        ("System_menu_button", "system_menu", "system_menu"), ("Game_menu_button", "game_menu", "game_menu"),
+        ("move_army_button", "move_army", "move_army"), ("overview_button", "overview", "kingdom_overview"),
+        ("spell_button", "spell", "cast_spell"), ("Marketplace_button", "marketplace", "marketplace"),
+        ("surface_button", "surface", "surface"), ("underground_button", "underground", "underground"), ("end_turn", "end_turn", "end_turn")]
 
+    /// Each t_button window at its hotspot's top-left, the state image at its own box. States (0x4b59a0):
+    /// move army needs an army, spell needs a caster; one level shows underground, disabled; two levels
+    /// show the other level's button. End Turn gives way to the hourglass while it flips (0x4b2930).
     func panelButtonQuads() -> [Quad] {
         guard let ui = ui, let g = game else { return [] }
         var out: [Quad] = []
-        for (hs, name) in Renderer.panelButtons {
-            guard let slot = ui.hotspot(hs) else { continue }
-            // the level button shows the other level: "underground" on the surface, "surface" below
-            let btn = name == "underground" && (g.map.levels < 2 || g.level == 1) ? "surface" : name
-            let state = (name == "underground" && g.map.levels < 2) || (name == "spell" && (g.heroes.first?.spells.isEmpty ?? true)) ? "Disabled" : "Released"
-            guard let b = ui.button(btn, state: state) ?? ui.button(btn) else { continue }
-            out.append(Quad(texture: uiTexture("button|\(btn)|\(state)", { b.bitmap }), x: slot.x + (slot.width - b.width) / 2, y: slot.y + (slot.height - b.height) / 2, w: b.width, h: b.height))
+        let hero = g.heroes.first
+        let canCast = hero.map { !$0.spells.isEmpty || !$0.artifactSpells.withSkill.isEmpty || !$0.artifactSpells.free.isEmpty } ?? false
+        let flipping = endTurnFlip.map { Date().timeIntervalSince($0) < Double(hourglassFlip?.frames.count ?? 0) * 0.1 } ?? false
+        var balloon: String?
+        for (hs, name, help) in Renderer.panelButtons {
+            guard let slot = frameLayer(ui, hs) else { continue }
+            if name == "surface" && (g.map.levels < 2 || g.level == 0) { continue }
+            if name == "underground" && g.map.levels >= 2 && g.level == 1 { continue }
+            if name == "end_turn" && flipping {
+                if let hg = hourglassFlip, let t0 = endTurnFlip {
+                    let fr = hg.frames[min(hg.frames.count - 1, Int(Date().timeIntervalSince(t0) / 0.1))]
+                    out.append(Quad(texture: uiTexture("hourglass|\(fr.name)", { fr.bitmap }), x: slot.x + fr.box.left - hg.frames[0].box.left, y: slot.y + fr.box.top - hg.frames[0].box.top, w: fr.bitmap.width, h: fr.bitmap.height))
+                }
+                continue
+            }
+            let disabled = (name == "underground" && g.map.levels < 2) || (name == "spell" && !canCast) || (name == "move_army" && hero == nil)
+            let over = pointerCanvas.0 >= Float(slot.x) && pointerCanvas.0 < Float(slot.x + slot.width) && pointerCanvas.1 >= Float(slot.y) && pointerCanvas.1 < Float(slot.y + slot.height)
+            let state = disabled ? "Disabled" : over ? "Highlighted" : "Released"
+            if over, Date().timeIntervalSince(pointerSince) > 0.8 { balloon = g.tables?.interfaceTexts["adventure_map.\(help)"]?.balloon }
+            guard let b = ui.button(name, state: state) ?? ui.buttonLayer(name, state) ?? ui.button(name) else { continue }
+            out.append(Quad(texture: uiTexture("button|\(name)|\(b.name)", { b.bitmap }), x: slot.x + b.x, y: slot.y + b.y, w: b.width, h: b.height))
+        }
+        if let s = balloon, !s.isEmpty {   // the help balloon left of the pointer
+            let f = ui.font(16), w = f.measure(s) + 12, h = f.size + 8, bx = Int(pointerCanvas.0) - w - 8, by = Int(pointerCanvas.1) - h - 4
+            out += [Quad(texture: solid(20, 12, 4), x: bx - 1, y: by - 1, w: w + 2, h: h + 2), Quad(texture: solid(255, 252, 240), x: bx, y: by, w: w, h: h),
+                    Quad(texture: uiTexture("dlgtext|16|\(s)|12", { f.render(s, colour: (12, 8, 4)) }), x: bx + 6, y: by + 4, w: w - 12, h: f.size)]
         }
         return out
     }

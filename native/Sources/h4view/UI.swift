@@ -37,10 +37,12 @@ final class AdventureUI {
     }
 
     /// Where the hero list's round slots are on the panel (centres, top to bottom).
-    static let heroSlots = [(789, 393), (789, 465), (789, 537)]
+    /// (Hero_List rows at (747, 344 + 77k), the 52-px portrait at (19, 11) of each: centres.)
+    static let heroSlots = [(792, 381), (792, 458), (792, 535)]
     /// The seven rings of the army panel: the centres of the ring holes of the "IGNORE" image
     /// (737,575) of layers.adventure.1024 -- four on top, three below the first three.
-    static let armySlots = [(777, 614), (835, 614), (894, 614), (953, 615), (777, 678), (835, 678), (894, 678)]
+    /// (Style 3 of t_creature_array_window: TL, BL, T, B, T, BR, R from (736,575); portrait centres.)
+    static let armySlots = [(777, 615), (777, 679), (836, 615), (836, 679), (895, 615), (894, 679), (964, 615)]
     /// The stack labels' font: the game takes the largest Prose Antique no taller than the
     /// inset_text box (11 px; heroes4.exe 0x875bc0 and its size table at 0xa84798).
     lazy var ringFont: H4Font = font(11)
@@ -298,6 +300,23 @@ final class AdventureUI {
 
     /// The town list card: layers.town.<alignment>.tiny has a terrain background per terrain
     /// name, the walls (Village/Fort/Citadel/Castle) and three bar hotspots (creatures, magic, misc).
+    var smallListFile: LayerFile?
+    /// The town list's row art (layers.town.Small_list: Frame, Highlighted, Built, town, map).
+    func smallList() -> LayerFile? {
+        if smallListFile == nil, let d = try? archive.payload("layers.town.Small_list.h4d") { smallListFile = try? LayerFile(data: d) }
+        return smallListFile
+    }
+    var townPictures: [String: LayerFile] = [:]
+    /// The town list's picture of a town (layers.town.<alignment>.Adventure: terrain, walls, three bars).
+    func townPicture(_ alignment: String) -> LayerFile? {
+        if townPictures[alignment] == nil, let d = try? archive.payload("layers.town.\(alignment).Adventure.h4d") { townPictures[alignment] = try? LayerFile(data: d) }
+        return townPictures[alignment]
+    }
+    /// A button file's layer by name in any case (marketplace has "HIghlighted").
+    func buttonLayer(_ name: String, _ state: String) -> UILayer? {
+        _ = button(name)
+        return buttons[name]?.layers.first { $0.name.lowercased() == state.lowercased() }
+    }
     var tinyCards: [String: LayerFile] = [:]
     func tinyCard(_ alignment: String) -> LayerFile? {
         if tinyCards[alignment] == nil, let d = try? archive.payload("layers.town.\(alignment).tiny.h4d") { tinyCards[alignment] = try? LayerFile(data: d) }

@@ -447,6 +447,9 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// Each drawn combat stack: its cell centre and its head on screen (for the floating messages).
     var unitHeads: [(cx: Float, cy: Float, sx: Float, top: Float)] = []
     lazy var highlightRing: Sprite? = (try? resolver?.archive.payload("animation.highlight_ring.h4d")).flatMap { try? Sprite(data: $0) }
+    /// When End Turn was clicked: the hourglass flips in its place (animation.hourglass.flip).
+    var endTurnFlip: Date?
+    lazy var hourglassFlip: Sprite? = (try? resolver?.archive.payload("animation.hourglass.flip.h4d")).flatMap { try? Sprite(data: $0) }
     var messageItemHelp: String? = nil        // a found artifact's help, shown while right-clicked
     var pointerCanvas: (Float, Float) = (0, 0) { didSet { pointerSince = Date() } }
     var pointerSince = Date()
@@ -514,143 +517,16 @@ final class Renderer: NSObject, MTKViewDelegate {
     func uiQuads() -> [Quad] {
         guard let ui = ui, let g = game else { return [] }
         var out: [Quad] = []
-        for l in ui.frameImages {
-            out.append(Quad(texture: uiTexture("frame|\(l.name)|\(l.x),\(l.y)", { l.bitmap }), x: l.x, y: l.y, w: l.width, h: l.height))
-        }
-        // minimap: the map squashed into the panel's frame, with the visible area outlined
-        if let mm = ui.hotspot("mini_map") {
-            let stamp = g.level * 7_000_001 + g.day * 1000 + g.enemyHeroes.reduce(0) { $0 + $1.x * 13 + $1.y * 3 } + g.heroes.reduce(0) { $0 + $1.x * 7 + $1.y } + g.towns.filter { $0.owned }.count * 31 + g.mines.filter { $0.owned }.count * 17
-            if minimapTexture == nil || minimapStamp != stamp { minimapTexture = makeTexture(AdventureUI.minimap(game: g, size: mm.width)); minimapStamp = stamp }
-            out.append(Quad(texture: minimapTexture!, x: mm.x, y: mm.y, w: mm.width, h: mm.height))
-            let n = Float(scene.map.size)
-            // the playable rectangle on the map canvas: columns -n/2..n/2 (x 16n+32...48n+32), rows n/2..3n/2
-            let mapW = n * 32, mapH = n * 16
-            let originX: Float = n * 16 + 32, originY: Float = n * 8 + 32
-            let vx0 = (pan.x - originX) / mapW, vy0 = (pan.y - originY) / mapH
-            let vx1 = vx0 + Float(AdventureUI.mapViewportWidth) * uiScale / zoom / mapW, vy1 = vy0 + viewSize.y / zoom / mapH
-            let rx0 = mm.x + Int(max(0, min(1, vx0)) * Float(mm.width)), rx1 = mm.x + Int(max(0, min(1, vx1)) * Float(mm.width))
-            let ry0 = mm.y + Int(max(0, min(1, vy0)) * Float(mm.height)), ry1 = mm.y + Int(max(0, min(1, vy1)) * Float(mm.height))
-            if rx1 > rx0, ry1 > ry0 {
-                out.append(Quad(texture: white, x: rx0, y: ry0, w: rx1 - rx0, h: 1)); out.append(Quad(texture: white, x: rx0, y: ry1 - 1, w: rx1 - rx0, h: 1))
-                out.append(Quad(texture: white, x: rx0, y: ry0, w: 1, h: ry1 - ry0)); out.append(Quad(texture: white, x: rx1 - 1, y: ry0, w: 1, h: ry1 - ry0))
-            }
-        }
-        // resource numbers, right-aligned in their fields
-        // the treasury: each amount centred under its pile, thousands separated ("15,000")
-        let f16 = ui.font(16)
-        for name in ui.resourceNames {
-            guard let field = ui.hotspot("\(name)_Number") ?? ui.hotspot("\(name.lowercased())_number") else { continue }
-            let text = Renderer.grouped(g.resources[name] ?? 0)
-            let t = uiTexture("num16|\(text)", { f16.render(text, colour: (12, 8, 4)) })
-            let w = f16.measure(text)
-            out.append(Quad(texture: t, x: field.x + (field.width - w) / 2, y: field.y + (field.height - f16.size) / 2 + 1, w: w, h: f16.size))
-        }
-        // a resource's name once the pointer rests on its pile
+        out += adventureFrameQuads(ui, g)
+        // a resource's name once the pointer rests on its pile (material_display/<res>)
         if Date().timeIntervalSince(pointerSince) > 0.8 {
             for name in ui.resourceNames {
-                guard let h = ui.hotspot(name), pointerCanvas.0 >= Float(h.x), pointerCanvas.0 < Float(h.x + h.width), pointerCanvas.1 >= Float(h.y), pointerCanvas.1 < Float(h.y + h.height) else { continue }
-                let s = g.tables?.interfaceTexts["adventure_map.\(name.lowercased())"]?.balloon ?? name
+                guard let h = frameLayer(ui, name), pointerCanvas.0 >= Float(h.x), pointerCanvas.0 < Float(h.x + h.width), pointerCanvas.1 >= Float(h.y), pointerCanvas.1 < Float(h.y + h.height) else { continue }
+                let s = g.tables?.interfaceTexts["material_display.\(name.lowercased())"]?.balloon ?? name
                 let fb = ui.font(18), w = fb.measure(s) + 12, hh = fb.size + 8
                 let bx = Int(pointerCanvas.0) - w - 4, by = Int(pointerCanvas.1) - hh / 2
                 out += [Quad(texture: solid(20, 12, 4), x: bx - 1, y: by - 1, w: w + 2, h: hh + 2), Quad(texture: solid(255, 252, 240), x: bx, y: by, w: w, h: hh),
                         Quad(texture: uiTexture("dlgtext|18|\(s)|12", { fb.render(s, colour: (12, 8, 4)) }), x: bx + 6, y: by + 4, w: w - 12, h: fb.size)]
-            }
-        }
-        // the day scroll and its two text lines
-        if let slot = ui.hotspot("day_scroll") {
-            if let bg = ui.dayScroll["Background"] { out.append(Quad(texture: uiTexture("scroll|bg", { bg.bitmap }), x: slot.x + bg.x, y: slot.y + bg.y, w: bg.width, h: bg.height)) }
-            if let rt = ui.dayScroll["Right"] { out.append(Quad(texture: uiTexture("scroll|right", { rt.bitmap }), x: slot.x + rt.x, y: slot.y + rt.y, w: rt.width, h: rt.height)) }
-            if let field = ui.dayScroll["text"] {
-                let lines = ["Day \(g.dayOfWeek) of Week \(g.week)", "Month \(g.month)"]
-                for (i, line) in lines.enumerated() {
-                    let w = ui.dateFont.measure(line)
-                    let t = uiTexture("date|\(line)", { ui.dateFont.render(line, colour: (40, 24, 8)) })
-                    out.append(Quad(texture: t, x: slot.x + field.x + (field.width - w) / 2, y: slot.y + field.y + i * ui.dateFont.lineHeight - 2, w: w, h: ui.dateFont.size))
-                }
-            }
-        }
-        // hero portraits (in their rings) in the hero list, with the movement bar (left, green)
-        // and the mana bar (right, purple) filling from the bottom
-        for (i, h) in g.heroes.prefix(AdventureUI.heroSlots.count).enumerated() {
-            if let p = ui.portrait(keyword: h.keyword, alignment: h.alignment) {
-                let (cx, cy) = AdventureUI.heroSlots[i]
-                let px = cx - p.width / 2, py = cy - p.height / 2
-                if let ring = ui.heroRing() {
-                    let ox = px - ring.portraitAt.0, oy = py - ring.portraitAt.1
-                    out.append(Quad(texture: uiTexture("ring|frame", { ring.frame.bitmap }), x: ox + ring.frame.x, y: oy + ring.frame.y, w: ring.frame.width, h: ring.frame.height))
-                    if let bar = ui.armyRings?["Move_Bar"], h.maxMovement > 0 {
-                        let f = max(0, min(1, h.movement / h.maxMovement))
-                        let filled = Int(Float(bar.height) * f)
-                        if filled > 0 {   // the bar's lower `filled` rows
-                            let tex = uiTexture("ring|move|\(filled)", { var b = Bitmap(width: bar.width, height: filled); let src = bar.bitmap
-                                for y in 0..<filled { for x in 0..<bar.width { for k in 0..<4 { b.pixels[(y * bar.width + x) * 4 + k] = src.pixels[((bar.height - filled + y) * bar.width + x) * 4 + k] } } }; return b })
-                            out.append(Quad(texture: tex, x: ox + bar.x, y: oy + bar.y + bar.height - filled, w: bar.width, h: filled))
-                        }
-                    }
-                    if let mana = ui.armyRings?["Mana_Bar"] {   // no spell points yet: an empty purple sliver
-                        out.append(Quad(texture: solid(120, 40, 160), x: ox + mana.x + 4, y: oy + mana.y + mana.height - 4, w: mana.width - 8, h: 3))
-                    }
-                }
-                out.append(Quad(texture: uiTexture("portrait|\(h.alignment)|\(h.keyword)", { p.bitmap }), x: px, y: py, w: p.width, h: p.height))
-            }
-        }
-        // the selected hero's army: the hero, then his stacks; the labels last, over the next row
-        if let h = g.heroes.first {
-            let heroes = [h] + h.companions
-            var slots: [(UILayer?, String?)] = heroes.map { (ui.portrait(keyword: $0.keyword, alignment: $0.alignment), nil) }
-            slots += h.army.map { (ui.creatureIcon($0.creature), String($0.count)) }
-            let shown = Array(slots.prefix(AdventureUI.armySlots.count).enumerated())
-            for (i, (icon, _)) in shown {
-                let (cx, cy) = AdventureUI.armySlots[i]
-                if let icon = icon {
-                    out.append(Quad(texture: uiTexture("icon|\(icon.name)", { icon.bitmap }), x: cx - icon.width / 2, y: cy - icon.height / 2, w: icon.width, h: icon.height))
-                }
-            }
-            for (i, (_, count)) in shown {
-                let (cx, cy) = AdventureUI.armySlots[i]
-                ringLabel(&out, ui: ui, cx: cx, cy: cy, count: count, hero: i < heroes.count)
-            }
-        }
-        // the town list: each owned town as its card (terrain, walls, three bars) and a piece of the minimap around it
-        if let list = ui.hotspot("Town_list") {
-            for (i, t) in g.towns.filter({ $0.owned }).prefix(3).enumerated() {
-                let cx = list.x + 4, cy = list.y + 8 + i * 72
-                if let card = ui.tinyCard(t.alignment) {
-                    let terrain = TownScreen.terrainNames[t.terrain] ?? "grass"
-                    if let bg = card.layers.first(where: { $0.name.lowercased() == terrain }) ?? card["grass"] {
-                        out.append(Quad(texture: uiTexture("tiny|\(t.alignment)|\(bg.name)", { bg.bitmap }), x: cx + bg.x, y: cy + bg.y, w: bg.width, h: bg.height))
-                    }
-                    let walls = t.buildings.contains("castle") ? "Castle" : t.buildings.contains("citadel") ? "Citadel" : t.buildings.contains("fort") ? "Fort" : "Village"
-                    if let w = card[walls] { out.append(Quad(texture: uiTexture("tiny|\(t.alignment)|\(walls)", { w.bitmap }), x: cx + w.x, y: cy + w.y, w: w.width, h: w.height)) }
-                    // bars: creatures waiting to be recruited, mage guild level, buildings built
-                    let waiting = t.available.values.reduce(0, +)
-                    let guild = (1...5).filter { t.buildings.contains("mage guild \($0)") }.count
-                    let built = g.tables.map { tb in Float(t.buildings.count) / Float(max(1, tb.buildings(for: t.alignment).count)) } ?? 0
-                    for (slot, frac, rgb) in [("creatures", min(1, Float(waiting) / 60), (40, 200, 40)), ("magic", Float(guild) / 5, (40, 80, 220)), ("misc", built, (220, 40, 40))] as [(String, Float, (UInt8, UInt8, UInt8))] {
-                        guard let hs = card[slot] else { continue }
-                        out.append(Quad(texture: solid(20, 20, 20), x: cx + hs.x, y: cy + hs.y, w: hs.width, h: hs.height))
-                        let w = Int(Float(hs.width) * max(0, min(1, frac)))
-                        if w > 0 { out.append(Quad(texture: solid(rgb.0, rgb.1, rgb.2), x: cx + hs.x, y: cy + hs.y, w: w, h: hs.height)) }
-                    }
-                }
-                // the minimap around the town, 48 px of it
-                if let mm = minimapTexture, let hs = ui.hotspot("mini_map") {
-                    _ = mm
-                    let tex = uiTexture("townmap|\(t.x),\(t.y)|\(minimapStamp)", {
-                        let full = AdventureUI.minimap(game: g, size: hs.width)
-                        let n = Float(g.map.size)
-                        let px = Int((Float(t.y - t.x + 3 - 3) + n / 2) / n * Float(hs.width)), py = Int((Float(t.x + t.y + 6) - n / 2) / n * Float(hs.width))
-                        var b = Bitmap(width: 48, height: 48)
-                        for y in 0..<48 { for x in 0..<48 {
-                            let sx = px - 24 + x, sy = py - 24 + y
-                            guard sx >= 0, sx < full.width, sy >= 0, sy < full.height else { continue }
-                            for k in 0..<4 { b.pixels[(y * 48 + x) * 4 + k] = full.pixels[(sy * full.width + sx) * 4 + k] }
-                        } }
-                        return b
-                    })
-                    out.append(Quad(texture: black, x: cx + 92, y: cy, w: 50, h: 50))
-                    out.append(Quad(texture: tex, x: cx + 93, y: cy + 1, w: 48, h: 48))
-                }
             }
         }
         // messages, newest at the bottom, over the top of the map
@@ -659,10 +535,6 @@ final class Renderer: NSObject, MTKViewDelegate {
             let x = (AdventureUI.mapViewportWidth - w) / 2, y = 90 + i * (ui.dateFont.lineHeight + 8)
             out.append(Quad(texture: shade, x: x - 10, y: y - 4, w: w + 20, h: ui.dateFont.lineHeight + 6))
             out.append(Quad(texture: uiTexture("toast|\(t.text)", { ui.dateFont.render(t.text, colour: (255, 236, 200)) }), x: x, y: y, w: w, h: ui.dateFont.size))
-        }
-        // End Turn button (released state) in its hotspot
-        if let slot = ui.hotspot("end_turn"), let b = ui.endTurnButton["Released"] {
-            out.append(Quad(texture: uiTexture("button|end_turn", { b.bitmap }), x: slot.x, y: slot.y, w: b.width, h: b.height))
         }
         out += panelButtonQuads()
         out += floaterQuads()

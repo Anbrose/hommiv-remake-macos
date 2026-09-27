@@ -732,7 +732,7 @@ final class MapView: MTKView {
             let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale
             if renderer.townOpen != nil { renderer.townClick(x: cx, y: cy); return }
             if cx >= Float(AdventureUI.mapViewportWidth) {
-                if ui.hit("end_turn", x: cx, y: cy) { g.endTurn() }
+                if ui.hit("end_turn", x: cx, y: cy) { renderer.endTurnFlip = Date(); g.endTurn() }
                 else if ui.hit("System_menu_button", x: cx, y: cy) { renderer.openSystemMenu() }
                 else if ui.hit("Game_menu_button", x: cx, y: cy) { renderer.openGameMenu() }
                 else if ui.hit("move_army_button", x: cx, y: cy) { g.continueMoving(hero) }   // the horse: go on along the kept route
@@ -751,10 +751,10 @@ final class MapView: MTKView {
                     let col = (cx - Float(mm.x)) / Float(mm.width) * n - n / 2, row = (cy - Float(mm.y)) / Float(mm.height) * n + n / 2
                     renderer.centre(onCell: (Int(((row - col) / 2).rounded()), Int(((row + col) / 2).rounded())))
                 }
-                else if ui.hit("Town_list", x: cx, y: cy), let list = ui.hotspot("Town_list") {
+                else if let list = ui.hotspot("Town_list"), cx >= Float(list.x), cx < Float(list.x + 136), cy >= Float(list.y), cy < Float(list.y + list.height) {
                     // a town card: one click brings the map to the town, a double click opens it
                     let owned = g.towns.indices.filter { g.towns[$0].owned }
-                    let row = Int((cy - Float(list.y) - 8) / 72)
+                    let row = Int((cy - Float(list.y)) / 72)
                     if row >= 0, row < min(3, owned.count) {
                         let i = owned[row]
                         if e.clickCount >= 2 { renderer.townOpen = i } else { renderer.centre(onTown: i) }

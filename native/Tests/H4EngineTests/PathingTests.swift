@@ -103,6 +103,20 @@ final class PathingTests: XCTestCase {
         XCTAssertEqual(g.stepCost100(from: 3, 2, to: 4, 2), 100)
     }
 
+    /// A route into a 2 x 2 "town" with a two-cell gate on its +x side ends on the gate cell it
+    /// enters, from the cell before it; with the door cell's approaches all guarded there is none.
+    func testRouteIntoObject() {
+        var g = grid(9)
+        g.place(at: 2, 3, blocked: [(0, 0), (1, 0), (0, 1), (1, 1)],
+                entries: Sprite.EntryEdges(w: 2, h: 2, top: [Bool](repeating: false, count: 6), left: [false, false, false, false, true, true]))
+        let r = g.routeInto([(3, 3), (3, 4)], from: (6, 4))
+        XCTAssertEqual(cells(r?.route), [[5, 4], [4, 4], [3, 4]]); XCTAssertEqual(r?.cost, 300)
+        let last = r!.route[r!.route.count - 2], end = r!.route.last!
+        XCTAssertTrue(g.enters(from: last.x, last.y, to: end.x, end.y))
+        g.zones = Set([(4, 2), (4, 3), (4, 4), (4, 5)].map { $0.0 * 9 + $0.1 })
+        XCTAssertNil(g.routeInto([(3, 3), (3, 4)], from: (6, 4)))
+    }
+
     /// The real entry masks of a few models (0x44ca30 layout).
     func testModelEntryEdges() throws {
         let path = NSString(string: "~/Games/HoMM4/prefix/drive_c/Games/HoMM4/Data/heroes4.h4r").expandingTildeInPath

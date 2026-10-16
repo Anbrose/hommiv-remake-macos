@@ -296,6 +296,8 @@ public final class Hero {
     public var plan: [(x: Int, y: Int)] = []
     /// The object the current plan/path leads to (a pickup taken on arrival), by cell and name.
     public var target: (x: Int, y: Int, name: String)?
+    /// The object's cell the planned route enters it by (the route's last cell, 0x500160).
+    public var targetCell: (x: Int, y: Int)?
 
     public init(actor: String, x: Int, y: Int, movement: Float = 20) {
         self.actor = actor; self.x = x; self.y = y; self.movement = movement; maxMovement = movement
@@ -1248,10 +1250,10 @@ public final class GameState {
         if !cells.isEmpty {
             // the exe's route ends on the object's cell, entered through an entry edge (0x4ff180 /
             // 0x4fe990); the hero walks to the cell before it and uses the object from there
-            if let r = passability.routeInto(cells, from: from), r.route.count >= 2 {
+            if let r = passability.routeInto(cells, from: from), r.route.count >= 2, let last = r.route.last {
                 hero.plan = Array(r.route.dropLast())
-                hero.target = (p.cellX, p.cellY, p.name)
-            } else { hero.plan = []; hero.target = nil }
+                hero.target = (p.cellX, p.cellY, p.name); hero.targetCell = (last.x, last.y)
+            } else { hero.plan = []; hero.target = nil; hero.targetCell = nil }   // no way in: no route (0x500160 fails)
             return
         }
         var best: [(x: Int, y: Int)]? = nil
@@ -1605,7 +1607,9 @@ public final class GameState {
 
         if let t = h.target, let last = plan.last, let p = scene.placed.first(where: { $0.cellX == t.x && $0.cellY == t.y && $0.name == t.name }) {
             var cell = (x: t.x, y: t.y)
-            if let c = entryCells(p).first(where: { GameState.adjacent((last.x, last.y), $0) && passability.enters(from: last.x, last.y, to: $0.0, $0.1) }) {
+            if let c = h.targetCell, GameState.adjacent((last.x, last.y), (c.x, c.y)), passability.enters(from: last.x, last.y, to: c.x, c.y) {
+                cell = c
+            } else if let c = entryCells(p).first(where: { GameState.adjacent((last.x, last.y), $0) && passability.enters(from: last.x, last.y, to: $0.0, $0.1) }) {
                 cell = (c.0, c.1)
             } else {
                 var best = Int.max

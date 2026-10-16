@@ -188,7 +188,7 @@ extension Renderer {
                 let c = cs.shownCentre(u)
                 unitHeads.append((c.0, c.1, px, frame.map { oy + Float($0.box.top) * sc } ?? (py - 100 * sc)))
             }
-            if alpha >= 1 { q += labels[u.id] ?? [] }
+            if cs.fades[u.id] == nil { q += labels[u.id] ?? [] }   // no label while it fades in or out
             drawn.append((py + (shownAlive ? 0 : -1000), q))
         }
         // missiles and the actors spells and impacts put on the field, depth-sorted with the units by

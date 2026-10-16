@@ -418,10 +418,17 @@ if let out = snapshot {
     }
     if ProcessInfo.processInfo.environment["H4MARKET"] != nil { renderer.market = MarketState(k: 3, sell: 1, buy: 0, lots: 5) }   // snapshot: the marketplace
     if let t = ProcessInfo.processInfo.environment["H4VISIT"], let h = game.heroes.first {   // snapshot: the first object of a type visited
-        if let p = scene.placed.first(where: { $0.type == t || "\($0.type).\($0.subtype)" == t }) {
-            _ = game.debugVisit(hero: h, p)
+        let guarded = ProcessInfo.processInfo.environment["H4GUARDED"] != nil   // with H4VISIT: a dwelling that has guards
+        if let p = scene.placed.first(where: { ($0.type == t || "\($0.type).\($0.subtype)" == t || "\($0.type).\($0.subtype)".hasPrefix(t + "_")) && (!guarded || game.dwelling(for: $0).map { game.dwellings[$0].guards > 0 } == true) }) {
+            if let i = game.dwelling(for: p) { let d = game.dwellings[i]; print("dwelling \(d.creature): available \(d.available) guards \(d.guards) owner \(String(describing: d.owner))") }
+            if !game.debugVisitDwelling(hero: h, p) { _ = game.debugVisit(hero: h, p) }
             if ProcessInfo.processInfo.environment["H4AIM"] != nil { aim(renderer, at: (p.cellX, p.cellY)) }
             if let c = game.choice { print("choice: \(c.text.prefix(60)) \(c.options)") }
+            if let q = game.question { print("question: \(q.text)") }
+            if let o = game.dwellingOpen, let d = game.dwellingOffer(o.dwelling, for: o.hero) {
+                print("recruit \(d.creature.keyword): \(d.available) available, cost \(d.cost), most \(game.recruitMost(available: d.available, cost: d.cost))")
+                renderer.openMapRecruit(o.dwelling, o.hero); game.dwellingOpen = nil
+            }
             for m in game.scripts.messages { print("message: \(m.prefix(80))") }
             if let o = game.shopOpen { renderer.shop = ShopState(offer: o, panel: renderer.ui?.dialog("Blacksmith.\(o.panel)")); game.shopOpen = nil; print("shop \(o.panel): \(o.items.map { game.artifactName($0) }) \(o.potions.map { game.artifactName($0) })") }
             if let o = game.sanctuaryOpen { renderer.sanctuary = o; game.sanctuaryOpen = nil; print("sanctuary: \(o.text) enter \(o.canEnter)")
@@ -477,6 +484,10 @@ if let out = snapshot {
             print("town shop \(a): \(renderer.shop!.rows.map { game.artifactName($0.artifact) })")
         }
         if let s = ProcessInfo.processInfo.environment["H4TOWNDLG"] { renderer.townSnapshot(s) }   // snapshot: a town dialog (TownScreen.townSnapshot)
+        if let c = ProcessInfo.processInfo.environment["H4RECRUIT"], let i = renderer.townOpen, game.tables?.creature(c) != nil {   // snapshot: the recruit dialog of any creature
+            game.towns[i].available[c] = max(game.towns[i].available[c] ?? 0, 5)
+            renderer.townDialog = .recruit(creature: c, count: renderer.recruitMost(c))
+        }
         if openRecruit, let i = renderer.townOpen, let slot = townScreen?.hotspot("dwelling_1") { _ = i; renderer.townScreenClick(x: Float(slot.x + 5), y: Float(slot.y + 5)) }
     }
     lap("textures uploaded")
@@ -727,6 +738,7 @@ final class MapView: MTKView {
         if renderer.shop != nil { renderer.shopClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.sanctuary != nil { renderer.sanctuaryClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.hire != nil { renderer.hireClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
+        if renderer.mapRecruit != nil { renderer.mapRecruitClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.optionsOpen != nil { renderer.optionsClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.spellBook != nil { renderer.spellBookClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.inCombat {

@@ -165,20 +165,30 @@ extension Renderer {
 
     // MARK: the recruit dialog (t_recruit_dialog 0x7f5b00, spec §3 B)
 
-    /// The creature's price in every material, gold first (0x7f66e0's order).
+    /// The creature's price in every material, gold first (0x7f66e0's order), the gold less the best
+    /// discount of the garrison's and the visiting army's heroes (0x8b52d6).
     func creatureCost(_ c: CreatureDef) -> [(String, Int)] {
-        let cost = c.cost.isEmpty ? ["Gold": c.gold] : c.cost
-        return Renderer.townMaterials.compactMap { m in cost[m].flatMap { $0 != 0 || m == "Gold" ? (m, $0) : nil } }
+        guard let g = game else { return [] }
+        var heroes: [Hero] = []
+        if let i = townOpen {
+            heroes = g.towns[i].garrisonHeroes
+            if let v = g.townVisitor, v.town == i { heroes += [v.hero] + v.hero.companions }
+        }
+        return g.recruitCost(c, discount: g.recruitDiscount(heroes))
     }
     /// The most that can be recruited: what waits, and what the treasury pays for (0x7fa822).
     func recruitMost(_ creature: String) -> Int {
         guard let g = game, let i = townOpen, let c = g.tables?.creature(creature) else { return 0 }
-        var n = g.towns[i].available[creature] ?? 0
-        for (m, v) in creatureCost(c) where v > 0 { n = min(n, (g.resources[m] ?? 0) / v) }
-        return max(0, n)
+        return g.recruitMost(available: g.towns[i].available[creature] ?? 0, cost: creatureCost(c))
     }
     func recruitQuads(_ creature: String, _ count: Int) -> [Quad] {
-        guard let ui = ui, let g = game, let i = townOpen, let d = ui.dialog("recruit"), let c = g.tables?.creature(creature) else { return [] }
+        guard let g = game, let i = townOpen, let c = g.tables?.creature(creature) else { return [] }
+        return recruitDialogQuads(c, available: g.towns[i].available[creature] ?? 0, count: count, cost: creatureCost(c), most: recruitMost(creature))
+    }
+    /// The dialog itself, for a town's dwelling or one on the map (the same t_recruit_dialog): the
+    /// creature, what waits, the count chosen, the price of one, the most that can be bought.
+    func recruitDialogQuads(_ c: CreatureDef, available: Int, count: Int, cost: [(String, Int)], most: Int) -> [Quad] {
+        guard let ui = ui, let g = game, let d = ui.dialog("recruit") else { return [] }
         let (ox, oy) = recruitOrigin
         let halo = Renderer.halo200
         var out = dImage(d, "recruit", "Background", ox, oy)
@@ -192,9 +202,8 @@ extension Renderer {
             out += dImageAt(l, "cskill", x: ox + slot.x, y: oy + slot.y)
         }
         // the label and the number under it (font = half the rect's height)
-        let most = recruitMost(creature)
         let f18 = ui.font(18)
-        for (slot, label, value) in [("Available_Number", text("available.recruit", "Available"), g.towns[i].available[creature] ?? 0), ("Recruit_Number", text("recruit.recruit", "Recruit"), count)] {
+        for (slot, label, value) in [("Available_Number", text("available.recruit", "Available"), available), ("Recruit_Number", text("recruit.recruit", "Recruit"), count)] {
             guard let r = dRect(d, slot)?.offset(ox, oy) else { continue }
             out += dText(label, DRect(r.x, r.y, r.w, f18.lineHeight), font: f18, centre: true, halo: halo, 0, 0)
             out += dText("\(value)", DRect(r.x, r.y + f18.lineHeight, r.w, f18.lineHeight), font: f18, centre: true, halo: halo, 0, 0)
@@ -221,7 +230,7 @@ extension Renderer {
         // the unit cost (Individual_Resource_k) and the total (Resource_k): icons centred, "%i" in 16 with the halo
         let f16 = ui.font(16)
         for (slot, textSlot, mult) in [("Individual_Resource_", "Individual_Resource_Text_", 1), ("Resource_", "Resource_Text_", count)] {
-            for (k, (m, v)) in creatureCost(c).prefix(3).enumerated() {
+            for (k, (m, v)) in cost.prefix(3).enumerated() {
                 if let s = dLayer(d, "\(slot)\(k + 1)"), let icon = materialIcon(m, size: 32) {
                     out += dImageAt(icon, "mat32", x: ox + s.x + (s.width - icon.width) / 2, y: oy + s.y + (s.height - icon.height) / 2)
                 }
@@ -229,6 +238,46 @@ extension Renderer {
             }
         }
         return out
+    }
+
+    enum RecruitClick { case buy, cancel, count(Int), none }
+    /// A click on the recruit dialog: Buy (when the count is above 0), Cancel, or the scrollbar
+    /// (its arrows step by one, the track sets count = position x most).
+    func recruitDialogClick(x: Float, y: Float, count: Int, most: Int) -> RecruitClick {
+        guard let d = ui?.dialog("recruit") else { return .cancel }
+        let (ox, oy) = recruitOrigin
+        if townButtonHit("buy", x: ox + 454, y: oy + 541, x, y) { return count > 0 && count <= most ? .buy : .none }
+        if townButtonHit("cancel", x: ox + 12, y: oy + 542, x, y) { return .cancel }
+        guard most > 0, let bar = dLayer(d, "Scrollbar"), let kit = kit else { return .none }
+        let r = UIRect(ox + bar.x, oy + bar.y, bar.width, bar.height)
+        guard r.contains(x, y) else { return .none }
+        let f = kit.file("control.horizontal_scroll")
+        let lw = MenuKit.find(f, "Up_Released")?.width ?? 52, rw = MenuKit.find(f, "Down_Released")?.width ?? 56
+        var n = count
+        if x < Float(r.x + lw) { n = count - 1 } else if x >= Float(r.x + r.w - rw) { n = count + 1 }
+        else { n = Int((kit.hScrollbarValue(r, x) * Float(most)).rounded()) }
+        return .count(max(0, min(most, n)))
+    }
+
+    // MARK: the map dwelling's recruit dialog (0x43dee0)
+
+    func mapRecruitQuads() -> [Quad] {
+        guard let r = mapRecruit, let g = game, let o = g.dwellingOffer(r.dwelling, for: r.hero) else { return [] }
+        return recruitDialogQuads(o.creature, available: o.available, count: r.count, cost: o.cost, most: g.recruitMost(available: o.available, cost: o.cost))
+    }
+    /// Opened with the most that can be bought (0x7fa893).
+    func openMapRecruit(_ dwelling: Int, _ hero: Hero) {
+        guard let g = game, let o = g.dwellingOffer(dwelling, for: hero) else { return }
+        mapRecruit = (dwelling, hero, g.recruitMost(available: o.available, cost: o.cost))
+    }
+    func mapRecruitClick(x: Float, y: Float) {
+        guard let r = mapRecruit, let g = game, let o = g.dwellingOffer(r.dwelling, for: r.hero) else { mapRecruit = nil; return }
+        switch recruitDialogClick(x: x, y: y, count: r.count, most: g.recruitMost(available: o.available, cost: o.cost)) {
+        case .buy: if g.recruit(fromDwelling: r.dwelling, count: r.count, to: r.hero) { sound?.play("dialogue.recruit") }; mapRecruit = nil
+        case .cancel: mapRecruit = nil
+        case .count(let n): mapRecruit?.count = n
+        case .none: break
+        }
     }
 
     // MARK: clicks
@@ -255,30 +304,20 @@ extension Renderer {
             if townButtonHit("cancel_button", x: ox + 29, y: oy + 495, x, y) { townDialog = .buildList }
             return true
         case .recruit(let creature, let count, let fromCastle):
-            let (ox, oy) = recruitOrigin
-            guard let d = ui.dialog("recruit"), let c = g.tables?.creature(creature) else { townDialog = nil; return true }
+            guard let c = g.tables?.creature(creature) else { townDialog = nil; return true }
             let back: TownDialog? = fromCastle ? .castle : nil
-            let most = recruitMost(creature)
-            if townButtonHit("buy", x: ox + 454, y: oy + 541, x, y) {
-                if count > 0, count <= most, g.addToGarrison(i, creature, count) {
+            switch recruitDialogClick(x: x, y: y, count: count, most: recruitMost(creature)) {
+            case .buy:
+                if g.addToGarrison(i, creature, count) {
                     g.towns[i].available[creature, default: 0] -= count
                     for (m, v) in creatureCost(c) { g.resources[m, default: 0] -= v * count }
                     g.log.append("recruited \(count) \(count == 1 ? c.name : c.plural)")
                     sound?.play("dialogue.recruit")
                     townDialog = back
                 }
-                return true
-            }
-            if townButtonHit("cancel", x: ox + 12, y: oy + 542, x, y) { townDialog = back; return true }
-            if most > 0, let bar = dLayer(d, "Scrollbar"), let kit = kit {
-                let r = UIRect(ox + bar.x, oy + bar.y, bar.width, bar.height)
-                guard r.contains(x, y) else { return true }
-                let f = kit.file("control.horizontal_scroll")
-                let lw = MenuKit.find(f, "Up_Released")?.width ?? 52, rw = MenuKit.find(f, "Down_Released")?.width ?? 56
-                var n = count
-                if x < Float(r.x + lw) { n = count - 1 } else if x >= Float(r.x + r.w - rw) { n = count + 1 }
-                else { n = Int((kit.hScrollbarValue(r, x) * Float(most)).rounded()) }
-                townDialog = .recruit(creature: creature, count: max(0, min(most, n)), fromCastle: fromCastle)
+            case .cancel: townDialog = back
+            case .count(let n): townDialog = .recruit(creature: creature, count: n, fromCastle: fromCastle)
+            case .none: break
             }
             return true
         }

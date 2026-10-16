@@ -76,6 +76,8 @@ extension CombatScreen {
               hit: ((Date) -> Void)? = nil, then: ((Date) -> Void)? = nil) -> Double {
         guard let b = battle else { return 0 }
         let u = b.unit(id)
+        // a fidget cut short by this: the idle timer goes on (0x563870)
+        if fidgeting == id { fidgeting = nil; nextFidget = t.addingTimeInterval(1 + Double(idleRandom.next() % 2001) / 1000) }
         stateToken += 1
         let token = stateToken
         unitState[id] = UnitAnim(state: state, since: t, once: true, reverse: reverse, token: token)

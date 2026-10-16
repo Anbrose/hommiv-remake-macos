@@ -422,6 +422,20 @@ extension CombatScreen {
             armageddon(strikes, at: t)
         case 17:
             chainLightning(strikes, at: t)
+        case 142:
+            // Smoke (t_summon_smoke): a potion (#17) to the target's cell, then at impact the sound and
+            // the spells.smoke puff (cast_spell, 1000 / fps); the 4 x 4 Spells.Smoke obstacle it leaves is
+            // the battle's to place
+            for s in strikes {
+                let tg = b.unit(s.target), w = worldPos(tg)
+                let p = ((w.0 / 16 + tg.size / 2) * 16, (w.1 / 16 + tg.size / 2) * 16, 0)
+                launch(17, from: launchPoint(u), to: p, at: t, impact: { [weak self] ti in
+                    guard let self = self else { return }
+                    self.playSpellSound(142)
+                    self.fieldActor("spells.smoke", states: ["cast_spell"], at: (Float(p.0), Float(p.1), 0), t: ti, unscaled: true)
+                    self.spellTarget(142, s, at: ti)
+                })
+            }
         case 41:
             fireRing(strikes, cell: cell, at: t)
         case 14:

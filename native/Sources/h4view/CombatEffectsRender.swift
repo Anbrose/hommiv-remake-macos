@@ -20,7 +20,7 @@ extension Renderer {
         var q: [Quad] = []
         if let sh = shadow { q.append(Quad(texture: texture(for: sh, of: entry), x: Int(ox + Float(sh.box.left) * sc), y: Int(oy + Float(sh.box.top) * sc), w: max(1, Int(Float(sh.bitmap.width) * sc)), h: max(1, Int(Float(sh.bitmap.height) * sc)))) }
         if let fr = frame { q.append(Quad(texture: texture(for: fr, of: entry), x: Int(ox + Float(fr.box.left) * sc), y: Int(oy + Float(fr.box.top) * sc), w: max(1, Int(Float(fr.bitmap.width) * sc)), h: max(1, Int(Float(fr.bitmap.height) * sc)))) }
-        if ProcessInfo.processInfo.environment["H4ANIMLOG"] != nil { print("  draw \(model) \(state) \(facing) at \(p) z \(z): " + q.map { "(\($0.x),\($0.y) \($0.w)x\($0.h))" }.joined(separator: " ")) }
+        if CombatScreen.trace { print("  draw \(model) \(state) \(facing) at \(p) z \(z): " + q.map { "(\($0.x),\($0.y) \($0.w)x\($0.h))" }.joined(separator: " ")) }
         return q
     }
 

@@ -1,12 +1,16 @@
 import Foundation
 
-/// A combat actor definition (combat_actor.<creature>.h4d, combat_actor.hero.<align>_<fighter|archer|mage>_<sex>.h4d):
-/// states block, cast_spell, die, fidget, flinch, melee, melee_down, melee_up, postwalk, prewalk,
-/// ranged, base_frame, wait, walk; each names the actor_sequence for the eight facings.
+/// A combat actor definition (combat_actor.<creature>.h4d, combat_actor.hero.<align>_<fighter|archer|mage>_<sex>.h4d,
+/// combat_actor.missile.<keyword>, combat_actor.spells.<name>): states block, cast_spell, die, fidget, flinch, melee,
+/// melee_down, melee_up, postwalk, prewalk, ranged, base_frame, wait, walk; each names the actor_sequence for the
+/// eight facings.
 ///
-/// Layout: u16 6, 8 bytes, 8 x (u32, u32, u32), u16 nstates; per state: string16 name, u8 speed,
-/// u8 hitFrame (the frame on which a melee lands / a shot leaves), 8 x string16 sequences
-/// (facings ne, e, se, s, sw, w, nw, n; four-facing states repeat entries). Then a trailer.
+/// Layout (heroes4.exe loader 0x5df000..0x5df4bf): u16 version (0..6); v>=1 u8 footprint size (def+0x18);
+/// v>=2 u8 height (def+0x85c, world z units: peasant 109, titan 140); v>=3 u16 prewalk, walk, postwalk distances
+/// (default 16/64/16); v>=6 8 x (i32 x, i32 y, i32 z) launch offsets for the facings ne..n (def+0x8a0, else
+/// (size*8, size*8, height/2)); u16 nstates; per state: string16 name, u8 fps, v>=5 u8 hitFrame (else 0),
+/// 8 x string16 sequences (facings ne, e, se, s, sw, w, nw, n; four-facing states repeat entries); v>=4 i32 dx,
+/// i32 dy, the draw offset added to every sprite rect (def+4/+8; 0x5d6d58).
 public struct CombatActor {
     public struct State {
         public let name: String
@@ -14,34 +18,61 @@ public struct CombatActor {
         public let hitFrame: Int
         public let sequences: [String]
     }
+    public let version: Int
     public let states: [State]
-    /// Footprint on the combat grid, size x size cells (byte 2: sprite 3, peasant 4, dragon 7).
+    /// Footprint on the combat grid, size x size cells (byte 2: sprite 3, peasant 4, dragon 7); at least 1.
     public let size: Int
+    /// The footprint byte as stored (missiles: 2, the armageddon meteor and the fireball burst: 0).
+    public let footprint: Int
+    /// Height in world units (byte 3): effects sit on the footprint centre raised by it, missiles aim at half of it.
+    public let height: Int
     /// World units (16 per cell) covered by the prewalk, by one loop of walk, and by postwalk
     /// (header u16s at 4, 6, 8; heroes4.exe keeps them at +0xc, +0x10, +0x14 of the model and
     /// fits a whole number of walk loops to the path, 0x7dec80).
     public let prewalkDistance: Int, walkDistance: Int, postwalkDistance: Int
+    /// Where a missile leaves, per facing (ne, e, se, s, sw, w, nw, n): world units from the footprint's top corner (0x5d5b50).
+    public let launchOffsets: [(x: Int, y: Int, z: Int)]
+    /// The pixel offset added to every sprite rect when the actor is drawn (in sprite pixels).
+    public let drawOffset: (x: Int, y: Int)
 
     public init(data d: Data) throws {
         var r = ByteReader(d)
-        guard d.count > 108, r.u16() == 6 else { throw H4Error.corrupt("combat_actor: bad header") }
-        size = max(1, Int(r.byte(at: 2)))
-        prewalkDistance = Int(r.peekU16(at: 4)); walkDistance = max(1, Int(r.peekU16(at: 6))); postwalkDistance = Int(r.peekU16(at: 8))
-        r.pos = 106
+        guard d.count > 12 else { throw H4Error.corrupt("combat_actor: too short") }
+        let v = Int(r.u16())
+        guard v <= 6 else { throw H4Error.corrupt("combat_actor: version \(v)") }
+        version = v
+        footprint = v >= 1 ? Int(r.byte(at: 2)) : 1
+        size = max(1, footprint)
+        height = v >= 2 ? Int(r.byte(at: 3)) : 0
+        if v >= 3 {
+            prewalkDistance = Int(r.peekU16(at: 4)); walkDistance = max(1, Int(r.peekU16(at: 6))); postwalkDistance = Int(r.peekU16(at: 8))
+        } else { prewalkDistance = 16; walkDistance = 64; postwalkDistance = 16 }
+        r.pos = 10
+        if v >= 6 {
+            guard d.count > 108 else { throw H4Error.corrupt("combat_actor: no launch block") }
+            launchOffsets = (0..<8).map { _ in (Int(r.i32()), Int(r.i32()), Int(r.i32())) }
+        } else {
+            launchOffsets = Array(repeating: (footprint * 8, footprint * 8, height / 2), count: 8)
+        }
         let n = Int(r.u16())
         var list: [State] = []
         for _ in 0..<n {
             guard r.remaining > 4 else { break }
             let name = r.string16()
-            let speed = Int(r.u8()), hit = Int(r.u8())
+            let speed = Int(r.u8()), hit = v >= 5 ? Int(r.u8()) : 0
             var seqs: [String] = []
             for _ in 0..<8 { seqs.append(r.string16()) }
             list.append(State(name: name, speed: speed, hitFrame: hit, sequences: seqs))
         }
         states = list
+        if v >= 4, r.remaining >= 8 { drawOffset = (Int(r.i32()), Int(r.i32())) } else { drawOffset = (0, 0) }
     }
 
     public func state(_ name: String) -> State? { states.first { $0.name == name } }
+    /// The launch offset for a facing name (ne ... n).
+    public func launchOffset(_ facing: String) -> (x: Int, y: Int, z: Int) {
+        launchOffsets[AdvActor.facings.firstIndex(of: facing) ?? 0]
+    }
 
     /// Archive entry of a state's sequence for a facing ("actor_sequence.Squire.combat.walk.e.h4d"), or nil.
     public func sequenceEntry(state: String, facing: String) -> String? {

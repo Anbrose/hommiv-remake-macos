@@ -534,13 +534,14 @@ public final class Battle {
     public static func touches(_ x: Int, _ y: Int, _ s: Int, _ b: Unit) -> Bool {
         x <= b.x + b.size && b.x <= x + s && y <= b.y + b.size && b.y <= y + s
     }
-    /// Screen facing for a world direction (x runs down-left, y down-right).
+    /// The facing for a world direction (heroes4.exe 0x51ee00): the world angle atan2(dy, -dx) in
+    /// whole degrees (truncated), in 45-degree sectors of the world grid: ((2r + 45) / 90) & 7 ->
+    /// ne, e, se, s, sw, w, nw, n. (x runs down-left on screen, y down-right; z is ignored.)
     public static func facing(dx: Float, dy: Float) -> String {
-        let sx = dy - dx, sy = (dx + dy) / 2
-        let a = atan2(sy, sx)   // screen angle, y down
-        let dirs = ["e", "se", "s", "sw", "w", "nw", "n", "ne"]
-        let k = Int(((a / (.pi / 4)).rounded() + 8).truncatingRemainder(dividingBy: 8))
-        return dirs[k]
+        guard dx != 0 || dy != 0 else { return "ne" }
+        let deg = Int(atan2(Double(dy), Double(-dx)) * 180 / .pi)
+        let r = (360 + deg) % 360
+        return AdvActor.facings[((2 * r + 45) / 90) & 7]
     }
     static func face(_ a: Unit, towards b: Unit) {
         a.facing = facing(dx: b.centre.0 - a.centre.0, dy: b.centre.1 - a.centre.1)

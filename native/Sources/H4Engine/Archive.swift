@@ -23,8 +23,14 @@ public final class H4Archive {
     public func supplement(with other: H4Archive) {
         for e in other.entries where byName[e.name] == nil {
             byName[e.name] = e; entries.append(e); supplied[e.name] = other
+            if lowerNames[e.name.lowercased()] == nil { lowerNames[e.name.lowercased()] = e.name }
         }
     }
+    /// Names by their lower-case spelling: the game looks names up without regard to case, aliases
+    /// included ("animation.spell.heal" -> "animation.spell.bind wound", stored as "Bind Wound").
+    private var lowerNames: [String: String] = [:]
+    /// The archive's own spelling of a name, whatever the case.
+    public func realName(_ name: String) -> String? { byName[name] != nil ? name : lowerNames[name.lowercased()] }
 
     public init(url: URL) throws {
         data = try Data(contentsOf: url, options: .mappedIfSafe)
@@ -51,6 +57,7 @@ public final class H4Archive {
         var map: [String: Entry] = [:]
         for e in list { map[e.name] = e }
         byName = map
+        for e in list where lowerNames[e.name.lowercased()] == nil { lowerNames[e.name.lowercased()] = e.name }
     }
 
     public func names(prefix: String) -> [String] {
@@ -63,7 +70,9 @@ public final class H4Archive {
         guard var e = byName[name] else { throw H4Error.missing(name) }
         var hops = 0
         while !e.alias.isEmpty, hops < 8 {
-            guard let t = byName[e.alias] else { throw H4Error.missing(e.alias) }
+            // an alias names its target in any case ("heal" -> "animation.spell.bind wound.h4d", the entry is "Bind Wound")
+            guard let real = realName(e.alias), let t = byName[real] else { throw H4Error.missing(e.alias) }
+            if let a = supplied[real] { return try a.payload(real) }
             e = t
             hops += 1
         }

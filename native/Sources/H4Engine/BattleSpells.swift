@@ -105,6 +105,8 @@ extension Battle {
     public static func untargeted(_ spell: Int) -> Bool {
         guard spell < RuleTables.spells.count else { return false }
         let s = RuleTables.spells[spell]
+        // an area spell is aimed at a cell even when its table row says Mass (Cloud of Confusion, slot 16)
+        guard Battle.areaRadius(spell) == nil else { return false }
         return s.has("Mass") || s.kind == "summoning" && !s.has("Bodies") || [4, 32, 110].contains(spell)
     }
 

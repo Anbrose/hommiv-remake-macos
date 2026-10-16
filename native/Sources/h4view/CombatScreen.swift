@@ -53,6 +53,8 @@ final class CombatScreen {
     var moving: [Int: MoveAnim] = [:]
     /// Stacks not on the field yet (a summon before its spell is released).
     var hidden: Set<Int> = []
+    /// Each stack's count when the playback was last idle (what a stack killed outright had).
+    var lastCount: [Int: Int] = [:]
     var unitPos: [Int: (Float, Float)] = [:]     // visual lattice positions while moving
     var unitState: [Int: UnitAnim] = [:]
     var dead: Set<Int> = []
@@ -96,7 +98,7 @@ final class CombatScreen {
     func blowMessages(damage: Int, killed: Int, unit u: Battle.Unit, since: Date) {
         guard damage > 0 || killed > 0 else { return }
         var lines: [(String, String?)] = []
-        if showDamageNumbers { lines.append(("-\(damage)", "damage")) }
+        if damage > 0, showDamageNumbers { lines.append(("-\(damage)", "damage")) }
         if killed > 0, showDeathNumbers { lines.append(("-\(killed)", "Death")) }
         floatOver(u, lines, since: since)
     }
@@ -437,7 +439,7 @@ final class CombatScreen {
     func resetPlayback() {
         queue = []; timers = []; missiles = []; waitingOnUnit = [:]; windows = []; windowBusy = []; windowWaiting = [:]
         fades = [:]; alphaLevel = [:]; tints = [:]; slides = [:]; fieldActors = []; moving = [:]; hidden = []
-        unitPos = [:]; unitState = [:]; dead = []; dying = []; pendingDeaths = []; shownPos = [:]; shownCount = [:]; lastBlow = nil; acting = nil
+        unitPos = [:]; unitState = [:]; lastCount = Dictionary(uniqueKeysWithValues: (battle?.units ?? []).map { ($0.id, $0.stats.count) }); dead = []; dying = []; pendingDeaths = []; shownPos = [:]; shownCount = [:]; lastBlow = nil; acting = nil
     }
 
     var busy: Bool { holds > 0 || !queue.isEmpty }

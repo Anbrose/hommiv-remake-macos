@@ -13,7 +13,7 @@ extension CombatScreen {
             if case .move(let id, _, let from, _) = e, unitPos[id] == nil, shownPos[id] == nil { shownPos[id] = (Float(from.0), Float(from.1)) }
             if case .teleported(let id, let from, _) = e, shownPos[id] == nil { shownPos[id] = (Float(from.0), Float(from.1)) }
             if case .displaced(let id, let from, _) = e, shownPos[id] == nil { shownPos[id] = (Float(from.0), Float(from.1)) }
-            if case .die(let id) = e { pendingDeaths.insert(id) }
+            if case .die(let id) = e { pendingDeaths.insert(id); if shownCount[id] == nil, let n = lastCount[id] { shownCount[id] = n } }
             // a summoned stack is not there before the spell is released
             if case .summon(let id) = e { hidden.insert(id) }
             if case .phantom(let id, _) = e { hidden.insert(id) }
@@ -50,6 +50,7 @@ extension CombatScreen {
         if holds == 0, queue.isEmpty { pump(); if !queue.isEmpty { update(now: now); return } }
         if holds == 0, queue.isEmpty {
             shownPos.removeAll(); shownCount.removeAll(); acting = nil; lastBlow = nil
+            for u in b.units { lastCount[u.id] = u.stats.count }
             // the icy tint lasts while the stack is frozen (removing effect 186 resets it, 0x5f24c7)
             for (id, t) in tints where t.kind == .freeze && b.unit(id).frozen == 0 { tints[id] = nil }
         }

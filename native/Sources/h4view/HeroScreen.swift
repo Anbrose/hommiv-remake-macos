@@ -283,11 +283,14 @@ extension Renderer {
         guard let box = d["creature_box"] else { return [] }
         return creatureModelQuads(keyword, box: box, ox, oy)
     }
-    /// The model window (0x604f10) in any box: the backdrop scaled by min(w, h) / 280, the figures.
+    /// The model window (0x604f10) in any box: scale min(1, w / 280, h / 280) (the 1_of_1 rect,
+    /// 0x6054d0), the backdrop scaled and centred, up to three figures of the scaled model in the
+    /// k_of_n rects (n the most whose scaled rect holds the walk / wait sw bounding box, 0x6058f0),
+    /// everything clipped to the window.
     func creatureModelQuads(_ keyword: String, box: UILayer, _ ox: Int, _ oy: Int) -> [Quad] {
         guard let g = game, let ui = ui, let c = g.tables?.creature(keyword) else { return [] }
         var out: [Quad] = []
-        let sc = Float(min(box.width, box.height)) / 280
+        let sc = min(1, Float(min(box.width, box.height)) / 280)
         let back = (try? ui.archive.payload("layers.control.creature_model.\(c.alignment.lowercased()).h4d")).flatMap { try? LayerFile(data: $0) }
         if let bg = back?.layers.first(where: { $0.isImage || $0.width >= 300 }) {
             // the part of the scaled backdrop inside the window: offset ((212 - 227) / 2, (216 - 227) / 2)
@@ -327,8 +330,9 @@ extension Renderer {
             }
             let ax = Float(ox + box.x) + x, ay = Float(oy + box.y) + y
             for img in [sh, f].compactMap({ $0 }) {
+                // the figures are the window's children: painted inside its rectangle only (0x605e70)
                 out.append(Quad(texture: texture(for: img, of: entry), x: Int(ax + (Float(s.origin.x) + Float(img.box.left)) * sc), y: Int(ay + (Float(s.origin.y) + Float(img.box.top)) * sc),
-                                w: Int(Float(img.bitmap.width) * sc), h: Int(Float(img.bitmap.height) * sc)))
+                                w: Int(Float(img.bitmap.width) * sc), h: Int(Float(img.bitmap.height) * sc), clip: (ox + box.x, oy + box.y, box.width, box.height)))
             }
         }
         return out

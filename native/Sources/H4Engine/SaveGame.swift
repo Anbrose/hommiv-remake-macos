@@ -73,7 +73,9 @@ public struct SaveGame: Codable {
         public var garrisonHeroes: [HeroState]? = nil
     }
     public struct CellFlag: Codable { public var x, y: Int; public var on: Bool }
-    public struct CellCount: Codable { public var x, y: Int; public var count: Int; public var owned: Bool? = nil; public var fourteenths: Int? = nil }
+    public struct CellCount: Codable { public var x, y: Int; public var count: Int; public var owned: Bool? = nil; public var fourteenths: Int? = nil
+        /// A map dwelling's owner colour, guards and their growth, visitors.
+        public var owner: Int? = nil, guards: Int? = nil, guardFraction: Int? = nil, visited: [Int]? = nil }
     public struct MonsterState: Codable {
         public var x, y: Int, name, creature: String
         public var count: Int
@@ -109,7 +111,7 @@ extension GameState {
                                                  garrisonHeroes: t.garrisonHeroes.map { SaveGame.state(of: $0) }))
         }
         let mineFlags: [SaveGame.CellFlag] = mines.map { SaveGame.CellFlag(x: $0.x, y: $0.y, on: $0.owned) }
-        let dwellingCounts: [SaveGame.CellCount] = dwellings.map { SaveGame.CellCount(x: $0.x, y: $0.y, count: $0.available, owned: $0.owned, fourteenths: $0.fourteenths) }
+        let dwellingCounts: [SaveGame.CellCount] = dwellings.map { SaveGame.CellCount(x: $0.x, y: $0.y, count: $0.available, owned: $0.owned, fourteenths: $0.fourteenths, owner: $0.owner, guards: $0.guards, guardFraction: $0.guardFraction, visited: $0.visited.sorted()) }
         var monsterStates: [SaveGame.MonsterState] = []
         for m in monsters {
             let extra: [SaveGame.Stack] = m.extra.map { SaveGame.Stack(creature: $0.creature, count: $0.count) }
@@ -163,7 +165,9 @@ extension GameState {
             towns[i].garrisonHeroes = (t.garrisonHeroes ?? []).map { SaveGame.hero(from: $0) }
         }
         for m in s.mines { if let i = mines.firstIndex(where: { $0.x == m.x && $0.y == m.y }) { mines[i].owned = m.on } }
-        for d in s.dwellings { if let i = dwellings.firstIndex(where: { $0.x == d.x && $0.y == d.y }) { dwellings[i].available = d.count; dwellings[i].owned = d.owned ?? false; dwellings[i].fourteenths = d.fourteenths ?? 0 } }
+        for d in s.dwellings { if let i = dwellings.firstIndex(where: { $0.x == d.x && $0.y == d.y }) { dwellings[i].available = d.count; dwellings[i].owned = d.owned ?? false; dwellings[i].fourteenths = d.fourteenths ?? 0
+            if d.guards != nil || d.owner != nil || d.owned == true { dwellings[i].owner = d.owner ?? (d.owned == true ? map.humanColour : nil); dwellings[i].guards = d.guards ?? 0 }
+            dwellings[i].guardFraction = d.guardFraction ?? 0; dwellings[i].visited = Set(d.visited ?? []) } }
         // the monsters as saved: the beaten ones are gone (their objects are in `removed`), the rest keep their size
         monsters = s.monsters.map { st in
             var m = Monster(x: st.x, y: st.y, name: st.name, creature: st.creature, count: st.count, extra: st.extra.map { ($0.creature, $0.count) })

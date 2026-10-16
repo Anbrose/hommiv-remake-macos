@@ -72,6 +72,8 @@ struct Quad {
     /// Alpha multiplier (a fade's level / 15) and colour adjust (freeze, stone; nil neutral).
     var alpha: Float = 1
     var adjust: SIMD4<Float>? = nil
+    /// Draw only inside this canvas rectangle (x, y, w, h): a window's children clip to it.
+    var clip: (x: Int, y: Int, w: Int, h: Int)? = nil
 }
 
 final class Renderer: NSObject, MTKViewDelegate {
@@ -184,6 +186,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     var optionsOpen: GameSettings? = nil   // the options dialog, while open (the values being edited)
     var settings = GameSettings.load()
     var hire: HireOffer? = nil             // the tavern's dialog
+    var mapRecruit: (dwelling: Int, hero: Hero, count: Int)? = nil   // a map dwelling's recruit dialog
     var townSpare: [ArmySlot?] = []           // the town's visiting row when no army stands at the gate
     var townDragAt: (Float, Float)? = nil      // where a lifted stack is (the pointer) while dragged
     var townDragSplit = false
@@ -592,6 +595,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         out += spellBookQuads()
         out += optionsQuads()
         out += hireQuads()
+        out += mapRecruitQuads()
         out += puzzleQuads()
         out += shopQuads()
         out += sanctuaryQuads()
@@ -1112,10 +1116,18 @@ final class Renderer: NSObject, MTKViewDelegate {
         var verts: [Vertex] = []
         verts.reserveCapacity(list.count * 6)
         for q in list {
-            let x0 = Float(q.x), y0 = Float(q.y), x1 = Float(q.x + q.w), y1 = Float(q.y + q.h)
+            var x0 = Float(q.x), y0 = Float(q.y), x1 = Float(q.x + q.w), y1 = Float(q.y + q.h)
+            var u0: Float = 0, v0: Float = 0, u1: Float = 1, v1: Float = 1
+            if let c = q.clip, q.w > 0, q.h > 0 {   // cut the quad and its texture coordinates to the clip
+                let cx0 = max(x0, Float(c.x)), cy0 = max(y0, Float(c.y)), cx1 = min(x1, Float(c.x + c.w)), cy1 = min(y1, Float(c.y + c.h))
+                if cx1 <= cx0 || cy1 <= cy0 { x1 = x0; y1 = y0 } else {   // wholly outside: nothing
+                    u0 = (cx0 - x0) / Float(q.w); u1 = (cx1 - x0) / Float(q.w); v0 = (cy0 - y0) / Float(q.h); v1 = (cy1 - y0) / Float(q.h)
+                    x0 = cx0; y0 = cy0; x1 = cx1; y1 = cy1
+                }
+            }
             let adj = q.adjust ?? SIMD4(0, 0, 256, 256), ex = SIMD4<Float>(q.alpha, 0, 0, 0)
-            verts += [Vertex(x: x0, y: y0, u: 0, v: 0, adj: adj, extra: ex), Vertex(x: x1, y: y0, u: 1, v: 0, adj: adj, extra: ex), Vertex(x: x0, y: y1, u: 0, v: 1, adj: adj, extra: ex),
-                      Vertex(x: x1, y: y0, u: 1, v: 0, adj: adj, extra: ex), Vertex(x: x1, y: y1, u: 1, v: 1, adj: adj, extra: ex), Vertex(x: x0, y: y1, u: 0, v: 1, adj: adj, extra: ex)]
+            verts += [Vertex(x: x0, y: y0, u: u0, v: v0, adj: adj, extra: ex), Vertex(x: x1, y: y0, u: u1, v: v0, adj: adj, extra: ex), Vertex(x: x0, y: y1, u: u0, v: v1, adj: adj, extra: ex),
+                      Vertex(x: x1, y: y0, u: u1, v: v0, adj: adj, extra: ex), Vertex(x: x1, y: y1, u: u1, v: v1, adj: adj, extra: ex), Vertex(x: x0, y: y1, u: u0, v: v1, adj: adj, extra: ex)]
         }
         let bytes = verts.count * MemoryLayout<Vertex>.stride
         if vertexBuffer.length < bytes { vertexBuffer = device.makeBuffer(length: bytes * 2, options: .storageModeShared)! }

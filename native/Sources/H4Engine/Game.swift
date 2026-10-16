@@ -386,6 +386,8 @@ public final class GameState {
     public var teleportChoice: (title: String, text: String, dests: [String], labels: [String], pick: (Int) -> Void)?
     /// A hire dialog to open (a tavern visited, a town's tavern).
     public var hireOpen: HireOffer?
+    /// A map dwelling's recruit dialog to open: the dwelling and the visiting hero.
+    public var dwellingOpen: (dwelling: Int, hero: Hero)?
     /// The keymaster tents' keys the player has (by colour subtype).
     public var keys: Set<String> = []
     /// A hero went through a portal (the view should follow).
@@ -452,9 +454,15 @@ public final class GameState {
     }
     /// A creature dwelling on the map: a week's growth waits at the start; once owned it grows by
     /// the weekly growth in fourteenths each day (heroes4.exe 0x43cdb0: half a week's growth a week).
+    /// Unowned ones of level 2..4 are guarded (Dwellings.swift).
     public struct Dwelling {
         public let x: Int, y: Int, name: String, creature: String; public var available: Int; public var z = 0
         public var owned = false, fourteenths = 0
+        /// The player (colour) that flagged it, nil unowned; its guards and their growth in 256ths.
+        public var owner: Int? = nil
+        public var guards = 0, guardFraction = 0
+        /// The players (colours) that have visited it: their right click tells what waits.
+        public var visited: Set<Int> = []
     }
     public struct Monster {
         public var x: Int, y: Int
@@ -708,7 +716,8 @@ public final class GameState {
         if major == "random_monster" || major == "random_town" { return (short, []) }
         var title = t.objectText(major, minor, "name") ?? short
         var body: [String] = []
-        if let help = t.objectText(major, minor, "help") { body.append(help) }
+        if let i = dwelling(for: p) { body.append(t.objectText(major, minor, dwellingHelpKey(i)) ?? "") }   // 0x43e0e0
+        else if let help = t.objectText(major, minor, "help") { body.append(help) }
         // fill the table's placeholders with what we know
         var creature: CreatureDef? = nil
         var count = 0
@@ -719,14 +728,13 @@ public final class GameState {
             let subs: [(String, String)] = [("%object_name", title), ("%material_name", title), ("%Creature_name", creature?.plural ?? "creatures"),
                                             ("%creature_name", creature?.plural.lowercased() ?? "creatures"), ("%the_creatures", "the " + (creature?.plural.lowercased() ?? "creatures")),
                                             ("%Creatures", "\(count) " + (creature?.plural.lowercased() ?? "creatures")), ("%creatures", "\(count) " + (creature?.plural.lowercased() ?? "creatures")),
-                                            ("%spell_level", level), ("%magic_type ", ""), ("%magic_type", "Magic"), ("%skill_type", "primary"), ("%skill_name", "a skill"), ("%spell_name", "a spell")]
+                                            ("%the_guards", dwelling(for: p).map { i in let n = dwellings[i].guards; return "\(n) " + (n == 1 ? creature?.name ?? "" : creature?.plural ?? "") } ?? ""), ("%spell_level", level), ("%magic_type ", ""), ("%magic_type", "Magic"), ("%skill_type", "primary"), ("%skill_name", "a skill"), ("%spell_name", "a spell")]
             for (k, v) in subs { s = s.replacingOccurrences(of: k, with: v) }
             return s
         }
         title = fill(title)
         body = body.map(fill)
         if let i = mine(for: p) { body.append(mines[i].owned ? "Owned by you." : "Not owned by anyone.") }
-        if let c = creature { body.append("\(count) \(count == 1 ? c.name : c.plural) available, \(c.gold) gold each.") }
         if p.type == "decorative", body.isEmpty { body = [] }
         return (title, body)
     }
@@ -913,7 +921,14 @@ public final class GameState {
             hero.target = nil; pendingBattle = nil
             return
         }
-        if let key = monsters[i].bank, key.hasPrefix(GameState.garrisonPrefix) {   // a garrison: taken, or it holds
+        if let d = guardedDwelling(monsters[i]) {   // a dwelling's guards: beaten, it is flagged and offers (0x43d8a0)
+            monsters.remove(at: i)
+            if won { giveExperience(experience, to: hero); dwellings[d].guards = 0; dwellingRecruitFlow(hero: hero, d, p) }
+            else {
+                dwellings[d].guards = max(1, monstersLeft)
+                hero.x = hero.home.x; hero.y = hero.home.y; hero.movement = 0; hero.path = []; hero.plan = []
+            }
+        } else if let key = monsters[i].bank, key.hasPrefix(GameState.garrisonPrefix) {   // a garrison: taken, or it holds
             let real = String(key.dropFirst(GameState.garrisonPrefix.count))
             if won { giveExperience(experience, to: hero); takeGarrison(real) }
             else {
@@ -958,7 +973,8 @@ public final class GameState {
     /// at the gate of the town; the monsters keep what they lost.
     public func retreat(hero: Hero, monsterAt i: Int, monstersLeft: Int, to town: Int) {
         hero.army = []
-        if i < monsters.count, let key = monsters[i].bank { objectStates[key]?.guardCounts[0] = max(1, monstersLeft); monsters.remove(at: i) }
+        if i < monsters.count, let d = guardedDwelling(monsters[i]) { dwellings[d].guards = max(1, monstersLeft); monsters.remove(at: i) }
+        else if i < monsters.count, let key = monsters[i].bank { objectStates[key]?.guardCounts[0] = max(1, monstersLeft); monsters.remove(at: i) }
         else if i < monsters.count { monsters[i].count = max(1, monstersLeft) }
         if let p = scene.placed.first(where: { self.town(for: $0) == town }) {
             let gate = gateCells(p).first { passability.isFree($0.0, $0.1) } ?? gateCells(p)[0]
@@ -1116,7 +1132,9 @@ public final class GameState {
                 if short.hasSuffix(" r") { short.removeLast(2) }
                 if let kw = t.dwellingCreature[short], let c = t.creature(kw) {
                     var dw = Dwelling(x: p.cellX, y: p.cellY, name: p.name, creature: c.keyword, available: c.growth)
-                    dw.owned = map.objects.first { $0.type == "creature_dwelling" && $0.x == p.cellX && $0.y == p.cellY && $0.level == level }?.owner == map.humanColour
+                    dw.owner = map.objects.first { $0.type == "creature_dwelling" && $0.x == p.cellX && $0.y == p.cellY && $0.level == level }?.owner
+                    dw.owned = dw.owner != nil && dw.owner == map.humanColour
+                    if dw.owner == nil { dw.guards = GameState.dwellingGuards(c) }   // 0x43c88c
                     dwellings.append(dw)
                 }
             }
@@ -1157,20 +1175,7 @@ public final class GameState {
             }
             hero.target = nil
         }
-        if let i = dwelling(for: p), let c = tables?.creature(dwellings[i].creature) {
-            if !dwellings[i].owned { dwellings[i].owned = true; sounds.append("miscellaneous.flag_mine") }
-            sounds.append("dialogue.recruit")
-            // recruit everything you can afford (a proper dialog comes later)
-            let affordable = c.gold > 0 ? resources["Gold", default: 0] / c.gold : dwellings[i].available
-            let n = min(dwellings[i].available, affordable)
-            if n <= 0 { log.append("\(c.plural): none to recruit / not enough gold") }
-            else if add(c.keyword, n, to: hero) {
-                dwellings[i].available -= n
-                resources["Gold", default: 0] -= n * c.gold
-                log.append("recruited \(n) \(n == 1 ? c.name : c.plural) for \(n * c.gold) gold")
-            } else { log.append("no room in the army for \(c.plural)") }
-            hero.target = nil
-        }
+        if let i = dwelling(for: p) { visitDwelling(hero: hero, i, p) }
     }
 
     static func adjacent(_ a: (Int, Int), _ b: (Int, Int)) -> Bool { max(abs(a.0 - b.0), abs(a.1 - b.1)) == 1 }
@@ -1539,10 +1544,7 @@ public final class GameState {
         for (res, amount) in income { resources[res, default: 0] += amount }
         objectsNewDay()
         sanctuariesNewDay()
-        for i in dwellings.indices where dwellings[i].owned {
-            dwellings[i].fourteenths += tables?.creature(dwellings[i].creature)?.growth ?? 0
-            dwellings[i].available += dwellings[i].fourteenths / 14; dwellings[i].fourteenths %= 14
-        }
+        dwellingsNewDay()
         for i in towns.indices { towns[i].builtToday = false; if towns[i].tavernDays > 0 { towns[i].tavernDays -= 1 } }
         if dayOfWeek == 1, let t = tables {   // a new week: dwellings restock, in towns too
             for i in towns.indices {

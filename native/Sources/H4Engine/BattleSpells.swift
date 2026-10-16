@@ -105,14 +105,21 @@ extension Battle {
         }
         let enemy = side(of: t) != side(of: u)
         if enemy ? !s.has("Enemy") : !s.has("Friend") { return false }
-        if t.stats.has("magic_immunity") && enemy { return false }
+        // magic immunity, Anti-Magic and Sanctuary turn every spell away, friendly ones too (0x5b37d0)
+        if t.stats.has("magic_immunity") || t.stats.under(3) || t.stats.under(137) { return false }
         if t.stats.has("undead"), !s.has("Undead") { return false }
         if t.stats.has("mechanical"), !s.has("Mech") { return false }
         if t.stats.has("elemental"), !s.has("Elem") { return false }
         if s.has("Mind"), t.stats.has("undead") || t.stats.has("mechanical") || t.stats.has("elemental") || t.stats.has("mind_immunity") { return false }
         if s.flags.contains("Fire"), t.stats.has("fire_resistance") || t.stats.under(40) { return false }
         if s.flags.contains("Cold"), t.stats.has("cold_resistance") || t.stats.under(20) { return false }
-        if [61, 32].contains(spell), t.stats.alignment != "death" { return false }   // Holy Word / Holy Shout: death creatures only
+        switch spell {
+        case 61, 32: if t.stats.isHero || !(t.stats.alignment == "death" || t.stats.has("undead")) { return false }   // Holy Word / Shout: death or undead, no heroes (0x5b4f4a)
+        case 114, 34: if t.stats.alignment != "life" { return false }   // Prayer, Unholy Song: Life stacks (0x5b4fdf)
+        case 68: if t.id == u.id || !["life", "nature"].contains(t.stats.alignment) { return false }   // Life Drain (0x78ec60)
+        case 110: if t.stats.alignment == "death" { return false }   // Plague (0x5b550f)
+        default: break
+        }
         return true
     }
     /// Combat spells the exe registers no factory for (0x614220 / 0x614270): only abilities,
@@ -241,6 +248,7 @@ extension Battle {
         if spell == 136 {   // Sacrifice: a second friendly stack to restore
             guard let sid = second, sid != targetId, let t2 = units.first(where: { $0.id == sid }), canTarget(spell, by: u, t2) else { return false }
         }
+        beginAction(u)
         c.spellPoints -= c.cost(spell)
         u.caster = c
         let p = power(spell, by: u, creatures: tables)
@@ -280,7 +288,17 @@ extension Battle {
                 for v in sparksTargets(by: u, facing: d) { strike(v, spellDamage(v, p, spell), spell: spell, by: u) }
                 break
             }
-            for t in targets { strike(t, spellDamage(t, p, spell), spell: spell, by: u) }
+            var drained = 0
+            for t in targets {
+                let d = min(spellDamage(t, p, spell), t.stats.totalHealth)
+                strike(t, d, spell: spell, by: u)
+                drained += d / 2
+            }
+            if spell == 68, drained > 0 {   // Life Drain: the caster gets half of what each lost (0x78ec60)
+                let before = u.stats.totalHealth
+                restore(u, drained)
+                events.append(.spellHit(unit: u.id, spell: spell, damage: before - u.stats.totalHealth, killed: 0, left: u.stats.count))
+            }
             // Chain Lightning (0x5c7bf0): the power halves before each jump, to the nearest stack not
             // yet struck the spell can affect (squared distance between centres from the last one,
             // ties at random), at most five stacks, until the power is gone
@@ -409,9 +427,6 @@ extension Battle {
         case 1: t.stats.aged = true
         case 9: t.stats.bound = true
         case 62, 138: t.hypnotized = true
-        case 51, 57, 114:   // Giant Strength, Health, Prayer: a quarter more hit points
-            if !t.stats.under(spell) { t.stats.hitPoints += (t.stats.hitPoints + 2) >> 2 }
-        case 33: if !t.stats.under(33) { t.stats.hitPoints *= 2 }
         case 5:   // Banish: destroys summoned creatures up to its power in hit points
             if t.summoned { let k = t.stats.take(min(p, t.stats.totalHealth)); events.append(.spellHit(unit: t.id, spell: 5, damage: p, killed: k, left: t.stats.count)); if !t.alive { events.append(.die(unit: t.id)) } }
         case 54:   // Hand of Death: kills outright

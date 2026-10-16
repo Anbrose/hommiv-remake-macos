@@ -4,7 +4,18 @@ import Foundation
 public struct Combatant {
     public var name: String
     public var count: Int
-    public var hitPoints: Int
+    /// Hit points per creature without spells; `hitPoints` is the live value (0x5f57a0): Giant
+    /// Strength, Health and Prayer each add (hp + 2) >> 2 in that order, then Dragon Strength doubles.
+    public var baseHitPoints: Int
+    public var hitPoints: Int {
+        get {
+            var hp = baseHitPoints
+            for sp in [51, 57, 114] where effects.contains(sp) { hp += (hp + 2) >> 2 }
+            if effects.contains(33) { hp *= 2 }
+            return hp
+        }
+        set { baseHitPoints = newValue }
+    }
     public var damageLow: Int, damageHigh: Int
     public var attack: Int, defense: Int
     public var speed: Int
@@ -30,7 +41,9 @@ public struct Combatant {
     public var aged = false            // Aging: 25% less damage, defense -20%, speed and move halved
     public var bound = false           // Binding: half damage, cannot move
     /// Spells on the stack (spell ids, RuleTables.spells), each as heroes4.exe's stat getters apply it.
-    public var effects: Set<Int> = []
+    public var effects: Set<Int> = [] {
+        didSet { if count > 0, wounds >= hitPoints { wounds = hitPoints - 1 } }   // a buff gone leaves the top creature alive
+    }
     public func under(_ spell: Int) -> Bool { effects.contains(spell) }
     /// Base magic resistance in percent (creature: "50% Magic Resistance"; hero: the Resistance skill).
     public var magicResistance = 0
@@ -44,7 +57,7 @@ public struct Combatant {
     public static var abilityKeywords: [String: String] = [:]
 
     public init(creature c: CreatureDef, count: Int) {
-        name = c.name; self.count = count; hitPoints = c.hitPoints; damageLow = c.damageLow; damageHigh = c.damageHigh
+        name = c.name; self.count = count; baseHitPoints = c.hitPoints; damageLow = c.damageLow; damageHigh = c.damageHigh
         attack = c.attack; defense = c.defense; speed = c.speed; experience = c.experience
         level = c.level; alignment = c.alignment
         spellPoints = c.spellPoints; spellPower = c.spellPower
@@ -70,7 +83,7 @@ public struct Combatant {
         func sk(_ k: String) -> Int { max(0, min(5, skills[k] ?? 0)) }
         let melee = [10, 15, 20, 30, 40, 40], ranged = [7, 10, 15, 20, 30, 30], def = [10, 15, 20, 30, 40, 60]
         self.name = name; count = 1
-        hitPoints = 10 * level + 90
+        baseHitPoints = 10 * level + 90
         damageLow = (16 * level - 16) / 10 + 16; damageHigh = (24 * level - 24) / 10 + 24
         attack = melee[sk("combat")]; defense = def[sk("toughness")]; speed = 6; experience = 0; isHero = true
         rangedAttack = ranged[sk("archery")]

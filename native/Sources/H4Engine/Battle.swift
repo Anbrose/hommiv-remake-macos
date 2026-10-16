@@ -781,6 +781,11 @@ public final class Battle {
         }
     }
 
+    /// An attack, a shot or a cast begins (0x5691e0 with its flag 1): Sanctuary ends.
+    func beginAction(_ u: Unit) {
+        if u.stats.under(137) { remove(137, from: u) }
+    }
+
     func endAction(_ u: Unit) {
         u.acted = true
         if u.durations[62] == nil { u.hypnotized = false }   // (Hypnotize holds for its three turns)
@@ -881,7 +886,7 @@ public final class Battle {
     }
 
     public func attack(_ targetId: Int) -> Bool {
-        guard finished == nil, let u = current, let t = units.first(where: { $0.id == targetId }), t.alive, side(of: t) != side(of: u) else { return false }
+        guard finished == nil, let u = current, let t = units.first(where: { $0.id == targetId }), t.alive, side(of: t) != side(of: u), !t.stats.under(137) else { return false }
         guard let pos = attackPosition(u, t) else {
             // out of reach this turn: head for the nearest place it can be struck from
             let r = Battle.reach(u)
@@ -894,6 +899,7 @@ public final class Battle {
             return move(to: b.0, b.1)
         }
         let start = (u.x, u.y)
+        beginAction(u)
         if pos != (u.x, u.y), let p = path(u, to: pos.0, pos.1) {
             u.moved += reachable(u)[Battle.key(pos.0, pos.1)] ?? 0
             events.append(.move(unit: u.id, path: p, from: (u.x, u.y), flying: u.stats.has("flying"))); u.x = pos.0; u.y = pos.1
@@ -972,8 +978,9 @@ public final class Battle {
     }
 
     public func shoot(_ targetId: Int) -> Bool {
-        guard finished == nil, let u = current, let t = units.first(where: { $0.id == targetId }), t.alive, side(of: t) != side(of: u) else { return false }
+        guard finished == nil, let u = current, let t = units.first(where: { $0.id == targetId }), t.alive, side(of: t) != side(of: u), !t.stats.under(137) else { return false }
         guard canShoot(u), shotOverWallOK(u, t) else { return attack(targetId) }
+        beginAction(u)
         Battle.face(u, towards: t)
         // a shooter that is shot at shoots back (once per round, like melee retaliation);
         // Ranged First Strike shoots first; Shoots Twice fires again after the retaliation
@@ -1014,7 +1021,7 @@ public final class Battle {
     /// reach or walk towards the nearest enemy (a hypnotized unit turns on its own side).
     public func autoAct() {
         guard finished == nil, let u = current else { return }
-        let enemies = units.filter { $0.alive && $0.id != u.id && side(of: $0) != side(of: u) }
+        let enemies = units.filter { $0.alive && $0.id != u.id && side(of: $0) != side(of: u) && !$0.stats.under(137) }
         guard !enemies.isEmpty else { defend(); return }
         // a caster (hero or spellcasting creature) casts when its best spell is worth more than its blow
         if u.caster != nil, let c = aiSpell(u), c.value > aiBlowValue(u, enemies) {

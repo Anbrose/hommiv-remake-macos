@@ -278,4 +278,47 @@ final class SpellLogicTests: XCTestCase {
         XCTAssertFalse(h.stats.under(148))
         XCTAssertTrue(h.stats.under(145))
     }
+
+    // MARK: mass-only spells
+
+    /// Prayer is cast on every Life stack, friend or foe (0x5b4fdf); its +25% hit points are
+    /// live (0x5f57a0: Giant Strength, Health, Prayer in that order, Dragon Strength last) and go with it.
+    func testPrayerAndLiveHitPoints() {
+        let b = Battle(field: field, attackers: [hero(level: 10, skills: ["life": 4], spells: [114]), fighter(creature("squire", alignment: "life", hp: 10), 5)],
+                       defenders: [fighter(creature("peasant", speed: 1), 5), fighter(creature("monk", alignment: "life", hp: 30, speed: 1), 3)], seed: 1)
+        let h = b.units.first { $0.stats.isHero }!
+        XCTAssertTrue(Battle.untargeted(114))
+        let targets = Set(b.castTargets(114, by: h, target: nil, cell: nil)!.map { $0.keyword })
+        XCTAssertEqual(targets, ["squire", "monk"])
+        XCTAssertTrue(b.cast(114, on: nil))
+        let sq = b.units.first { $0.keyword == "squire" }!
+        XCTAssertEqual(sq.stats.hitPoints, 13)                 // 10 + 12 >> 2
+        sq.stats.effects.insert(51); sq.stats.effects.insert(33)
+        XCTAssertEqual(sq.stats.hitPoints, 32)                 // 10 -> 13 -> 16, x 2
+        b.remove(114, from: sq); b.remove(51, from: sq); b.remove(33, from: sq)
+        XCTAssertEqual(sq.stats.hitPoints, 10)
+    }
+
+    /// Life Drain hits Life and Nature stacks but never the caster, and heals the caster by half (0x78ec60).
+    func testLifeDrain() {
+        let b = Battle(field: field, attackers: [hero(level: 10, skills: ["death": 2], spells: [68])],
+                       defenders: [fighter(creature("elf", alignment: "nature", hp: 15, speed: 1), 10), fighter(creature("orc", alignment: "might", speed: 1), 5)], seed: 1)
+        let h = b.units.first { $0.stats.isHero }!
+        h.stats.wounds = 50
+        XCTAssertEqual(b.castTargets(68, by: h, target: nil, cell: nil)!.map { $0.keyword }, ["elf"])
+        XCTAssertTrue(b.cast(68, on: nil))                      // 20 to the elves, 10 back
+        XCTAssertEqual(b.units.first { $0.keyword == "elf" }!.stats.totalHealth, 130)
+        XCTAssertEqual(h.stats.wounds, 40)
+    }
+
+    /// Sanctuary: no attack, shot or spell lands on the stack, friendly spells neither; it ends when it attacks.
+    func testSanctuary() {
+        let b = Battle(field: field, attackers: [hero(level: 10, skills: ["life": 5], spells: [137, 10])], defenders: [fighter(creature("peasant", speed: 1), 5)], seed: 1)
+        let h = b.units.first { $0.stats.isHero }!
+        XCTAssertTrue(Battle.untargeted(137))
+        h.stats.effects.insert(137)
+        XCTAssertFalse(b.canTarget(10, by: h, h))
+        b.beginAction(h)
+        XCTAssertFalse(h.stats.under(137))
+    }
 }

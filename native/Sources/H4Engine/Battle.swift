@@ -369,16 +369,17 @@ public final class Battle {
         if u.moraleChecked ? u.goodMorale : u.moraleRoll < morale(u) { k += 1000 }
         return u.waited ? -k : k
     }
-    /// Speed and move with spells (0x5eda70 / 0x5efba0): Haste or Speed +3 each (not together),
-    /// then Aging halves, and Slow, Fatigue or Bind Flyer halve once.
+    /// Speed and move with spells (0x5eda70 / 0x5efba0): Haste or Speed +3 speed (not together)
+    /// and the Speed Potion another +3 (0x5edac4); Haste or Speed +900 move points, i.e. 9 cells
+    /// (0x5efc13, move points = Move x 100); then Aging halves, and Slow, Fatigue or Bind Flyer halve once.
     public func speed(_ u: Unit) -> Int {
-        var s = u.stats.speed + (u.stats.under(55) || u.stats.under(104) ? 3 : 0)
+        var s = u.stats.speed + (u.stats.under(55) || u.stats.under(104) ? 3 : 0) + (u.stats.under(146) ? 3 : 0)
         if u.stats.aged || u.stats.under(1) { s /= 2 }
         if u.stats.under(105) || u.stats.under(141) || u.stats.under(7) { s /= 2 }
         return s
     }
     public func moveCells(_ u: Unit) -> Float {
-        var m = Float(u.move) + (u.stats.under(55) || u.stats.under(104) ? 3 : 0)
+        var m = Float(u.move) + (u.stats.under(55) || u.stats.under(104) ? 9 : 0)
         if u.stats.aged || u.stats.under(1) { m /= 2 }
         if u.stats.under(105) || u.stats.under(141) || u.stats.under(7) { m /= 2 }
         return m

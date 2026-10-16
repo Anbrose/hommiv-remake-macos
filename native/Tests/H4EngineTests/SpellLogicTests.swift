@@ -220,4 +220,19 @@ final class SpellLogicTests: XCTestCase {
         let ids = Set(b.sparksTargets(by: h, facing: 0).map { $0.id })
         XCTAssertEqual(ids, [es[0].id, es[2].id])
     }
+
+    // MARK: speed
+
+    /// Haste / Speed: +3 speed, +900 move points = 9 cells (0x5edac7 / 0x5efc13); the Speed
+    /// Potion +3 speed more, no move (0x5edac4); Slow halves after.
+    func testHasteMovesNineCellsMore() {
+        let b = Battle(field: field, attackers: [fighter(creature("squire", speed: 5, move: 5), 1)], defenders: [fighter(creature("peasant", speed: 1), 1)], seed: 1)
+        let u = b.units.first { $0.side == 0 }!
+        u.stats.effects = [55]
+        XCTAssertEqual(b.speed(u), 8); XCTAssertEqual(b.moveCells(u), 14)
+        u.stats.effects = [55, 146]
+        XCTAssertEqual(b.speed(u), 11); XCTAssertEqual(b.moveCells(u), 14)
+        u.stats.effects = [104, 105]
+        XCTAssertEqual(b.speed(u), 4); XCTAssertEqual(b.moveCells(u), 7)
+    }
 }

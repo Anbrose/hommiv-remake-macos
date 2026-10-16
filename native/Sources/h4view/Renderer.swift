@@ -605,15 +605,6 @@ final class Renderer: NSObject, MTKViewDelegate {
         return out
     }
     var showBlocked = false   // debug: mark every cell a hero cannot enter
-    lazy var flag: MTLTexture = {   // the player's colour (blue) with a dark edge
-        var bm = Bitmap(width: 10, height: 14)
-        for y in 0..<14 { for x in 0..<10 {
-            let edge = x == 0 || y == 0 || y == 13 || x == 9
-            let p = (y * 10 + x) * 4
-            bm.pixels[p] = edge ? 20 : 40; bm.pixels[p + 1] = edge ? 20 : 80; bm.pixels[p + 2] = edge ? 40 : 220; bm.pixels[p + 3] = 255
-        } }
-        return makeTexture(bm)
-    }()
     lazy var redDot: MTLTexture = {
         var bm = Bitmap(width: 6, height: 6)
         for i in 0..<36 { bm.pixels[i * 4] = 255; bm.pixels[i * 4 + 3] = 200 }
@@ -917,6 +908,10 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
         if let sh = shadow { out.append(Quad(texture: texture(for: sh, of: entry), x: ox + sh.box.left, y: oy + sh.box.top, w: sh.bitmap.width, h: sh.bitmap.height)) }
         if let f = frame { out.append(Quad(texture: texture(for: f, of: entry), x: ox + f.box.left, y: oy + f.box.top, w: f.bitmap.width, h: f.bitmap.height)) }
+        // the owner's flag at the actor model's flag point (an army with no owner, 6, has none)
+        // (its phase keyed by the army, an empty ship's by its cell, so it does not jump as it walks)
+        let id = ObjectIdentifier(h).hashValue, phase = h.actor.isEmpty ? (h.x, h.y) : (id & 0xffff, (id >> 16) & 0xffff)
+        if let q = actorFlag(actor: actorName, owner: h.owner, imageX: Int(sx), imageY: Int(sy) - 16, cellX: phase.0, cellY: phase.1, at: t) { out.append(q) }
         if ProcessInfo.processInfo.environment["H4DEBUG"] != nil {
             print("hero: \(entry) at cell (\(px),\(py)) screen (\(sx),\(sy)) origin \(s.origin) frame \(frame?.name ?? "-") box \(frame.map { "\($0.box)" } ?? "-") -> \(out.map { "(\($0.x),\($0.y) \($0.w)x\($0.h))" })")
         }
@@ -948,7 +943,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             // empty ships on the water
             for b in g.boats where b.z == g.level && g.fogState(b.x, b.y) != GameState.fogUnexplored {
                 let ship = Hero(actor: "", x: b.x, y: b.y, movement: 0)
-                ship.boat = b.alignment; ship.facing = "sw"
+                ship.boat = b.alignment; ship.facing = "sw"; ship.owner = b.owner ?? 6
                 pending.append((inFront(b.x, b.y, Float((b.x + b.y) * 1000 + (b.y - b.x) + 500)), heroQuads(ship, at: t)))
             }
             for h in (g.heroes + g.enemyHeroes.filter { g.isVisible($0) }) where h.z == g.level {
@@ -998,23 +993,12 @@ final class Renderer: NSObject, MTKViewDelegate {
                 if let s = sh { shadows.append(Quad(texture: texture(for: s, of: p.name), x: ox + s.box.left, y: oy + s.box.top, w: s.bitmap.width, h: s.bitmap.height)) }
                 out.append(Quad(texture: texture(for: f, of: p.name), x: ox + f.box.left, y: oy + f.box.top, w: f.bitmap.width, h: f.bitmap.height))
             }
+            // an owned object's flag on it, behind whatever stands in front of the object
+            if let q = objectFlag(p, at: t) { out.append(q) }
         }
         for p in pending { out += p.quads }
         // the objects' shadows lie on the ground under every object (a wall's blocks do not shade each other)
         out.insert(contentsOf: shadows, at: terrainCount)
-        if let g = game, let ui = ui, let fs = ui.flag(AdventureUI.playerColourNames[0]), !fs.frames.isEmpty {   // the owner's waving flag over towns and mines
-            let f = fs.frames[Int(t / 0.12) % fs.frames.count]
-            let tex = texture(for: f, of: "flag|red")
-            for m in g.mines where m.owned {
-                let (sx, sy) = screen(Float(m.x), Float(m.y))
-                out.append(Quad(texture: tex, x: Int(sx) - 2, y: Int(sy) - 70, w: f.bitmap.width, h: f.bitmap.height))
-            }
-            for tn in g.towns where tn.owned {   // on the highest point of the town picture
-                if let p = scene.placed.first(where: { $0.category == "castle" && $0.cellX == tn.x && $0.cellY == tn.y }) {
-                    out.append(Quad(texture: tex, x: p.x + p.image.bitmap.width / 2 - 4, y: p.y - 4, w: f.bitmap.width, h: f.bitmap.height))
-                }
-            }
-        }
         out += shroudQuads()
         if let g = game, showBlocked {   // on top of everything so buildings do not hide their own cells
             let n = g.map.size

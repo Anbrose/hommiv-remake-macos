@@ -47,6 +47,10 @@ public final class Battle {
         public var permanentlyLost = 0
         /// The power each lasting spell on it was cast with (the effect store's power dword).
         public var powers: [Int: Int] = [:]
+        /// Martyr: the stack that takes this one's damage (the first pick, +0xae4).
+        public var martyr: Int? = nil
+        /// Magic Leech: the stack that cast it, fed by this one's casts.
+        public var leechedBy: Int? = nil
         var deathHandled = false
         /// Its turn is lost: Blind, Stun, Terror, Confusion, Frozen.
         public var disabled: Bool { stunned > 0 || frozen > 0 || blind > 0 || durations[180] != nil || durations[21] != nil }
@@ -649,88 +653,158 @@ public final class Battle {
         events.append(ranged ? .shoot(unit: a.id, target: b.id, damage: dmg, killed: killed, left: b.stats.count)
                              : .melee(unit: a.id, target: b.id, damage: dmg, killed: killed, left: b.stats.count))
         if !b.alive { events.append(.die(unit: b.id)); b.boundBy = nil }
+        flushDeferred()
         if !secondary { aftermath(a, b, ranged: ranged, damage: dmg, healthBefore: before) }
         return dmg
     }
 
-    /// Damage taken by a stack (the stack's damage function 0x5f2c50): whole creatures from the
-    /// front; any damage ends Blind (0x5ef290); the attacker's side is credited the experience.
+    /// Damage taken by a stack (the stack's damage function 0x5f2c50): Heavenly Shield's pool soaks
+    /// it first (0x5ef3b7), Martyr passes it to its partner as far as the partner's hit points go;
+    /// whole creatures die from the front; any damage ends Blind (0x5ef290); Guardian Angel brings
+    /// back what the blow killed while it has lives (0x5f4f20); Pain Mirror sends half of it (after
+    /// the attacker's resistance) back to the attacker. The attacker's side gets the experience.
     @discardableResult
     func wound(_ t: Unit, _ dmg: Int, by a: Unit?) -> Int {
-        guard dmg > 0 else { return 0 }
-        let killed = t.stats.take(dmg)
-        t.blind = 0
+        guard dmg > 0, t.alive else { return 0 }
+        var d = dmg
+        if t.stats.under(16), let pool = t.powers[16], pool > 0 {
+            let soak = min(pool, d)
+            d -= soak; t.powers[16] = pool - soak
+            if pool - soak == 0 { remove(16, from: t) }
+        }
+        var transfer = 0
+        if t.stats.under(79), let pid = t.martyr, let partner = units.first(where: { $0.id == pid }), partner.alive {
+            transfer = min(d, partner.stats.totalHealth)
+            d -= transfer
+        }
+        let healthBefore = t.stats.totalHealth
+        let killed = t.stats.take(min(d, healthBefore))
+        let dealt = healthBefore - t.stats.totalHealth
+        if dmg > 0 { t.blind = 0 }
         if t.side == 1 { experience += killed * t.stats.experience }
+        if transfer > 0, let pid = t.martyr, let partner = units.first(where: { $0.id == pid }) {
+            let k = wound(partner, transfer, by: nil)
+            deferred.append(.effect(unit: partner.id, name: "martyr", damage: transfer, killed: k, left: partner.stats.count))
+            if !partner.alive { deferred.append(.die(unit: partner.id)); remove(79, from: t) }
+        }
+        if killed > 0, t.stats.under(53), let lives = t.powers[53], lives > 0 {
+            let n = min(killed, lives, deadCount(t))
+            if n > 0 {
+                if !t.alive { t.stats.wounds = 0; t.deathHandled = false }
+                t.stats.count += n
+                t.powers[53] = lives - n
+                if lives - n == 0 { remove(53, from: t) }
+                deferred.append(.revive(unit: t.id, spell: 53, amount: n, left: t.stats.count))
+            }
+        }
+        if let a = a, a.alive, t.stats.under(106), canTarget(106, by: t, a, anySide: true) {
+            let r = resistance(a, to: 106)
+            let back = r >= 100 ? 0 : ((100 - r) * (dealt + transfer) + 99) / 100
+            let mirrored = min((back + 1) / 2, a.stats.totalHealth)
+            if mirrored > 0 {
+                let k = wound(a, mirrored, by: nil)
+                deferred.append(.effect(unit: a.id, name: "pain mirror", damage: mirrored, killed: k, left: a.stats.count))
+                if !a.alive { deferred.append(.die(unit: a.id)) }
+            }
+        }
         return killed
     }
+    /// What the damage function did besides the blow (Martyr, Guardian Angel, Pain Mirror): shown right after it.
+    var deferred: [Event] = []
+    func flushDeferred() { if !deferred.isEmpty { events += deferred; deferred = [] } }
 
     func effect(_ u: Unit, _ name: String, damage: Int = 0) {
         var killed = 0
         if damage > 0 { killed = wound(u, damage, by: nil) }
         events.append(.effect(unit: u.id, name: name, damage: damage, killed: killed, left: u.stats.count))
         if damage > 0, !u.alive { events.append(.die(unit: u.id)) }
+        flushDeferred()
+    }
+
+    /// An ability's spell put on a struck stack (0x7659e0 -> 0x575f70): only if the spell can affect
+    /// it (0x5b63d0), resisted at its resistance when the spell is Resisted (0x575dc0), then add_spell.
+    @discardableResult
+    func onHit(_ spell: Int, on b: Unit, by a: Unit, name: String) -> Bool {
+        guard canTarget(spell, by: a, b, anySide: true) else { return false }
+        let s = RuleTables.spells[spell]
+        if s.has("Resisted") || s.has("ResIfEnemy") && side(of: a) != side(of: b) {
+            let r = resistance(b, to: spell)
+            if r >= 100 || rng.next() % 100 < r { events.append(.resisted(unit: b.id, spell: spell)); return false }
+        }
+        apply(spell, to: b, power: 0)
+        effect(b, name)
+        return true
     }
 
     /// The abilities that act after a blow lands (0x553440), in the exe's order.
     func aftermath(_ a: Unit, _ b: Unit, ranged: Bool, damage: Int, healthBefore: Int) {
-        let magic = !b.stats.has("magic_immunity")
-        // Fire Aura on the attacker: its power as fire damage on the target after the target's
-        // resistance; Retribution on the target: its power on the melee attacker (0x552600)
-        if !ranged, a.stats.under(44), b.alive, canTarget(38, by: a, b, anySide: true) {
-            effect(b, "firebreathing", damage: min(b.stats.totalHealth, spellDamage(b, a.powers[44] ?? 0, 38)))
-        }
+        // Retribution on the target: its power on the melee attacker; Fire Aura on the attacker: its
+        // power as fire damage on the target, after resistance (0x552600)
         if !ranged, b.stats.under(59), a.alive, canTarget(59, by: b, a, anySide: true) {
             effect(a, "holy retribution", damage: min(a.stats.totalHealth, spellDamage(a, b.powers[59] ?? 0, 59)))
         }
-        // Fire Shield: a quarter of a melee blow burns the attacker, half again with Fire Resistance
-        if !ranged, b.stats.has("fire_shield"), a.alive {
-            var burn = (damage + 3) >> 2
-            if a.stats.has("fire_resistance") { burn = (burn + 1) >> 1 }
-            if burn > 0 { effect(a, "fire shield", damage: burn) }
+        if !ranged, a.stats.under(44), b.alive, canTarget(38, by: a, b, anySide: true) {
+            effect(b, "firebreathing", damage: min(b.stats.totalHealth, spellDamage(b, a.powers[44] ?? 0, 38)))
         }
-        // Life Draining heals the attacker and brings back its dead
-        if a.stats.has("vampire"), Battle.living(b), a.alive {
-            let cap = a.initialCount * a.stats.hitPoints
-            let now = a.stats.totalHealth, gain = min(damage, cap - now)
-            if gain > 0 {
-                let total = now + gain
-                a.stats.count = (total + a.stats.hitPoints - 1) / a.stats.hitPoints
-                a.stats.wounds = a.stats.count * a.stats.hitPoints - total
-                events.append(.effect(unit: a.id, name: "Vampiric Touch", damage: 0, killed: 0, left: a.stats.count))
-            }
-        }
-        guard b.alive else { return }
-        // Weakness: the Weakness spell with every attack
-        if a.stats.has("weakness"), Battle.living(b), magic, !b.stats.weakened { b.stats.weakened = true; effect(b, "Weakness") }
-        // Poison: from now on the target takes the poisoner's damage every round
-        if a.stats.has("poison"), Battle.living(b) {   // (a new dose keeps the larger, 0x5f0220)
-            b.poison = max(b.poison, max(1, QuickCombat.rollBase(a.stats, rng: &rng)))   // a fresh roll of its base damage (0x575fe0 -> 0x5ee690)
+        // Poison (0x57623c: a quarter of the damage dealt, halved by Death Ward) and Poison Attack
+        // (0x553481: its power, halved by Death Ward), where Poison can land; the larger dose stays
+        var dose = 0
+        if a.stats.has("poison") { dose += (b.stats.has("death_protection") ? damage / 2 : damage) >> 2 }
+        if a.stats.under(112) { let p = a.powers[112] ?? 0; dose += b.stats.has("death_protection") ? p / 2 : p }
+        if dose > 0, b.alive, canTarget(111, by: a, b, anySide: true) {
+            b.poison = max(b.poison, dose); b.stats.effects.insert(111)
             effect(b, "poison attack")
         }
-        // Stun (melee) / ranged stun: chance = damage as a percentage of the target's health, less 5
-        if a.stats.has(ranged ? "ranged_stun" : "stunning"), Battle.living(b) {
-            let chance = damage * 100 / max(1, healthBefore) - 5
-            if rng.next() % 100 < chance { b.stunned = max(b.stunned, 1); effect(b, "stun") }
+        // Fire Shield: a quarter of a melee blow burns the attacker unless fire cannot touch it, half
+        // again when the shield's owner has Chaos Ward (0x553507, as the exe has it)
+        if !ranged, b.stats.has("fire_shield"), a.alive, canTarget(42, by: b, a, anySide: true) {
+            var burn = (damage + 3) >> 2
+            if b.stats.has("chaos_protection") { burn = (burn + 1) >> 1 }
+            if burn > 0 { effect(a, "fire shield", damage: min(burn, a.stats.totalHealth)) }
         }
-        guard !ranged else { return }
-        // the rest works in melee only
-        if a.stats.has("aging"), Battle.living(b), magic, !b.stats.aged { b.stats.aged = true; effect(b, "aging") }
-        if a.stats.has("blinding"), !b.stats.has("blind"), Battle.living(b), magic, rng.next() % 100 < 30 { b.blind = 3; effect(b, "blind") }
-        if a.stats.has("curse"), magic, !b.stats.cursed { b.stats.cursed = true; effect(b, "Curse") }
-        if a.stats.has("freeze"), !b.stats.has("cold_resistance"), magic, rng.next() % 100 < 30 { b.frozen = 2; effect(b, "cold_potion") }
-        // Devouring: each attacker has a 1 in 10 chance to swallow a creature, at most a tenth of the attackers
-        if a.stats.has("devouring") {
-            var eaten = 0
-            for _ in 0..<min(a.stats.count, 100) where rng.next() % 10 == 0 { eaten += 1 }
-            if a.stats.count > 100 { eaten = eaten * a.stats.count / 100 }
-            eaten = min(eaten, (a.stats.count + 9) / 10, b.stats.count)
-            if eaten > 0 { effect(b, "acid", damage: eaten * b.stats.hitPoints - (b.stats.count == eaten ? b.stats.wounds : 0)) }
+        if b.alive {
+            // Weakness (melee and ranged) on living targets
+            if a.stats.has("weakness"), Battle.living(b), !b.stats.under(185) { onHit(185, on: b, by: a, name: "Weakness") }
+            // Stun / ranged stun: damage as a percentage of the health it had, less 5; no resistance (0x553960)
+            if a.stats.has(ranged ? "ranged_stun" : "stunning"), Battle.living(b) {
+                let chance = damage * 100 / max(1, healthBefore) - 5
+                if rng.next() % 100 < chance { apply(154, to: b, power: 0); effect(b, "stun") }
+            }
         }
-        guard b.alive else { return }
-        if a.stats.has("hypnotize"), Battle.living(b), magic, rng.next() % 10 < 3 { b.hypnotized = true; effect(b, "hypnotize_effect") }
-        if a.stats.has("binding"), !b.stats.has("insubstantial"), b.boundBy == nil { b.boundBy = a.id; b.stats.bound = true; effect(b, "binding_potion") }
-        // Lightning: 30 damage per attacking creature right after the blow
-        if a.stats.has("lightning"), magic { effect(b, "Lightning", damage: 30 * a.stats.count) }
+        if !ranged, b.alive {
+            // the rest works in melee only
+            if a.stats.has("aging"), !b.stats.aged { onHit(1, on: b, by: a, name: "aging") }
+            if a.stats.has("blinding"), !b.stats.has("blind"), rng.next() % 100 < 30 { onHit(11, on: b, by: a, name: "blind") }
+            if a.stats.has("curse"), !b.stats.cursed { onHit(23, on: b, by: a, name: "Curse") }
+            // Devouring: each attacker has a 1 in 10 chance to swallow a creature, at most a tenth of the attackers
+            if a.stats.has("devouring") {
+                var eaten = 0
+                for _ in 0..<min(a.stats.count, 100) where rng.next() % 10 == 0 { eaten += 1 }
+                if a.stats.count > 100 { eaten = eaten * a.stats.count / 100 }
+                eaten = min(eaten, (a.stats.count + 9) / 10, b.stats.count)
+                if eaten > 0 { effect(b, "acid", damage: eaten * b.stats.hitPoints - (b.stats.count == eaten ? b.stats.wounds : 0)) }
+            }
+        }
+        if !ranged, b.alive {
+            // Hypnotize: 30%, Charm for a turn; on a stack already hypnotized it frees it (0x553e37)
+            if a.stats.has("hypnotize"), rng.next() % 10 < 3, canTarget(138, by: a, b, anySide: true) {
+                if b.stats.under(62) || b.stats.under(138) { remove(62, from: b); remove(138, from: b) }
+                else { apply(138, to: b, power: 0); effect(b, "hypnotize_effect") }
+            }
+            if a.stats.has("binding"), !b.stats.has("insubstantial"), b.boundBy == nil { b.boundBy = a.id; b.stats.bound = true; effect(b, "binding_potion") }
+            // Lightning: 30 damage per attacking creature, as the spell (0x554114)
+            if a.stats.has("lightning"), canTarget(69, by: a, b, anySide: true) { effect(b, "Lightning", damage: min(b.stats.totalHealth, spellDamage(b, 30 * a.stats.count, 69))) }
+            // Freeze: where Frozen can land, 30%, then the resistance roll (0x554470)
+            if b.alive, a.stats.has("freeze"), canTarget(186, by: a, b, anySide: true), rng.next() % 100 < 30 { onHit(186, on: b, by: a, name: "cold_potion") }
+        }
+        // Life Draining and Vampiric Touch (0x5549d0): half the damage (rounded up), halved again by
+        // Death Ward, from a living target, bringing back the attacker's dead up to its starting count
+        if !ranged, a.alive, a.stats.has("vampire") || a.stats.under(182), Battle.living(b),
+           a.stats.wounds > 0 || a.stats.count < a.initialCount {
+            var drain = (damage + 1) >> 1
+            if b.stats.has("death_protection") { drain = (drain + 1) >> 1 }
+            if restore(a, drain) > 0 { events.append(.effect(unit: a.id, name: "Vampiric Touch", damage: 0, killed: 0, left: a.stats.count)) }
+        }
     }
 
     /// The other creatures a blow also strikes: Multiple Attack every adjacent enemy, 3-Headed
@@ -779,6 +853,7 @@ public final class Battle {
             let killed = wound(u, d, by: nil)
             events.append(.effect(unit: u.id, name: name, damage: d, killed: killed, left: u.stats.count))
             if !u.alive { events.append(.die(unit: u.id)) }
+            flushDeferred()
         }
     }
     /// The end of each of the stack's own turns (0x5f2730): every duration down by one, gone at 0.
@@ -786,7 +861,7 @@ public final class Battle {
         for (k, v) in u.durations {
             if v <= 1 {
                 u.durations[k] = nil; u.stats.effects.remove(k)
-                if k == 62 { u.hypnotized = false }
+                if k == 62 || k == 138 { u.hypnotized = false }
             } else { u.durations[k] = v - 1 }
         }
     }
@@ -798,7 +873,7 @@ public final class Battle {
 
     func endAction(_ u: Unit) {
         u.acted = true
-        if u.durations[62] == nil { u.hypnotized = false }   // (Hypnotize holds for its three turns)
+        if u.durations[62] == nil && u.durations[138] == nil { u.hypnotized = false }   // (Hypnotize holds for its three turns, Charm one)
         countDown(u)
         order.removeAll { $0 == u.id }
         checkEnd()
@@ -896,7 +971,7 @@ public final class Battle {
     }
 
     public func attack(_ targetId: Int) -> Bool {
-        guard finished == nil, let u = current, let t = units.first(where: { $0.id == targetId }), t.alive, side(of: t) != side(of: u), !t.stats.under(137) else { return false }
+        guard finished == nil, let u = current, let t = units.first(where: { $0.id == targetId }), mayStrike(u, t) else { return false }
         guard let pos = attackPosition(u, t) else {
             // out of reach this turn: head for the nearest place it can be struck from
             let r = Battle.reach(u)
@@ -917,6 +992,7 @@ public final class Battle {
         }
         Battle.face(u, towards: t); Battle.face(t, towards: u)
         meleeExchange(u, t)
+        if u.stats.under(6) { remove(6, from: u) }   // Berserk lasts until it has attacked (0x56ec57)
         // Strike and Return: back to where it started
         if u.alive, u.stats.has("strike_and_return"), (u.x, u.y) != start, !overlaps(start.0, start.1, u.size, except: u.id) {
             let back = u.stats.has("flying") ? (path(u, to: start.0, start.1) ?? [start]) : [start]
@@ -929,10 +1005,38 @@ public final class Battle {
     /// Does the target strike back? Not against No Retaliation or Fear, not when stunned, frozen
     /// or blind, once a round unless Unlimited Retaliation, and only if the attacker is within its reach.
     func canRetaliate(_ t: Unit, against a: Unit) -> Bool {
-        t.alive && !t.disabled && !a.stats.has("no_retaliation") && !a.stats.has("panic")
+        t.alive && !t.disabled && !a.stats.has("no_retaliation") && !fears(t, a)
             && (!t.retaliated || t.stats.has("unlimited_retaliation"))
             && Battle.inReach(t.x, t.y, t.size, a, reach: Battle.reach(t))
     }
+    /// Aura of Fear on the attacker (the panic ability likewise with Panic): no strike back unless
+    /// the fear cannot touch the target or it has Death Ward (0x5f2810 / 0x5f2a47).
+    func fears(_ t: Unit, _ a: Unit) -> Bool {
+        for (granted, spell) in [(a.stats.under(36), 37), (a.stats.has("panic"), 107)] where granted {
+            if canTarget(spell, by: a, t, anySide: true) && !t.stats.has("death_protection") { return true }
+        }
+        return false
+    }
+    /// Blows per attack (0x5f2160): 1, Quickness makes it 2, Cat Reflexes one more; Strikes Twice
+    /// (melee) or Shoots Twice (ranged) another; shots cap the volleys.
+    func strikes(_ u: Unit, ranged: Bool) -> Int {
+        var n = u.stats.under(122) ? 2 : 1
+        if u.stats.under(130) { n += 1 }
+        if u.stats.has(ranged ? "shoots_twice" : "strikes_twice") { n += 1 }
+        if ranged, !u.stats.has("unlimited_shots") { n = max(1, min(n, u.shots)) }
+        return n
+    }
+    /// Cowardice (0x5f5740): the stack does not attack, shoot or curse a stack with at least its total hit points.
+    func afraid(_ u: Unit, of t: Unit) -> Bool { u.stats.under(22) && totalHealth(t) >= totalHealth(u) }
+    /// The total the exe compares (0x5f57a0): the creatures' live hit points less wounds, Heavenly Shield's pool on top.
+    func totalHealth(_ u: Unit) -> Int { u.stats.totalHealth + (u.stats.under(16) ? u.powers[16] ?? 0 : 0) }
+    /// Whether `u` may attack or shoot `t` now: an enemy (anyone when Berserk is on either, 0x40cef0),
+    /// not in Sanctuary, not feared (Cowardice), and not under Song of Peace itself.
+    public func mayStrike(_ u: Unit, _ t: Unit) -> Bool {
+        t.alive && t.id != u.id && hostile(u, t) && !t.stats.under(137) && !afraid(u, of: t) && !u.stats.under(144)
+    }
+    /// Enemies of each other: other sides, or Berserk on either.
+    public func hostile(_ a: Unit, _ b: Unit) -> Bool { side(of: a) != side(of: b) || a.stats.under(6) || b.stats.under(6) }
     func strikesFirst(_ x: Unit, over y: Unit) -> Bool {
         x.stats.has("first_strike") && !y.stats.has("first_strike_immunity") && !y.stats.has("first_strike")
     }
@@ -972,13 +1076,13 @@ public final class Battle {
             blow(u, t)
             if retaliates, canRetaliate(t, against: u) { t.retaliated = true; blow(t, u) }
         }
-        if u.alive, t.alive, u.stats.has("strikes_twice") { blow(u, t) }
+        for _ in 1..<strikes(u, ranged: false) where u.alive && t.alive { blow(u, t) }
         checkEnd()
     }
 
     /// Can the unit shoot now (it has shots and no enemy touches it)?
     public func canShoot(_ u: Unit) -> Bool {
-        (u.shots > 0 || u.stats.has("unlimited_shots")) && u.stats.shooter && !units.contains { $0.alive && side(of: $0) != side(of: u) && Battle.adjacent(u, $0) }
+        (u.shots > 0 || u.stats.has("unlimited_shots")) && u.stats.shooter && !u.stats.under(47) && !units.contains { $0.alive && side(of: $0) != side(of: u) && Battle.adjacent(u, $0) }
     }
     func spendShot(_ u: Unit) { if !u.stats.has("unlimited_shots") { u.shots -= 1 } }
     func volley(_ u: Unit, _ t: Unit) {
@@ -988,7 +1092,7 @@ public final class Battle {
     }
 
     public func shoot(_ targetId: Int) -> Bool {
-        guard finished == nil, let u = current, let t = units.first(where: { $0.id == targetId }), t.alive, side(of: t) != side(of: u), !t.stats.under(137) else { return false }
+        guard finished == nil, let u = current, let t = units.first(where: { $0.id == targetId }), mayStrike(u, t) else { return false }
         guard canShoot(u), shotOverWallOK(u, t) else { return attack(targetId) }
         beginAction(u)
         Battle.face(u, towards: t)
@@ -1003,7 +1107,8 @@ public final class Battle {
             volley(u, t)
             if back, t.alive, !t.disabled { t.retaliated = true; Battle.face(t, towards: u); volley(t, u) }
         }
-        if u.alive, t.alive, u.stats.has("shoots_twice"), canShoot(u) { volley(u, t) }
+        for _ in 1..<strikes(u, ranged: true) where u.alive && t.alive && canShoot(u) { volley(u, t) }
+        if u.stats.under(6) { remove(6, from: u) }   // (0x569bf4)
         checkEnd()
         endAction(u)
         return true
@@ -1031,7 +1136,8 @@ public final class Battle {
     /// reach or walk towards the nearest enemy (a hypnotized unit turns on its own side).
     public func autoAct() {
         guard finished == nil, let u = current else { return }
-        let enemies = units.filter { $0.alive && $0.id != u.id && side(of: $0) != side(of: u) && !$0.stats.under(137) }
+        if u.stats.under(6) { berserkAct(u); return }
+        let enemies = units.filter { mayStrike(u, $0) }
         guard !enemies.isEmpty else { defend(); return }
         // a caster (hero or spellcasting creature) casts when its best spell is worth more than its blow
         if u.caster != nil, let c = aiSpell(u), c.value > aiBlowValue(u, enemies) {
@@ -1066,6 +1172,33 @@ public final class Battle {
             if d < bestD { bestD = d; best = (x, y) }
         }
         if let b = best, !(b.0 == u.x && b.1 == u.y) { _ = move(to: b.0, b.1) } else { defend() }
+    }
+
+    /// A Berserk stack acts on its own (0x5740cc) and never casts: it shoots the nearest stack of
+    /// either side if it can (0x573ca0: distance between centres less both radii, in cells, ties at
+    /// random), else attacks the one it reaches cheapest (0x573a80), else waits once, then defends.
+    func berserkAct(_ u: Unit) {
+        let cands = units.filter { mayStrike(u, $0) }
+        if canShoot(u) {
+            func d(_ v: Unit) -> Int {
+                let dx = Double(v.x * 16 + v.size * 8 - u.x * 16 - u.size * 8), dy = Double(v.y * 16 + v.size * 8 - u.y * 16 - u.size * 8)
+                return (Int((dx * dx + dy * dy).squareRoot() + 0.5) - 8 * u.size - 8 * v.size + 8) >> 4
+            }
+            if let m = cands.map(d).min() {
+                let ties = cands.filter { d($0) == m }
+                if shoot(ties[rng.next() % ties.count].id) { return }
+            }
+        }
+        var costs: [(Unit, Float)] = []
+        for v in cands {
+            if Battle.inReach(u.x, u.y, u.size, v, reach: Battle.reach(u)) { costs.append((v, 0)); continue }
+            if let p = attackPosition(u, v) { costs.append((v, reachable(u)[Battle.key(p.0, p.1)] ?? 0)) }
+        }
+        if let m = costs.map({ $0.1 }).min() {
+            let ties = costs.filter { $0.1 == m }
+            if attack(ties[rng.next() % ties.count].0.id) { return }
+        }
+        if canWait(u) { wait() } else { defend() }
     }
 
     /// The attacker's hero left the field (retreat): the battle is over, lost.

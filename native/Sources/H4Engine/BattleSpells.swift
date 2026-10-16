@@ -103,11 +103,17 @@ extension Battle {
         case 133, 129: if deadCount(t) == 0 && t.stats.wounds == 0 { return false }
         default: break
         }
-        let enemy = side(of: t) != side(of: u)
+        let enemy = hostile(t, u)
         if !anySide, enemy ? !s.has("Enemy") : !s.has("Friend") { return false }
+        if !anySide, enemy {
+            // Song of Peace: no curse or damage on the other side (0x5b407a); Cowardice: not on a
+            // stack with at least its total hit points (0x5b7800)
+            if u.stats.under(144), s.has("Curse") || s.has("Dmg") { return false }
+            if afraid(u, of: t), Battle.aim(spell) != .none { return false }
+        }
         if spell == 60, !enemy, t.id != u.id { return false }   // Holy Water: the caster itself, or an enemy
         if spell == 16, t.id != u.id { return false }           // Heavenly Shield: the caster only
-        if spell == 59, enemy, !anySide { return false }         // Retribution is cast on friends (its Enemy flag is for the struck attacker)
+        if [59, 36, 182, 106].contains(spell), enemy, !anySide { return false }   // cast on friends (the Enemy flag is for the struck attacker)
         // magic immunity, Anti-Magic and Sanctuary turn every spell away, friendly ones too (0x5b37d0)
         if t.stats.has("magic_immunity") || t.stats.under(3) || t.stats.under(137) { return false }
         if t.stats.has("undead"), !s.has("Undead") { return false }
@@ -121,9 +127,24 @@ extension Battle {
         case 114, 34: if t.stats.alignment != "life" { return false }   // Prayer, Unholy Song: Life stacks (0x5b4fdf)
         case 68: if t.id == u.id || !["life", "nature"].contains(t.stats.alignment) { return false }   // Life Drain (0x78ec60)
         case 110: if t.stats.alignment == "death" { return false }   // Plague (0x5b550f)
+        case 115: if !t.stats.shooter { return false }                     // Precision: shooters (0x5b5192)
+        case 7: if !t.stats.has("flying") { return false }                 // Bind Flyer: flyers (0x5b4c45)
+        case 10, 23: if t.stats.damageLow == t.stats.damageHigh { return false }   // Bless / Curse change nothing (0x5b4be0)
+        case 11: if t.stats.has("blind") { return false }                  // (0x5b4d16)
         default: break
         }
         return true
+    }
+    /// A cast's cost in combat (0x5ebe10, heroes and creatures): the book's cost, + the spell's cost
+    /// under Power Drain, + again under Magic Leech, - 2 when Mana Flare is on the caster, at least 1.
+    public func cost(_ spell: Int, by u: Unit) -> Int {
+        guard let c = u.caster, spell < RuleTables.spells.count else { return 0 }
+        let base = RuleTables.spells[spell].cost
+        var k = c.cost(spell)
+        if u.stats.under(113) { k += base }
+        if u.stats.under(73) { k += base }
+        if u.stats.under(77) { k -= 2 }
+        return max(1, k)
     }
     /// Combat spells the exe registers no factory for (0x614220 / 0x614270): only abilities,
     /// artifacts or other spells apply them.
@@ -135,7 +156,7 @@ extension Battle {
             guard sp < RuleTables.spells.count else { return false }
             let s = RuleTables.spells[sp]
             let skillOK = c.creature || c.free.contains(sp) || (s.schoolSkill >= 0 && (c.skills[RuleTables.skillIds[s.schoolSkill]] ?? 0) >= s.level)
-            return s.has("Cmb") && !Battle.noFactory.contains(sp) && sp != 129 && c.cost(sp) <= c.spellPoints && skillOK
+            return s.has("Cmb") && !Battle.noFactory.contains(sp) && sp != 129 && cost(sp, by: u) <= c.spellPoints && skillOK
         }
     }
     /// How a spell is aimed (its factory's click handler): nothing, a stack (a body for the Bodies
@@ -172,7 +193,7 @@ extension Battle {
         if spell == 30 { return units.filter { canTarget(spell, by: u, $0) } }   // Divine Intervention: friends, dead heroes too
         if Battle.massOnly.contains(spell) { return units.filter { $0.alive && canTarget(spell, by: u, $0) } }
         switch Battle.aim(spell) {
-        case .none: return []
+        case .none: return spell == 16 ? [u] : []   // Heavenly Shield: the caster
         case .cell:
             guard let c = cell, c.0 >= 0, c.1 >= 0, c.0 < Battlefield.size, c.1 < Battlefield.size else { return nil }
             if let r = Battle.areaRadius[spell] { return areaMembers(spell, by: u, centre: (c.0 * 16 + 8, c.1 * 16 + 8), radius: r) }
@@ -248,14 +269,18 @@ extension Battle {
         guard finished == nil, let u = current, var c = u.caster, castable(u).contains(spell) else { return false }
         let s = RuleTables.spells[spell]
         guard let targets = castTargets(spell, by: u, target: targetId, cell: cell) else { return false }
-        if spell == 136 {   // Sacrifice: a second friendly stack to restore
+        if spell == 136 || spell == 79 {   // Sacrifice, Martyr: a second friendly stack
             guard let sid = second, sid != targetId, let t2 = units.first(where: { $0.id == sid }), canTarget(spell, by: u, t2) else { return false }
         }
         beginAction(u)
-        c.spellPoints -= c.cost(spell)
+        let cost = self.cost(spell, by: u)
+        c.spellPoints -= cost
         u.caster = c
+        // Magic Leech: its caster gets 1 spell point per 2 the target spends
+        if u.stats.under(73), let lid = u.leechedBy, let l = units.first(where: { $0.id == lid }), l.alive, var lc = l.caster { lc.spellPoints += cost / 2; l.caster = lc }
         let p = power(spell, by: u, creatures: tables)
         events.append(.cast(unit: u.id, spell: spell, targets: targets.map { $0.id }))
+        let mark = events.count
         if let c = cell, Battle.aim(spell) == .cell || Battle.aim(spell) == .unitOrCell && targetId == nil { events.append(.area(unit: u.id, spell: spell, cell: c)) }
         // the effect it leaves: the mass spell's single one, Cloud of Confusion's Confusion, and the
         // remap 0x865580 (Luck -> Fortune, Morale -> Mirth, Immortality -> Guardian Angel)
@@ -335,6 +360,11 @@ extension Battle {
             if let t = targets.first { resurrect(t, power: p, spell: spell) }
         case "summoning" where s.has("Bodies"):   // Raise Skeletons / Ghost / Vampires, Animate Dead, Death Call (0x8058f0)
             if let t = targets.first { raise(spell, power: p, by: u, from: t) }
+        case _ where spell == 79:   // Martyr (0x78b620): the second pick's damage goes to the first
+            if let t = targets.first, let sid = second, let t2 = units.first(where: { $0.id == sid }) {
+                apply(79, to: t2, power: p); t2.martyr = t.id
+                events.append(.spellHit(unit: t2.id, spell: spell, damage: 0, killed: 0, left: t2.stats.count))
+            }
         case "sacrifice":   // Sacrifice (0x808130): the first friend destroyed, the second restored by twice its hit points
             if let t = targets.first, let sid = second, let t2 = units.first(where: { $0.id == sid }) {
                 let hp = t.stats.totalHealth
@@ -372,9 +402,22 @@ extension Battle {
                     continue
                 }
                 apply(effectSpell, to: t, power: p)
+                if effectSpell == 73 { t.leechedBy = u.id }
                 events.append(.spellHit(unit: t.id, spell: effectSpell, damage: 0, killed: 0, left: t.stats.count))
             }
         }
+        // Magic Mirror (0x614b10 / 0x61ab00): a curse or damage spell that landed on a stack with
+        // the mirror comes back on its caster at half strength, unless the caster is already under it
+        if s.has("Curse") || s.has("Dmg"), u.alive {
+            let resisted = Set(events[mark...].compactMap { e -> Int? in if case .resisted(let id, _) = e { return id }; return nil })
+            for t in targets where t.stats.has("magic_mirror") && !resisted.contains(t.id) && hostile(t, u) && u.alive && !u.stats.under(effectSpell) && canTarget(spell, by: t, u, anySide: true) {
+                events.append(.effect(unit: t.id, name: "magic mirror", damage: 0, killed: 0, left: t.stats.count))
+                if s.kind == "damage" { strike(u, spellDamage(u, p / 2, spell), spell: spell, by: t) }
+                else { apply(effectSpell, to: u, power: p / 2); events.append(.spellHit(unit: u.id, spell: effectSpell, damage: 0, killed: 0, left: u.stats.count)) }
+            }
+        }
+        // Spell Shackle: 10 x the cost burns the caster, after its own resistance (0x612290 / 0x612600)
+        if u.stats.under(147), u.alive { strike(u, spellDamage(u, 10 * cost, 147), spell: 147, by: u) }
         checkEnd()
         endAction(u)
         return true
@@ -395,6 +438,7 @@ extension Battle {
         let killed = wound(t, d, by: nil)
         events.append(.spellHit(unit: t.id, spell: spell, damage: d, killed: killed, left: t.stats.count))
         if !t.alive { events.append(.die(unit: t.id)) }
+        flushDeferred()
         return killed
     }
 
@@ -423,7 +467,7 @@ extension Battle {
                                       25: [148], 145: [148], 148: [145], 6: [144], 144: [6], 135: [2, 24, 124, 125, 126]]
         for o in opposite[spell] ?? [] { remove(o, from: t) }
         // the fixed lengths (§1), a turn more when it lands on the stack whose turn it is
-        let lengths: [Int: Int] = [21: 1, 154: 1, 144: 1, 122: 2, 180: 2, 186: 2, 11: 3, 22: 3, 62: 3, 137: 6]
+        let lengths: [Int: Int] = [21: 1, 154: 1, 144: 1, 138: 1, 174: 1, 122: 2, 180: 2, 186: 2, 11: 3, 22: 3, 62: 3, 137: 6]
         if let n = lengths[spell] { t.durations[spell] = n + (current?.id == t.id ? 1 : 0) }
         switch spell {
         case 27, 83:   // Dispel: every spell goes
@@ -434,7 +478,10 @@ extension Battle {
         case 185: t.stats.weakened = true
         case 1: t.stats.aged = true
         case 9: t.stats.bound = true
-        case 62, 138: t.hypnotized = true
+        case 62, 138:   // on a stack already hypnotized it frees it (0x5f05d7)
+            if t.hypnotized || t.stats.under(62) || t.stats.under(138) { remove(62, from: t); remove(138, from: t); return }
+            t.hypnotized = true
+        case 53: t.powers[53] = min(p, t.stats.count); t.stats.effects.insert(53); return   // lives, at most its count (0x5f0382)
         case 5:   // Banish: destroys summoned creatures up to its power in hit points
             if t.summoned { let k = t.stats.take(min(p, t.stats.totalHealth)); events.append(.spellHit(unit: t.id, spell: 5, damage: p, killed: k, left: t.stats.count)); if !t.alive { events.append(.die(unit: t.id)) } }
         case 54:   // Hand of Death: kills outright

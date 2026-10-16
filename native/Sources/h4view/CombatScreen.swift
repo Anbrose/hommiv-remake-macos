@@ -398,7 +398,7 @@ final class CombatScreen {
     func pump() {
         guard let b = battle else { return }
         take(b.takeEvents())
-        if playing == nil, queue.isEmpty, b.finished == nil, let u = b.current, u.side == 1 || u.hypnotized || autoCombat { b.autoAct(); take(b.takeEvents()) }
+        if playing == nil, queue.isEmpty, b.finished == nil, let u = b.current, u.side == 1 || u.hypnotized || u.stats.under(6) || autoCombat { b.autoAct(); take(b.takeEvents()) }
     }
     /// Queue new events. The battle has already moved the units, so a unit about to move is held
     /// where it starts until its move plays (otherwise it shows at its end for a frame and jumps back).

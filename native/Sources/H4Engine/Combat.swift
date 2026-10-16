@@ -32,7 +32,21 @@ public struct Combatant {
     /// The game's ability keywords ("first_strike", "no_retaliation", ...), from heroes4.exe's
     /// per-creature table (RuleTables.creatureAbilities).
     public var abilities: Set<String> = []
-    public func has(_ ability: String) -> Bool { abilities.contains(ability.lowercased()) }
+    /// An ability, its own or one a spell on it grants (has_ability 0x5edcc0); Bind Flyer takes flight away.
+    public func has(_ ability: String) -> Bool {
+        let k = ability.lowercased()
+        if k == "flying", effects.contains(7) { return false }
+        if abilities.contains(k) { return true }
+        guard !effects.isEmpty, let by = Combatant.grantedBy[k] else { return false }
+        return by.contains { effects.contains($0) }
+    }
+    /// The abilities spells grant (0x5edcc0's switch 0x5edf6c, the path finder for Flight 0x60d610,
+    /// the five wards for the x 2/3 damage 0x5ee50a).
+    static let grantedBy: [String: [Int]] = [
+        "chaos_protection": [117], "death_protection": [118], "life_protection": [119], "nature_protection": [120], "order_protection": [121],
+        "cold_resistance": [20], "fire_resistance": [40], "first_strike": [45, 143], "freeze": [49], "long_range": [115],
+        "magic_immunity": [3], "magic_mirror": [74], "mechanical": [18, 64], "undead": [2, 24], "flying": [46],
+    ]
     public var level = 0
     public var alignment = ""
     /// Spell effects the creature abilities put on a stack (they last the battle unless noted).
@@ -155,6 +169,7 @@ public enum QuickCombat {
         let points = moved * 100
         if !ranged, a.has("charging"), points > 500 { base = base * (points * 10 / 350 + 85) / 100 }
         if b.level == 4, a.has("giantslayer") || a.has(ranged ? "ranged_giantslayer" : "melee_giantslayer") { base *= 2 }
+        if b.level == 4, a.under(140) { base = base * 3 / 2 }   // Slayer: half again against 4th level creatures (0x5ee456)
         var attack = Float(ranged ? (a.rangedAttack ?? a.attack) : a.attack)
         if !ranged, a.shooter, !a.noMeleePenalty { attack *= 0.5 }
         if a.weakened { attack *= 0.75 }
@@ -182,7 +197,7 @@ public enum QuickCombat {
         if b.aged { defense *= 0.8 }
         let ratio = min(20, max(0.05, attack / defense))   // clamped to 0.05...20 (0x650e30)
         var d = Int((Float(base) * ratio).rounded())
-        let ward = ["life": "life_protection", "death": "death_protection", "chaos": "chaos_protection"][a.alignment]
+        let ward = ["life": "life_protection", "death": "death_protection", "chaos": "chaos_protection", "order": "order_protection", "nature": "nature_protection"][a.alignment]
         if let w = ward, b.has(w) { d = d * 100 / 150 }
         if a.has("fire_attack") || a.has("breath_attack") || a.has("arc_breath_attack") || (ranged && a.has("large_area_effect")), b.has("fire_resistance") { d >>= 1 }
         if a.has("cold_attack"), b.has("cold_resistance") { d >>= 1 }

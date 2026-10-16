@@ -342,4 +342,60 @@ final class SpellLogicTests: XCTestCase {
         XCTAssertTrue(b.cast(60, on: h.id))
         XCTAssertTrue(h.stats.under(10) && h.stats.under(118))
     }
+
+    // MARK: granted abilities and the damage function
+
+    /// has_ability 0x5edcc0: First Strike, Flight, Precision's long range come from spells; Bind Flyer takes flight.
+    func testSpellsGrantAbilities() {
+        var c = Combatant(creature: creature("squire"), count: 1)
+        XCTAssertFalse(c.has("first_strike"))
+        c.effects = [45, 46, 115, 3]
+        XCTAssertTrue(c.has("first_strike") && c.has("flying") && c.has("long_range") && c.has("magic_immunity"))
+        c.effects.insert(7)
+        XCTAssertFalse(c.has("flying"))
+    }
+
+    /// Quickness 2 blows, Cat Reflexes one more, Strikes Twice one more (0x5f2160).
+    func testStrikesPerAttack() {
+        let b = Battle(field: field, attackers: [fighter(creature("wolf"), 1)], defenders: [fighter(creature("peasant", speed: 1), 1)], seed: 1)
+        let u = b.units.first { $0.side == 0 }!
+        XCTAssertEqual(b.strikes(u, ranged: false), 2)
+        u.stats.effects = [122, 130]
+        XCTAssertEqual(b.strikes(u, ranged: false), 4)
+    }
+
+    /// Guardian Angel brings back what a blow kills while it has lives (0x5f4f20); Heavenly Shield soaks first.
+    func testGuardianAngelAndHeavenlyShield() {
+        let b = Battle(field: field, attackers: [fighter(creature("squire", hp: 10), 5)], defenders: [fighter(creature("peasant", speed: 1), 1)], seed: 1)
+        let u = b.units.first { $0.side == 0 }!
+        u.stats.effects.insert(53); u.powers[53] = 2
+        XCTAssertEqual(b.wound(u, 30, by: nil), 3)
+        XCTAssertEqual(u.stats.count, 4)                         // 3 killed, 2 back
+        XCTAssertFalse(u.stats.under(53))
+        u.stats.effects.insert(16); u.powers[16] = 15
+        b.wound(u, 20, by: nil)
+        XCTAssertEqual(u.stats.totalHealth, 35)
+        XCTAssertFalse(u.stats.under(16))
+    }
+
+    /// Aura of Fear: no strike back, except from stacks it cannot touch (Mind) or with Death Ward (0x5f2a47).
+    func testAuraOfFear() {
+        let b = Battle(field: field, attackers: [fighter(creature("squire"), 1)], defenders: [fighter(creature("peasant", speed: 1), 1), fighter(creature("skeleton", speed: 1), 1)], seed: 1)
+        let a = b.units.first { $0.side == 0 }!, p = b.units.first { $0.keyword == "peasant" }!, sk = b.units.first { $0.keyword == "skeleton" }!
+        sk.stats.abilities = ["undead"]
+        a.stats.effects = [36]
+        XCTAssertTrue(b.fears(p, a))
+        XCTAssertFalse(b.fears(sk, a))
+        p.stats.effects = [118]
+        XCTAssertFalse(b.fears(p, a))
+    }
+
+    /// Costs (0x5ebe10): + the cost under Power Drain and again under Magic Leech, - 2 under Mana Flare.
+    func testCombatCosts() {
+        let b = Battle(field: field, attackers: [hero(skills: ["chaos": 3], spells: [43])], defenders: [fighter(creature("peasant", speed: 1), 1)], seed: 1)
+        let h = b.units.first { $0.side == 0 }!
+        XCTAssertEqual(b.cost(43, by: h), 5)
+        h.stats.effects = [113, 73]; XCTAssertEqual(b.cost(43, by: h), 15)
+        h.stats.effects = [77]; XCTAssertEqual(b.cost(43, by: h), 3)
+    }
 }

@@ -44,7 +44,7 @@ public struct Caster {
 extension Battle {
     static let powerSkill = ["life": "spirit", "order": "mind", "death": "demonology", "chaos": "pyromancy", "nature": "meditation"]
     /// Mass spell -> the single spell it casts on every valid target (0x98bf08).
-    static let massOf: [Int: Int] = [12: 13, 29: 58, 32: 61, 52: 47, 80: 10, 127: 109, 81: 15, 82: 23, 83: 27, 84: 35, 85: 45, 86: 48, 87: 104,
+    public static let massOf: [Int: Int] = [12: 13, 29: 58, 32: 61, 52: 47, 80: 10, 127: 109, 81: 15, 82: 23, 83: 27, 84: 35, 85: 45, 86: 48, 87: 104,
                                      88: 56, 89: 102, 90: 115, 91: 117, 92: 118, 93: 120, 94: 121, 95: 140, 96: 105, 97: 143, 98: 145, 99: 148, 100: 185]
 
     /// The spell's power for this caster (0x865200): (base + increment x level) x pct / 100, pct =
@@ -196,7 +196,7 @@ extension Battle {
         case .none: return spell == 16 ? [u] : []   // Heavenly Shield: the caster
         case .cell:
             guard let c = cell, c.0 >= 0, c.1 >= 0, c.0 < Battlefield.size, c.1 < Battlefield.size else { return nil }
-            if let r = Battle.areaRadius[spell] { return areaMembers(spell, by: u, centre: (c.0 * 16 + 8, c.1 * 16 + 8), radius: r) }
+            if Battle.areaRadius(spell) != nil { return areaMembers(spell, by: u, cell: c) }
             return []
         case .unitOrCell where targetId == nil:   // Fire Ring on a cell: 72 around it
             guard let c = cell, c.0 >= 0, c.1 >= 0, c.0 < Battlefield.size, c.1 < Battlefield.size else { return nil }
@@ -209,8 +209,18 @@ extension Battle {
         }
         return [t]
     }
-    /// Area radii in world units (16 a cell; slot 18 of the fireball family, 0x718320 / 0x718870).
-    static let areaRadius: [Int: Int] = [43: 64, 67: 64, 19: 64, 25: 64, 50: 64, 66: 112]
+    /// The radius of an area spell in world units, 16 a cell (slot 18): Fireball, Kreegan Fire, Cloud
+    /// of Confusion, Despair and Choking Gas 64, Inferno 112 (0x718870); nil for the others.
+    public static func areaRadius(_ spell: Int) -> Int? {
+        [43: 64, 67: 64, 19: 64, 25: 64, 50: 64, 66: 112][spell]
+    }
+    /// The stacks an area spell aimed at a cell takes in (0x717030): the centre is the cell's middle
+    /// (cell x 16 + 8), a stack is in when round(distance to its footprint centre) - size x 8 < radius
+    /// and the spell can land on it; friend and foe alike, in the battle's list order.
+    public func areaMembers(_ spell: Int, by caster: Unit, cell: (Int, Int)) -> [Unit] {
+        guard let radius = Battle.areaRadius(spell) else { return [] }
+        return areaMembers(spell, by: caster, centre: (cell.0 * 16 + 8, cell.1 * 16 + 8), radius: radius)
+    }
     /// The mass spells with a class of their own (0x78d5xx-0x78e8xx): every stack they can affect.
     static let massOnly: Set<Int> = [31, 34, 68, 77, 110, 114, 135, 137, 149, 32]
     /// The stacks an area holds (0x717030): round(distance from the centre to the footprint's
@@ -263,7 +273,7 @@ extension Battle {
     /// Cast by the current unit on a target stack (nil for untargeted spells), a cell (area
     /// spells), a second stack (Sacrifice). Ends the unit's turn.
     @discardableResult
-    public func cast(_ spell: Int, on targetId: Int?, cell: (Int, Int)? = nil, second: Int? = nil, tables: RuleTables? = nil) -> Bool {
+    public func cast(_ spell: Int, on targetId: Int?, at cell: (Int, Int)? = nil, second: Int? = nil, tables: RuleTables? = nil) -> Bool {
         if let t = tables { self.tables = t }
         let tables = self.tables
         guard finished == nil, let u = current, var c = u.caster, castable(u).contains(spell) else { return false }
@@ -281,7 +291,10 @@ extension Battle {
         let p = power(spell, by: u, creatures: tables)
         events.append(.cast(unit: u.id, spell: spell, targets: targets.map { $0.id }))
         let mark = events.count
-        if let c = cell, Battle.aim(spell) == .cell || Battle.aim(spell) == .unitOrCell && targetId == nil { events.append(.area(unit: u.id, spell: spell, cell: c)) }
+        if Battle.areaRadius(spell) != nil || spell == 41,
+           let c = cell ?? targets.first(where: { $0.id == targetId }).map({ ($0.x + $0.size / 2, $0.y + $0.size / 2) }) ?? units.first(where: { $0.id == targetId }).map({ ($0.x + $0.size / 2, $0.y + $0.size / 2) }) {
+            events.append(.castAt(unit: u.id, spell: spell, cell: c))
+        }
         // the effect it leaves: the mass spell's single one, Cloud of Confusion's Confusion, and the
         // remap 0x865580 (Luck -> Fortune, Morale -> Mirth, Immortality -> Guardian Angel)
         let effectSpell = Battle.massOf[spell] ?? [19: 21, 70: 48, 103: 148, 116: 53][spell] ?? spell
@@ -514,7 +527,7 @@ extension Battle {
     func resurrect(_ t: Unit, power p: Int, spell: Int) {
         let before = t.stats.count
         let amt = restore(t, p)
-        events.append(.revive(unit: t.id, spell: spell, amount: t.stats.count - before, left: t.stats.count))
+        if t.stats.count > before { events.append(.revived(unit: t.id, spell: spell, count: t.stats.count - before, rose: before == 0)) }
         if amt > 0 && before == t.stats.count { events.append(.spellHit(unit: t.id, spell: spell, damage: -amt, killed: 0, left: t.stats.count)) }
     }
     /// Raising (0x8058f0 / 0x8067b0): Raise Skeletons / Ghost / Vampires make min(power, the dead,
@@ -550,11 +563,11 @@ extension Battle {
     /// to the stack this spell brought before (0x577fc0); otherwise a new stack is placed next to
     /// the caster (0x87bac0). Returns the stack, or nil when there is no room.
     @discardableResult
-    func summon(_ cr: CreatureDef, count: Int, spell: Int, by u: Unit, at corpse: Unit? = nil, phantomOf: Combatant? = nil) -> Unit? {
+    func summon(_ cr: CreatureDef, count: Int, spell: Int, by u: Unit, at corpse: Unit? = nil, phantomOf: Combatant? = nil, copyOf: Int? = nil) -> Unit? {
         if let old = units.first(where: { $0.alive && $0.summoned && $0.summonedBy == spell && $0.side == side(of: u) && $0.keyword == cr.keyword }) {
             old.stats.count += count
             old.initialCount += count
-            events.append(.revive(unit: old.id, spell: spell, amount: count, left: old.stats.count))
+            events.append(.revived(unit: old.id, spell: spell, count: count, rose: false))
             return old
         }
         let model: (actor: String, size: Int) = creatureModel?(cr) ?? (cr.name, 2)
@@ -571,7 +584,10 @@ extension Battle {
         nu.summoned = true; nu.summonedBy = spell; nu.acted = true
         nu.caster = Caster(creature: cr.keyword, spellPoints: cr.spellPoints, spellPower: cr.spellPower)
         units.append(nu)
-        events.append(.summon(unit: nu.id))
+        // a phantom slides off its original, a raised stack rises from the bodies, a summon fades in
+        if let o = copyOf { events.append(.phantom(unit: nu.id, of: o)) }
+        else if RuleTables.spells[spell].has("Bodies") { events.append(.revived(unit: nu.id, spell: spell, count: count, rose: true)) }
+        else { events.append(.summon(unit: nu.id)) }
         return nu
     }
     /// Phantom Image / Create Illusion (0x87d050): a copy of the target's creature, ceil(power /
@@ -585,7 +601,7 @@ extension Battle {
                                                              spellPoints: 0, shortHelp: "", longHelp: "")
         var copy = t.stats
         copy.experience = 0
-        summon(cr, count: n, spell: spell, by: u, phantomOf: copy)
+        summon(cr, count: n, spell: spell, by: u, phantomOf: copy, copyOf: t.id)
     }
 
     /// A free footprint of `size` as near to a stack as there is room (0x87bac0): of the free

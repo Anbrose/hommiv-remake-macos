@@ -188,7 +188,7 @@ final class SpellLogicTests: XCTestCase {
         XCTAssertEqual(near, [es[0].id])
         XCTAssertEqual(b.castTargets(43, by: h, target: nil, cell: (56, 51))!.map { $0.id }.contains(es[0].id), false)   // 88 - 16 = 72
         XCTAssertTrue(b.castTargets(66, by: h, target: nil, cell: (56, 51))!.contains { $0.id == es[0].id })              // Inferno: 112
-        XCTAssertTrue(b.cast(43, on: nil, cell: (55, 51)))
+        XCTAssertTrue(b.cast(43, on: nil, at: (55, 51)))
         XCTAssertLessThan(es[0].stats.totalHealth, 100)
         XCTAssertEqual(es[1].stats.totalHealth, 100)
     }

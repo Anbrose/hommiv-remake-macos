@@ -140,14 +140,14 @@ extension Renderer {
             switch Battle.aim(spell) {
             case .none: done = b.cast(spell, on: nil, tables: g.tables)
             case .unit: if let t { done = b.cast(spell, on: t.id, tables: g.tables) }
-            case .cell: done = b.cast(spell, on: nil, cell: cell, tables: g.tables)
-            case .unitOrCell: done = b.cast(spell, on: t?.id, cell: t == nil ? cell : nil, tables: g.tables)
-            case .unitAndPoint: if let t { done = b.cast(spell, on: t.id, cell: cell, tables: g.tables) }
+            case .cell: done = b.cast(spell, on: nil, at: cell, tables: g.tables)
+            case .unitOrCell: done = b.cast(spell, on: t?.id, at: t == nil ? cell : nil, tables: g.tables)
+            case .unitAndPoint: if let t { done = b.cast(spell, on: t.id, at: cell, tables: g.tables) }
             case .twoUnits:
                 if let f = first, let t { done = b.cast(spell, on: f, second: t.id, tables: g.tables) }
                 else if let t { casting = spell; castFirst = t.id }
             case .unitThenCell:
-                if let f = first { done = b.cast(spell, on: f, cell: cell, tables: g.tables) }
+                if let f = first { done = b.cast(spell, on: f, at: cell, tables: g.tables) }
                 else if let t { casting = spell; castFirst = t.id }
             }
             if done { cs.pump() }

@@ -45,6 +45,8 @@ public final class Battle {
         /// Creatures whose bodies are gone (raised, destroyed by Acid, sacrificed: +0x20); they
         /// cannot be brought back. Whether the death of the stack has been handled (0x5f53c0).
         public var permanentlyLost = 0
+        /// The power each lasting spell on it was cast with (the effect store's power dword).
+        public var powers: [Int: Int] = [:]
         var deathHandled = false
         /// Its turn is lost: Blind, Stun, Terror, Confusion, Frozen.
         public var disabled: Bool { stunned > 0 || frozen > 0 || blind > 0 || durations[180] != nil || durations[21] != nil }
@@ -672,6 +674,14 @@ public final class Battle {
     /// The abilities that act after a blow lands (0x553440), in the exe's order.
     func aftermath(_ a: Unit, _ b: Unit, ranged: Bool, damage: Int, healthBefore: Int) {
         let magic = !b.stats.has("magic_immunity")
+        // Fire Aura on the attacker: its power as fire damage on the target after the target's
+        // resistance; Retribution on the target: its power on the melee attacker (0x552600)
+        if !ranged, a.stats.under(44), b.alive, canTarget(38, by: a, b, anySide: true) {
+            effect(b, "firebreathing", damage: min(b.stats.totalHealth, spellDamage(b, a.powers[44] ?? 0, 38)))
+        }
+        if !ranged, b.stats.under(59), a.alive, canTarget(59, by: b, a, anySide: true) {
+            effect(a, "holy retribution", damage: min(a.stats.totalHealth, spellDamage(a, b.powers[59] ?? 0, 59)))
+        }
         // Fire Shield: a quarter of a melee blow burns the attacker, half again with Fire Resistance
         if !ranged, b.stats.has("fire_shield"), a.alive {
             var burn = (damage + 3) >> 2

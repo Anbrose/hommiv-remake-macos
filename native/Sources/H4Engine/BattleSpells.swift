@@ -88,7 +88,7 @@ extension Battle {
     }
 
     /// Can this spell land on that stack (its side, and the kinds the spell allows)?
-    public func canTarget(_ spell: Int, by u: Unit, _ t: Unit) -> Bool {
+    public func canTarget(_ spell: Int, by u: Unit, _ t: Unit, anySide: Bool = false) -> Bool {
         guard spell < RuleTables.spells.count else { return false }
         let s = RuleTables.spells[spell]
         if !t.alive {
@@ -104,7 +104,10 @@ extension Battle {
         default: break
         }
         let enemy = side(of: t) != side(of: u)
-        if enemy ? !s.has("Enemy") : !s.has("Friend") { return false }
+        if !anySide, enemy ? !s.has("Enemy") : !s.has("Friend") { return false }
+        if spell == 60, !enemy, t.id != u.id { return false }   // Holy Water: the caster itself, or an enemy
+        if spell == 16, t.id != u.id { return false }           // Heavenly Shield: the caster only
+        if spell == 59, enemy, !anySide { return false }         // Retribution is cast on friends (its Enemy flag is for the struck attacker)
         // magic immunity, Anti-Magic and Sanctuary turn every spell away, friendly ones too (0x5b37d0)
         if t.stats.has("magic_immunity") || t.stats.under(3) || t.stats.under(137) { return false }
         if t.stats.has("undead"), !s.has("Undead") { return false }
@@ -275,6 +278,11 @@ extension Battle {
                 t.stats.effects.insert(effectSpell)
                 events.append(.spellHit(unit: t.id, spell: effectSpell, damage: 0, killed: 0, left: t.stats.count))
             }
+        case "damage" where spell == 60 && targets.first.map({ side(of: $0) == side(of: u) }) == true:
+            // Holy Water on the caster: Bless and Death Ward (0x61d850 / 0x61d943)
+            if let t = targets.first {
+                for e in [10, 118] { apply(e, to: t, power: p); events.append(.spellHit(unit: t.id, spell: e, damage: 0, killed: 0, left: t.stats.count)) }
+            }
         case "damage":
             if spell == 14, let t = targets.first {   // Sparks: walk to the striking place, then the half disc
                 guard let pos = sparksPosition(u, t, pointer: cell) else { break }
@@ -435,6 +443,7 @@ extension Battle {
         default: break
         }
         t.stats.effects.insert(spell)
+        t.powers[spell] = p
     }
 
     /// Creatures of a stack that died and could come back (original - permanently lost - living).

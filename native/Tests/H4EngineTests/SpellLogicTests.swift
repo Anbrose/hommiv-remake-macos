@@ -321,4 +321,25 @@ final class SpellLogicTests: XCTestCase {
         b.beginAction(h)
         XCTAssertFalse(h.stats.under(137))
     }
+
+    // MARK: Fire Aura, Retribution, Holy Water
+
+    /// Fire Aura and Retribution are blessings (0x618566 / 0x61cbb6): casting them hurts nobody;
+    /// Holy Water on the caster is Bless + Death Ward, on an enemy Holy Word's damage (0x61d850).
+    func testFireAuraRetributionHolyWaterAreBlessings() {
+        let sq = creature("squire", hp: 10)
+        let b = Battle(field: field, attackers: [hero(level: 10, skills: ["chaos": 1, "life": 2], spells: [44, 59, 60]), fighter(sq, 5)],
+                       defenders: [fighter(creature("peasant", speed: 1), 5)], seed: 1)
+        let h = b.units.first { $0.stats.isHero }!, s = b.units.first { $0.keyword == "squire" }!, e = b.units.first { $0.side == 1 }!
+        XCTAssertTrue(b.cast(44, on: s.id))
+        XCTAssertEqual(s.stats.totalHealth, 50)
+        XCTAssertTrue(s.stats.under(44))
+        XCTAssertEqual(s.powers[44], 20)                           // 10 + 1 x 10
+        XCTAssertFalse(b.canTarget(59, by: h, e))
+        XCTAssertFalse(b.canTarget(60, by: h, s))
+        XCTAssertTrue(b.canTarget(60, by: h, h))
+        while let u = b.current, u.id != h.id { b.defend() }
+        XCTAssertTrue(b.cast(60, on: h.id))
+        XCTAssertTrue(h.stats.under(10) && h.stats.under(118))
+    }
 }

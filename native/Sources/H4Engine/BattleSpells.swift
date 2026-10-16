@@ -151,28 +151,82 @@ extension Battle {
     public static func untargeted(_ spell: Int) -> Bool {
         guard spell < RuleTables.spells.count else { return false }
         let s = RuleTables.spells[spell]
-        return s.has("Mass") || s.kind == "summoning" && !s.has("Bodies") && spell != 18 && spell != 64 || [4, 32, 110].contains(spell)
+        if [19, 25, 50].contains(spell) { return false }   // the clouds are aimed at a cell
+        return s.has("Mass") || massOf[spell] != nil || massOnly.contains(spell) || s.kind == "summoning" && !s.has("Bodies") && spell != 18 && spell != 64 || [4, 16].contains(spell)
     }
 
     /// The stacks a cast at this target touches, or nil when the target is not a valid one.
     func castTargets(_ spell: Int, by u: Unit, target targetId: Int?, cell: (Int, Int)?) -> [Unit]? {
-        let s = RuleTables.spells[spell]
         if let m = Battle.massOf[spell] { return units.filter { $0.alive && canTarget(m, by: u, $0) } }
-        if spell == 4 { return units.filter { $0.alive } }   // Armageddon: every stack
-        if spell == 32 || spell == 110 { return units.filter { $0.alive && canTarget(spell, by: u, $0) } }
+        if spell == 4 { return units.filter { $0.alive && $0.id != u.id && canTarget(spell, by: u, $0) } }   // Armageddon: all but the caster (0x5b4b26)
         if spell == 30 { return units.filter { canTarget(spell, by: u, $0) } }   // Divine Intervention: friends, dead heroes too
-        if Battle.untargeted(spell) { return [] }
-        guard let id = targetId, let t = units.first(where: { $0.id == id }), canTarget(spell, by: u, t) else { return nil }
-        // area spells: Fireball 3x3, Inferno 5x5, Fire Ring around the cell, the others single
-        let radius = spell == 43 ? 1 : spell == 66 ? 2 : spell == 41 ? 1 : 0
-        if radius > 0 {
-            let cx = t.x + t.size / 2, cy = t.y + t.size / 2
-            var targets = units.filter { v in v.alive && v.x - radius <= cx && cx <= v.x + v.size - 1 + radius && v.y - radius <= cy && cy <= v.y + v.size - 1 + radius }
-            if spell == 41 { targets.removeAll { $0.id == t.id } }
-            return targets
+        if Battle.massOnly.contains(spell) { return units.filter { $0.alive && canTarget(spell, by: u, $0) } }
+        switch Battle.aim(spell) {
+        case .none: return []
+        case .cell:
+            guard let c = cell, c.0 >= 0, c.1 >= 0, c.0 < Battlefield.size, c.1 < Battlefield.size else { return nil }
+            if let r = Battle.areaRadius[spell] { return areaMembers(spell, by: u, centre: (c.0 * 16 + 8, c.1 * 16 + 8), radius: r) }
+            return []
+        case .unitOrCell where targetId == nil:   // Fire Ring on a cell: 72 around it
+            guard let c = cell, c.0 >= 0, c.1 >= 0, c.0 < Battlefield.size, c.1 < Battlefield.size else { return nil }
+            return areaMembers(spell, by: u, centre: (c.0 * 16 + 8, c.1 * 16 + 8), radius: 72)
+        default: break
         }
-        _ = s
+        guard let id = targetId, let t = units.first(where: { $0.id == id }), canTarget(spell, by: u, t) else { return nil }
+        if spell == 41 {   // Fire Ring round a stack: 48 + its size x 8, the stack itself spared (0x715c50)
+            return areaMembers(spell, by: u, centre: (t.x * 16 + t.size * 8, t.y * 16 + t.size * 8), radius: 48 + t.size * 8).filter { $0.id != t.id }
+        }
         return [t]
+    }
+    /// Area radii in world units (16 a cell; slot 18 of the fireball family, 0x718320 / 0x718870).
+    static let areaRadius: [Int: Int] = [43: 64, 67: 64, 19: 64, 25: 64, 50: 64, 66: 112]
+    /// The mass spells with a class of their own (0x78d5xx-0x78e8xx): every stack they can affect.
+    static let massOnly: Set<Int> = [31, 34, 68, 77, 110, 114, 135, 137, 149, 32]
+    /// The stacks an area holds (0x717030): round(distance from the centre to the footprint's
+    /// centre) - size x 8 < radius, and the spell can affect them (0x5b63d0), friend or foe.
+    func areaMembers(_ spell: Int, by u: Unit, centre: (Int, Int), radius: Int) -> [Unit] {
+        units.filter { v in
+            guard v.alive else { return false }
+            let dx = Double(v.x * 16 + v.size * 8 - centre.0), dy = Double(v.y * 16 + v.size * 8 - centre.1)
+            return Int((dx * dx + dy * dy).squareRoot().rounded()) - v.size * 8 < radius && canTarget(spell, by: u, v)
+        }
+    }
+    /// Sparks (0x866160 / 0x8670a0): the half disc in front of the caster -- the cells (i, j) of the
+    /// (size + 6)-square box from its corner - 3 with (2i + 1 - n)^2 + (2j + 1 - n)^2 <= n^2 + 2,
+    /// within 90 degrees of its facing; every stack on one (not the caster) the spell can affect.
+    func sparksTargets(by u: Unit, facing d: Int) -> [Unit] {
+        let n = u.size + 6
+        let cx = Double(u.x * 16 + u.size * 8), cy = Double(u.y * 16 + u.size * 8)
+        var hit: [Unit] = []
+        for i in 0..<n { for j in 0..<n where (2 * i + 1 - n) * (2 * i + 1 - n) + (2 * j + 1 - n) * (2 * j + 1 - n) <= n * n + 2 {
+            let x = u.x - 3 + i, y = u.y - 3 + j
+            let a = atan2(Double(y * 16 + 8) - cy, Double(x * 16 + 8) - cx) * 180 / .pi
+            var diff = abs(a - Double(d) * 45).truncatingRemainder(dividingBy: 360)
+            if diff > 180 { diff = 360 - diff }
+            guard 2 * diff <= 180 else { continue }
+            for v in units where v.alive && v.id != u.id && !hit.contains(where: { $0.id == v.id }) && x >= v.x && x < v.x + v.size && y >= v.y && y < v.y + v.size {
+                if canTarget(14, by: u, v) { hit.append(v) }
+            }
+        } }
+        return hit
+    }
+    /// Sparks aims like a melee attack (0x8674a0 / 0x867720): of the places the caster can strike
+    /// the target from this turn, the one whose direction from the target is nearest the pointer's;
+    /// it walks there, faces the target and casts.
+    func sparksPosition(_ u: Unit, _ t: Unit, pointer: (Int, Int)?) -> (Int, Int)? {
+        let tc = (Double(t.x * 16 + t.size * 8), Double(t.y * 16 + t.size * 8))
+        let p = pointer.map { (Double($0.0 * 16 + 8), Double($0.1 * 16 + 8)) } ?? (Double(u.x * 16 + u.size * 8), Double(u.y * 16 + u.size * 8))
+        let want = atan2(p.1 - tc.1, p.0 - tc.0)
+        var best: (Int, Int)? = nil, bestDiff = Double.infinity
+        var places = Array(reachable(u).keys).map { ($0 / Battlefield.size, $0 % Battlefield.size) }
+        places.append((u.x, u.y))
+        for (x, y) in places where Battle.inReach(x, y, u.size, t, reach: 0) && !overlaps(x, y, u.size, except: u.id) {
+            let a = atan2(Double(y * 16 + u.size * 8) - tc.1, Double(x * 16 + u.size * 8) - tc.0)
+            var diff = abs(a - want).truncatingRemainder(dividingBy: 2 * .pi)
+            if diff > .pi { diff = 2 * .pi - diff }
+            if diff < bestDiff { bestDiff = diff; best = (x, y) }
+        }
+        return best
     }
 
     /// Cast by the current unit on a target stack (nil for untargeted spells), a cell (area
@@ -191,7 +245,8 @@ extension Battle {
         u.caster = c
         let p = power(spell, by: u, creatures: tables)
         events.append(.cast(unit: u.id, spell: spell, targets: targets.map { $0.id }))
-        let effectSpell = Battle.massOf[spell] ?? spell
+        if let c = cell, Battle.aim(spell) == .cell || Battle.aim(spell) == .unitOrCell && targetId == nil { events.append(.area(unit: u.id, spell: spell, cell: c)) }
+        let effectSpell = Battle.massOf[spell] ?? (spell == 19 ? 21 : spell)   // Cloud of Confusion confuses each
         // Poison and Plague deal nothing now: their damage after resistance is kept and dealt at the
         // start of each of the target's turns (0x61b980 / 0x78e320); Regeneration heals each turn
         let lasting: Set<Int> = [110, 111, 131, 112]
@@ -211,29 +266,34 @@ extension Battle {
                 events.append(.spellHit(unit: t.id, spell: effectSpell, damage: 0, killed: 0, left: t.stats.count))
             }
         case "damage":
-            var chainPower = p
-            for (k, t) in targets.enumerated() {
-                let r = resistance(t, to: spell)
-                var dmg = r >= 100 ? 0 : (chainPower * (100 - r) + 99) / 100
-                if t.stats.under(34) { dmg += dmg >> 2 }
-                dmg = min(dmg, t.stats.totalHealth)
-                let killed = t.stats.take(dmg)
-                if dmg > 0 { t.blind = 0 }   // any damage ends Blind (0x5ef290)
-                if side(of: t) != side(of: u), u.side == 0 { experience += killed * t.stats.experience }
-                events.append(.spellHit(unit: t.id, spell: spell, damage: dmg, killed: killed, left: t.stats.count))
-                if !t.alive { events.append(.die(unit: t.id)) }
-                if spell == 17 { chainPower /= 2; if k >= 4 { break } }
+            if spell == 14, let t = targets.first {   // Sparks: walk to the striking place, then the half disc
+                guard let pos = sparksPosition(u, t, pointer: cell) else { break }
+                if pos != (u.x, u.y), let path = path(u, to: pos.0, pos.1) {
+                    events.append(.move(unit: u.id, path: path, from: (u.x, u.y), flying: u.stats.has("flying")))
+                    u.x = pos.0; u.y = pos.1; release(by: u)
+                }
+                Battle.face(u, towards: t)
+                let a = atan2(t.centre.1 - u.centre.1, t.centre.0 - u.centre.0)
+                let d = (Int((a / (.pi / 4)).rounded()) % 8 + 8) % 8
+                for v in sparksTargets(by: u, facing: d) { strike(v, spellDamage(v, p, spell), spell: spell, by: u) }
+                break
             }
-            if spell == 17, let first = targets.first {   // Chain Lightning jumps on to the nearest stacks, halving
-                var hitIds: Set<Int> = [first.id], from = first, pw = p / 2
-                for _ in 0..<4 {
-                    guard let next = units.filter({ $0.alive && !hitIds.contains($0.id) }).min(by: { Battle.distance(from, $0) < Battle.distance(from, $1) }), pw > 0 else { break }
-                    let r = resistance(next, to: spell)
-                    let dmg = min(next.stats.totalHealth, r >= 100 ? 0 : (pw * (100 - r) + 99) / 100)
-                    let killed = next.stats.take(dmg)
-                    events.append(.spellHit(unit: next.id, spell: spell, damage: dmg, killed: killed, left: next.stats.count))
-                    if !next.alive { events.append(.die(unit: next.id)) }
-                    hitIds.insert(next.id); from = next; pw /= 2
+            for t in targets { strike(t, spellDamage(t, p, spell), spell: spell, by: u) }
+            // Chain Lightning (0x5c7bf0): the power halves before each jump, to the nearest stack not
+            // yet struck the spell can affect (squared distance between centres from the last one,
+            // ties at random), at most five stacks, until the power is gone
+            if spell == 17, let first = targets.first {
+                var hit: Set<Int> = [first.id], from = first, pw = p
+                while hit.count < 5 {
+                    pw /= 2
+                    guard pw > 0 else { break }
+                    let cands = units.filter { $0.alive && !hit.contains($0.id) && canTarget(17, by: u, $0) }
+                    func d2(_ v: Unit) -> Int { let dx = v.x * 16 + v.size * 8 - from.x * 16 - from.size * 8, dy = v.y * 16 + v.size * 8 - from.y * 16 - from.size * 8; return dx * dx + dy * dy }
+                    guard let m = cands.map(d2).min() else { break }
+                    let ties = cands.filter { d2($0) == m }
+                    let next = ties[rng.next() % ties.count]
+                    strike(next, spellDamage(next, pw, spell), spell: spell, by: u)
+                    hit.insert(next.id); from = next
                 }
             }
         case _ where spell == 30:   // Divine Intervention (0x78d5d0): curses off, the top creature healed, dead heroes back
@@ -290,6 +350,24 @@ extension Battle {
         checkEnd()
         endAction(u)
         return true
+    }
+
+    /// Spell damage after resistance (0x40d000): ((100 - r) x power + 99) / 100, nothing at 100%,
+    /// a quarter more under Unholy Song.
+    func spellDamage(_ t: Unit, _ p: Int, _ spell: Int) -> Int {
+        let r = resistance(t, to: spell)
+        var d = r >= 100 ? 0 : ((100 - r) * p + 99) / 100
+        if t.stats.under(34) { d += d >> 2 }
+        return d
+    }
+    /// A spell's damage landing on a stack, with its hit event.
+    @discardableResult
+    func strike(_ t: Unit, _ dmg: Int, spell: Int, by u: Unit) -> Int {
+        let d = min(dmg, t.stats.totalHealth)
+        let killed = wound(t, d, by: nil)
+        events.append(.spellHit(unit: t.id, spell: spell, damage: d, killed: killed, left: t.stats.count))
+        if !t.alive { events.append(.die(unit: t.id)) }
+        return killed
     }
 
     /// A spell taken off a stack (0x5f23d0), with what it set.
@@ -451,16 +529,27 @@ extension Battle {
 
     // MARK: the computer's spells
 
-    /// Every target the spell could be cast at now: nil for spells without one, else the stacks it can land on.
+    /// Every target the spell could be cast at now: nil for spells without one, the stacks it can
+    /// land on, the centre cells of the stacks for the area spells.
     func aiTargets(_ spell: Int, by u: Unit) -> [(target: Int?, cell: (Int, Int)?)] {
-        if Battle.untargeted(spell) { return [(nil, nil)] }
-        return units.filter { canTarget(spell, by: u, $0) }.map { ($0.id, nil) }
+        switch Battle.aim(spell) {
+        case .none: return [(nil, nil)]
+        case .cell: return units.filter { $0.alive }.map { (nil, ($0.x + $0.size / 2, $0.y + $0.size / 2)) }
+        case .unit, .unitOrCell, .unitAndPoint: return units.filter { canTarget(spell, by: u, $0) }.map { ($0.id, nil) }
+        case .twoUnits, .unitThenCell: return []
+        }
     }
     /// The stacks a cast would touch (for the computer's estimate).
     func aiAffected(_ spell: Int, by u: Unit, target: Int?, cell: (Int, Int)?) -> [Unit] {
-        if let m = Battle.massOf[spell] { return units.filter { $0.alive && canTarget(m, by: u, $0) } }
-        if Battle.untargeted(spell) { return units.filter { $0.alive && canTarget(spell, by: u, $0) } }
-        return units.filter { $0.id == target }
+        if spell == 14, let t = units.first(where: { $0.id == target }) {
+            guard let pos = sparksPosition(u, t, pointer: nil) else { return [] }
+            let (ox, oy) = (u.x, u.y); u.x = pos.0; u.y = pos.1
+            let a = atan2(t.centre.1 - u.centre.1, t.centre.0 - u.centre.0)
+            let list = sparksTargets(by: u, facing: (Int((a / (.pi / 4)).rounded()) % 8 + 8) % 8)
+            u.x = ox; u.y = oy
+            return list
+        }
+        return castTargets(spell, by: u, target: target, cell: cell) ?? []
     }
     /// What a spell is worth to the caster's side, in hit points (the exe's AI was not traced: a
     /// value estimate -- damage done to enemies, healing and raising on friends, summoned hit

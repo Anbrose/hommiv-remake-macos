@@ -101,6 +101,8 @@ public final class Battle {
         /// Creatures a spell added to a stack on the field (a repeated summon, raised or resurrected
         /// creatures): `amount` more, `left` now.
         case revive(unit: Int, spell: Int, amount: Int, left: Int)
+        /// An area spell's centre (Fireball, Inferno, the clouds, Fire Ring on a cell, Smoke, ...).
+        case area(unit: Int, spell: Int, cell: (Int, Int))
         /// The castle gate struck (and broken).
         case gateHit(unit: Int, damage: Int, broken: Bool)
     }
@@ -613,19 +615,28 @@ public final class Battle {
             if per * a.stats.count >= 500 { dmg += Int((Double(b.stats.hitPoints) * Double(per * a.stats.count) * 0.001).rounded()) }
         }
         dmg = min(dmg, before)
-        let killed = b.stats.take(dmg)
-        if a.side == 0 { experience += killed * b.stats.experience }
+        let killed = wound(b, dmg, by: a)
         events.append(ranged ? .shoot(unit: a.id, target: b.id, damage: dmg, killed: killed, left: b.stats.count)
                              : .melee(unit: a.id, target: b.id, damage: dmg, killed: killed, left: b.stats.count))
-        if b.blind > 0 { b.blind = 0 }   // Blind breaks when the target is hurt
         if !b.alive { events.append(.die(unit: b.id)); b.boundBy = nil }
         if !secondary { aftermath(a, b, ranged: ranged, damage: dmg, healthBefore: before) }
         return dmg
     }
 
+    /// Damage taken by a stack (the stack's damage function 0x5f2c50): whole creatures from the
+    /// front; any damage ends Blind (0x5ef290); the attacker's side is credited the experience.
+    @discardableResult
+    func wound(_ t: Unit, _ dmg: Int, by a: Unit?) -> Int {
+        guard dmg > 0 else { return 0 }
+        let killed = t.stats.take(dmg)
+        t.blind = 0
+        if t.side == 1 { experience += killed * t.stats.experience }
+        return killed
+    }
+
     func effect(_ u: Unit, _ name: String, damage: Int = 0) {
         var killed = 0
-        if damage > 0 { killed = u.stats.take(damage) }
+        if damage > 0 { killed = wound(u, damage, by: nil) }
         events.append(.effect(unit: u.id, name: name, damage: damage, killed: killed, left: u.stats.count))
         if damage > 0, !u.alive { events.append(.die(unit: u.id)) }
     }
@@ -727,9 +738,7 @@ public final class Battle {
         }
         for (dmg, name) in [(u.poison, "poison"), (u.plague, "plague")] where dmg > 0 && u.alive {
             let d = min(dmg, u.stats.totalHealth)
-            let killed = u.stats.take(d)
-            if d > 0 { u.blind = 0 }
-            if u.side == 1 { experience += killed * u.stats.experience }
+            let killed = wound(u, d, by: nil)
             events.append(.effect(unit: u.id, name: name, damage: d, killed: killed, left: u.stats.count))
             if !u.alive { events.append(.die(unit: u.id)) }
         }

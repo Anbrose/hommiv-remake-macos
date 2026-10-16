@@ -165,4 +165,59 @@ final class SpellLogicTests: XCTestCase {
         XCTAssertTrue(b.cast(2, on: sk.id))                    // 100 hit points: 13 skeletons
         XCTAssertEqual(b.units.first { $0.keyword == "skeleton" && $0.side == 0 }?.stats.count, 13)
     }
+
+    // MARK: areas
+
+    /// A battle with the hero and three stacks placed by hand.
+    func areaBattle(spells: [Int], enemies: [CreatureDef]) -> (Battle, Battle.Unit, [Battle.Unit]) {
+        let b = Battle(field: field, attackers: [hero(level: 10, skills: ["chaos": 5, "order": 5], spells: spells, sp: 200)], defenders: enemies.map { fighter($0, 10) }, seed: 1)
+        let h = b.units.first { $0.side == 0 }!
+        let es = b.units.filter { $0.side == 1 }
+        return (b, h, es)
+    }
+
+    /// Fireball (0x717030 / 0x718320): any cell, round(distance to the footprint centre) - size x 8 < 64;
+    /// Inferno 112; fire-immune stacks are left out (validity 0x5b63d0).
+    func testFireballAndInfernoRadii() {
+        let (b, h, es) = areaBattle(spells: [43, 66], enemies: [creature("peasant", speed: 1), creature("fire elemental", speed: 1), creature("orc", speed: 1)])
+        h.x = 10; h.y = 10
+        es[0].x = 50; es[0].y = 50          // centre (816, 816)
+        es[1].x = 53; es[1].y = 50          // fire elemental, right next to it
+        es[2].x = 70; es[2].y = 70
+        let near = b.castTargets(43, by: h, target: nil, cell: (55, 51))!.map { $0.id }   // 72 away: 72 - 16 = 56 < 64
+        XCTAssertEqual(near, [es[0].id])
+        XCTAssertEqual(b.castTargets(43, by: h, target: nil, cell: (56, 51))!.map { $0.id }.contains(es[0].id), false)   // 88 - 16 = 72
+        XCTAssertTrue(b.castTargets(66, by: h, target: nil, cell: (56, 51))!.contains { $0.id == es[0].id })              // Inferno: 112
+        XCTAssertTrue(b.cast(43, on: nil, cell: (55, 51)))
+        XCTAssertLessThan(es[0].stats.totalHealth, 100)
+        XCTAssertEqual(es[1].stats.totalHealth, 100)
+    }
+
+    /// Fire Ring on a stack: 48 + its size x 8 around its centre, the stack itself spared (0x715c50).
+    func testFireRingSparesItsTarget() {
+        let (b, h, es) = areaBattle(spells: [41], enemies: [creature("peasant", speed: 1), creature("orc", speed: 1), creature("troll", speed: 1)])
+        h.x = 10; h.y = 10
+        es[0].x = 50; es[0].y = 50; es[1].x = 52; es[1].y = 52; es[2].x = 60; es[2].y = 50
+        XCTAssertEqual(b.castTargets(41, by: h, target: es[0].id, cell: nil)!.map { $0.id }, [es[1].id])
+    }
+
+    /// Armageddon spares the caster (0x5b4b26); Chain Lightning jumps only to stacks it can affect.
+    func testArmageddonAndChainLightningTargets() {
+        let (b, h, es) = areaBattle(spells: [4, 17], enemies: [creature("peasant", speed: 1), creature("black dragon", speed: 1), creature("orc", speed: 1)])
+        XCTAssertFalse(b.castTargets(4, by: h, target: nil, cell: nil)!.contains { $0.id == h.id })
+        h.x = 10; h.y = 10
+        es[0].x = 50; es[0].y = 50; es[1].x = 53; es[1].y = 50; es[2].x = 60; es[2].y = 50
+        XCTAssertTrue(b.cast(17, on: es[0].id))
+        XCTAssertEqual(es[1].stats.totalHealth, 100)             // magic immune: skipped
+        XCTAssertLessThan(es[2].stats.totalHealth, 100)          // the jump goes on past it
+    }
+
+    /// Sparks (0x866160): the half disc in front of the caster, not behind it.
+    func testSparksHalfDisc() {
+        let (b, h, es) = areaBattle(spells: [14], enemies: [creature("peasant", speed: 1), creature("orc", speed: 1), creature("troll", speed: 1)])
+        h.x = 50; h.y = 50
+        es[0].x = 52; es[0].y = 50; es[1].x = 47; es[1].y = 50; es[2].x = 52; es[2].y = 52
+        let ids = Set(b.sparksTargets(by: h, facing: 0).map { $0.id })
+        XCTAssertEqual(ids, [es[0].id, es[2].id])
+    }
 }

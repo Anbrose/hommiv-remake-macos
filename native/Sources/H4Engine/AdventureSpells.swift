@@ -78,7 +78,7 @@ extension GameState {
     @discardableResult
     public func learnFromGuild(_ h: Hero, town i: Int) -> [Int] {
         var learned: [Int] = []
-        for hh in [h] + h.companions {
+        for hh in h.members {
             for s in guildSpells(towns[i]) where !hh.spells.contains(s) && hh.canLearn(s) { hh.spells.insert(s); learned.append(s) }
         }
         if !learned.isEmpty { log.append("learned " + Set(learned).map { RuleTables.spells[$0].name }.sorted().joined(separator: ", ")) }

@@ -54,6 +54,7 @@ extension Renderer {
         for f in g.floaters { floaters.append((f.text, f.x, f.y, now)) }
         g.floaters.removeAll()
         floaters.removeAll { now.timeIntervalSince($0.since) > 2 }
+        if let t = g.pendingTrade, adventureDialog == nil { g.pendingTrade = nil; if g.heroes.contains(where: { $0 === t.other }) { openTrade(t.hero, t.other) } }
         if g.chestOffer != nil, adventureDialog == nil { adventureDialog = .chest; chestChoice = true }   // gold is on at opening (0x5a2c00(0))
         // an object's yes/no question (a vein, the Tree of Knowledge) in the message box
         if let q = g.question, prompt == nil { prompt = (q.text, true, q.yes); g.question = nil }
@@ -108,8 +109,8 @@ extension Renderer {
             win(text("Initial", ""), "dialog_text", 20)
             win(text("gold", "Keep the %material for yourself.").replacingOccurrences(of: "%material", with: "\(offer.gold) gold"), "gold_label", 14)
             win(text("experience", "Donate the gold for %experience experience.").replacingOccurrences(of: "%experience", with: "\(offer.experience)"), "experience_label", 14)
-        case .hero(let i):
-            out += armyScreenQuads(i)
+        case .hero:
+            out += armyScreenQuads()
         }
         return out
     }
@@ -126,33 +127,8 @@ extension Renderer {
             else if inside(d["ok_button"], at: ox, oy, x, y) { g.resolveChest(gold: chestChoice ?? true); chestChoice = nil; adventureDialog = nil }
             return true
         case .hero(let i):
-            if armySplitClick(i, x: x, y: y) { return true }   // the split button: the split dialog
-            let ox = (AdventureUI.width - 800) / 2, oy = (AdventureUI.height - 600) / 2
-            // a ring shows that hero or stack
-            if let d = ui.dialog("army.layout"), i < g.heroes.count {
-                let n = 1 + g.heroes[i].companions.count + g.heroes[i].army.count
-                for (k, o) in armyRingSlots(ox, oy).enumerated() where k < n {
-                    if abs(x - Float(o.fx + 41)) < 33, abs(y - Float(o.fy + 41)) < 33 { heroShown = k; return true }
-                }
-            }
-            // an artifact: worn ones come off into the backpack, backpack ones are put on where they fit
-            if let d = ui.dialog("army.layout"), i < g.heroes.count, heroShown <= g.heroes[i].companions.count {
-                let army = [g.heroes[i]] + g.heroes[i].companions
-                let h = army[min(heroShown, army.count - 1)]
-                if let hit = heroArtifactHit(h, d, ox, oy, x: x, y: y) {
-                    switch hit {
-                    case .worn(let s): h.unequip(slot: s)
-                    case .backpack(let k):
-                        if g.drink(h, backpackIndex: k) { break }   // a potion is drunk
-                        if !h.equip(backpackIndex: k, tables: g.tables) { g.log.append("No free place to wear \(g.artifactName(h.backpack[k]))") }
-                    }
-                    g.refreshMovement(g.heroes[i])
-                    sound?.play("miscellaneous.button")
-                    return true
-                }
-            }
-            if let d = ui.dialog("army.layout"), inside(d["ok_button"], at: ox, oy, x, y) { adventureDialog = nil; heroShown = 0 }
-            else if x < Float(ox) || x >= Float(ox + 800) || y < Float(oy) || y >= Float(oy + 600) { adventureDialog = nil }
+            if armySession == nil, i < g.heroes.count { openArmyScreen(g.heroes[i], item: heroShown) }
+            armyScreenClick(x: x, y: y)
             return true
         }
     }

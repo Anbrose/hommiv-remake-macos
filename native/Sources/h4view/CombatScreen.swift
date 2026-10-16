@@ -292,7 +292,7 @@ final class CombatScreen {
     /// The hero a hero stack stands for (its army's heroes are matched by keyword).
     func heroFor(_ u: Battle.Unit) -> Hero? {
         guard u.stats.isHero else { return nil }
-        let pool = u.side == 0 ? (hero.map { [$0] + $0.companions } ?? []) : (enemy.map { [$0] + $0.companions } ?? [])
+        let pool = u.side == 0 ? (hero.map { $0.members } ?? []) : (enemy.map { $0.members } ?? [])
         return pool.first { $0.keyword == u.keyword } ?? (u.side == 0 ? hero : enemy)
     }
 
@@ -313,7 +313,7 @@ final class CombatScreen {
     /// A creature's combat model: combat_actor.<name>, else by its keyword (the devil's is "archdevil").
     func actorName(_ cd: CreatureDef) -> String { actor(cd.name) != nil ? cd.name : cd.keyword }
     func armyFighters(game g: GameState, _ h: Hero, tables t: RuleTables) -> [Battle.Fighter] {
-        let heroes = [h] + h.companions
+        let heroes = h.members
         let army: [(alignment: String, undead: Bool)] = heroes.map { ($0.alignment, false) } + h.army.compactMap { st in t.creature(st.creature).map { ($0.alignment, Combatant(creature: $0, count: 1).has("undead")) } }
         let bonus = ArmyBonuses(heroes: heroes)
         var out: [Battle.Fighter] = []
@@ -403,10 +403,10 @@ final class CombatScreen {
         guard let f = field else { return }
         let classActor = "hero.\(h.alignment)_fighter_male"
         // morale from each army's alignments (heroes4.exe 0x640310)
-        let heroArmy: [(alignment: String, undead: Bool)] = ([h] + h.companions).map { ($0.alignment, false) } + h.army.compactMap { st in t.creature(st.creature).map { ($0.alignment, Combatant(creature: $0, count: 1).has("undead")) } }
+        let heroArmy: [(alignment: String, undead: Bool)] = h.members.map { ($0.alignment, false) } + h.army.compactMap { st in t.creature(st.creature).map { ($0.alignment, Combatant(creature: $0, count: 1).has("undead")) } }
         var monsterArmy: [(alignment: String, undead: Bool)] = [(c.alignment, Combatant(creature: c, count: 1).has("undead"))]
         for e in g.monsters[i].extra { if let ed = t.creature(e.creature) { monsterArmy.append((ed.alignment, Combatant(creature: ed, count: 1).has("undead"))) } }
-        let heroes = [h] + h.companions
+        let heroes = h.members
         let bonus = ArmyBonuses(heroes: heroes)
         func fighter(_ cd: CreatureDef, _ n: Int, army: [(alignment: String, undead: Bool)], bonus: ArmyBonuses? = nil) -> Battle.Fighter {
             var st = Combatant(creature: cd, count: n)

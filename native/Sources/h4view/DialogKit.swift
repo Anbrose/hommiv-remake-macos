@@ -155,7 +155,7 @@ extension Renderer {
     /// The ring items of an army: its heroes (the leader and companions), then its stacks.
     func ringItems(_ leader: Hero) -> [(icon: UILayer?, count: String?, hero: Bool)] {
         guard let ui = ui else { return [] }
-        return ([leader] + leader.companions).map { (ui.portrait(keyword: $0.keyword, alignment: $0.alignment), nil, true) }
+        return leader.members.map { (ui.portrait(keyword: $0.keyword, alignment: $0.alignment), nil, true) }
             + leader.army.map { (ui.creatureIcon($0.creature), String($0.count), false) }
     }
     /// The balloon of what is under the pointer in the open object dialog.

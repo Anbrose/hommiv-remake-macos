@@ -18,7 +18,7 @@ extension Renderer {
     func armyPopupQuads() -> [Quad] {
         guard let ap = armyPopup, let g = game, ap.hero < g.heroes.count else { return [] }
         let leader = g.heroes[ap.hero]
-        var members: [ArmyMember] = ([leader] + leader.companions).map { .hero($0) }
+        var members: [ArmyMember] = leader.members.map { .hero($0) }
         members += leader.army.compactMap { st in g.tables?.creature(st.creature).map { .stack($0, st.count) } }
         let title = g.tables?.strings["right_click_title.your_army"] ?? "Your Army"
         return armyInfoQuads(members: members, level: 4, title: title, selected: ap.selected, owner: leader)
@@ -29,12 +29,11 @@ extension Renderer {
         guard var ap = armyPopup, let g = game, ap.hero < g.heroes.count, let ui = ui, let d = ui.dialog("army_right_click") else { armyPopup = nil; return }
         let (ox, oy) = armyPopupOrigin
         let leader = g.heroes[ap.hero]
-        let n = 1 + leader.companions.count + leader.army.count
+        let n = leader.members.count + leader.army.count
         if let k = armyInfoSlot(x: x, y: y), k < n { ap.selected = k; armyPopup = ap; return }
         if inside(d["Army_Released"], at: ox, oy, x, y) {
             sound?.play("miscellaneous.button")
-            heroShown = min(ap.selected, leader.companions.count)
-            armyPopup = nil; adventureDialog = .hero(ap.hero); return
+            armyPopup = nil; openArmyScreen(leader, item: ap.selected); return
         }
         let w = Renderer.armyPopupSize
         if inside(d["Close_Button"], at: ox, oy, x, y) || inside(d["ok_button"], at: ox, oy, x, y) || x < Float(ox) || x >= Float(ox + w.w) || y < Float(oy) || y >= Float(oy + w.h) { armyPopup = nil }
@@ -45,7 +44,7 @@ extension Renderer {
         guard let g = game, let ui = ui else { return nil }
         if let ap = armyPopup, ap.hero < g.heroes.count, let d = ui.dialog("army_right_click") {
             let (ox, oy) = armyPopupOrigin
-            let heroes = [g.heroes[ap.hero]] + g.heroes[ap.hero].companions
+            let heroes = g.heroes[ap.hero].members
             guard ap.selected < heroes.count else { return nil }
             let h = heroes[ap.selected]
             for (k, p) in (0..<9).filter({ h.skill(id: $0) > 0 }).prefix(5).enumerated() where inside(d["Skill_\(k + 1)"], at: ox, oy, x, y) {
@@ -53,9 +52,8 @@ extension Renderer {
             }
             return nil
         }
-        if case .hero(let i)? = adventureDialog, i < g.heroes.count, let d = ui.dialog("army.layout") {
-            let army = [g.heroes[i]] + g.heroes[i].companions
-            return heroThingTip(army[min(heroShown, army.count - 1)], d, (AdventureUI.width - 800) / 2, (AdventureUI.height - 600) / 2, x: x, y: y)
+        if armySession != nil, let h = sessionHero, let d = ui.dialog("army.layout") {
+            return heroThingTip(h, d, (AdventureUI.width - 800) / 2, (AdventureUI.height - 600) / 2, x: x, y: y)
         }
         return nil
     }

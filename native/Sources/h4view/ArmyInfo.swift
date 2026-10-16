@@ -36,7 +36,7 @@ extension Renderer {
         // morale and luck (values only from L 3)
         var morale = 0, luck = 0
         if L >= 3, let lead = owner {
-            let heroes = [lead] + lead.companions
+            let heroes = lead.members
             let army: [(alignment: String, undead: Bool)] = heroes.map { ($0.alignment, false) } + lead.army.compactMap { st in
                 g.tables?.creature(st.creature).map { ($0.alignment, Combatant(creature: $0, count: 1).has("undead")) } }
             morale = max(-10, min(10, Battle.armyMorale(own: lead.alignment, army: army)))

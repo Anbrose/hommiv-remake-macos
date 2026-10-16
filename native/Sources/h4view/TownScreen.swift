@@ -198,7 +198,7 @@ extension Renderer {
     func townGovernor(_ i: Int) -> Hero? {
         guard let g = game else { return nil }
         var heroes = g.towns[i].garrisonHeroes
-        if let v = g.visitingArmy(town: i) { heroes += [v] + v.companions }
+        if let v = g.visitingArmy(town: i) { heroes += v.members }
         return heroes.filter { $0.skill("nobility") > 0 }.max { $0.skill("nobility") < $1.skill("nobility") }
     }
     /// The dwelling strip (0x8b7620): the built dwellings 12..19 in id order take the slots 1, 2, ...
@@ -321,6 +321,8 @@ extension Renderer {
         out += hireQuads()
         out += marketQuads()
         out += menuQuads()
+        if armySession != nil { out += armyScreenQuads() }   // the army screen of the town's rows (a double click)
+        out += splitQuads()
         if prompt != nil { out += messageBoxQuads() }
         out += townBalloonQuads()
         return out

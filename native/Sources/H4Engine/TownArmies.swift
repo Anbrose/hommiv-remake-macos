@@ -56,7 +56,7 @@ extension GameState {
     }
     public func garrisonCount(_ i: Int) -> Int { towns[i].garrisonHeroes.count + towns[i].garrison.count }
     public func armySlots(_ h: Hero) -> [ArmySlot?] {
-        GameState.layout(([h] + h.companions).map { .hero($0) } + h.army.map { .stack($0) }, keys: h.rowKeys)
+        GameState.layout(h.members.map { .hero($0) } + h.army.map { .stack($0) }, keys: h.rowKeys)
     }
 
     public func setGarrison(_ i: Int, _ row: [ArmySlot?]) {
@@ -65,28 +65,31 @@ extension GameState {
         towns[i].rowKeys = GameState.keys(of: row)
     }
     /// Put a row back into the army: its first hero leads it (taking over the army's place on the
-    /// map), an army left with nothing leaves the map. False when creatures would be left without
-    /// a hero (armies here are led by one).
+    /// map); creatures without a hero stay a heroless army (army_split_spec.md §6); an army left
+    /// with nothing leaves the map (0x4bb0f0). Returns the army object now holding the row.
     @discardableResult
-    public func setArmy(_ h: Hero, _ row: [ArmySlot?]) -> Bool {
+    public func setArmy(_ h: Hero, _ row: [ArmySlot?]) -> Hero? {
         let hs = row.compactMap { $0?.hero }, stacks = row.compactMap { $0?.stack }
-        guard let lead = hs.first else {
-            if !stacks.isEmpty { return false }
+        if hs.isEmpty && stacks.isEmpty {
             heroes.removeAll { $0 === h }
-            return true
+            if let v = townVisitor, v.hero === h { townVisitor = nil }
+            return nil
         }
+        let lead: Hero = hs.first ?? (h.heroless ? h : heroless(like: h))
         if lead !== h {
             lead.x = h.x; lead.y = h.y; lead.z = h.z; lead.facing = h.facing; lead.owner = h.owner
-            lead.path = []; lead.plan = []; lead.target = nil
+            lead.path = []; lead.plan = []; lead.target = nil; lead.listRank = h.listRank
+            if lead.heroless || h.heroless { lead.movement = h.movement }
             if let k = heroes.firstIndex(where: { $0 === h }) { heroes[k] = lead } else { heroes.insert(lead, at: 0) }
             if let v = townVisitor, v.hero === h { townVisitor = (v.town, lead) }
             h.companions = []; h.army = []; h.rowKeys = []
         }
-        lead.companions = Array(hs.dropFirst())
+        lead.companions = lead.heroless ? [] : Array(hs.dropFirst())
         lead.army = stacks
         lead.rowKeys = GameState.keys(of: row)
+        refreshHeroless(lead)
         lead.maxMovement = armyMovement(lead); lead.movement = min(lead.movement, lead.maxMovement)
-        return true
+        return lead
     }
 
     /// A drop of place `from` on place `to` (0x646d40): an empty place takes it (or `split` of it),
@@ -119,12 +122,11 @@ extension GameState {
         }
     }
 
-    /// Apply the town screen's rows: the garrison, and the visiting army.
-    /// False (and nothing changed) when the army would be left with creatures but no hero.
+    /// Apply the town screen's rows: the garrison, and the visiting army (creatures left without a
+    /// hero stay outside as a heroless army).
+    @discardableResult
     public func applyTownRows(_ i: Int, _ rows: [[ArmySlot?]], visitor: Hero?) -> Bool {
         if let v = visitor {
-            let rest = rows[1].compactMap { $0 }
-            if !rest.isEmpty && !rest.contains(where: { $0.hero != nil }) { return false }
             setGarrison(i, rows[0]); setArmy(v, rows[1])
         } else {
             setGarrison(i, rows[0])
@@ -132,15 +134,18 @@ extension GameState {
         return true
     }
     /// The town screen closes with a spare row holding something (0x8b0e50 -> 0x4bada0): it becomes
-    /// an army at the gate (or the nearest free cell); creatures without a hero go back in.
+    /// an army at the gate (or the nearest free cell), with or without a hero (army_split_spec.md §6).
     public func leaveTown(_ i: Int, spare row: [ArmySlot?]) {
         let spare = row.compactMap { $0 }
         guard !spare.isEmpty else { return }
         let hs = spare.compactMap { $0.hero }
-        guard let lead = hs.first, let p = townPlaced(i) else {
-            towns[i].garrison += spare.compactMap { $0.stack }
+        guard let p = townPlaced(i), heroes.count < GameState.maxArmies else {
+            towns[i].garrisonHeroes += hs; towns[i].garrison += spare.compactMap { $0.stack }
             return
         }
+        let lead: Hero = hs.first ?? {
+            let h = Hero(actor: "", x: 0, y: 0, movement: 0); h.heroless = true; h.name = ""; return h
+        }()
         let back = level; level = towns[i].z; defer { level = back }
         let gates = gateCells(p)
         guard let cell = gates.first(where: { isVacant($0, for: lead) && enemyAt($0.0, $0.1) == nil }) ?? freeCell(near: gates[0].0, gates[0].1) else {
@@ -148,8 +153,10 @@ extension GameState {
         }
         lead.x = cell.0; lead.y = cell.1; lead.z = towns[i].z; lead.owner = map.humanColour
         lead.companions = Array(hs.dropFirst()); lead.army = spare.compactMap { $0.stack }; lead.rowKeys = GameState.keys(of: row)
-        lead.path = []; lead.plan = []; lead.target = nil
+        lead.path = []; lead.plan = []; lead.target = nil; lead.listRank = nextListRank()
+        refreshHeroless(lead)
         lead.maxMovement = armyMovement(lead)
+        if lead.heroless { lead.movement = lead.maxMovement }
         heroes.insert(lead, at: 0)
     }
 

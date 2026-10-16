@@ -60,6 +60,8 @@ public struct SaveGame: Codable {
         public var spells: [Int]?
         public var owner: Int?
         public var boat: String?
+        // (added with army splitting: an army without a hero, the army list's order)
+        public var heroless: Bool?, listRank: Int?
     }
     public struct TownState: Codable {
         public var x, y: Int
@@ -219,6 +221,7 @@ extension SaveGame {
         st.z = h.z
         st.owner = h.owner
         st.boat = h.boat
+        st.heroless = h.heroless ? true : nil; st.listRank = h.listRank
         st.bonuses = [h.attackBonus, h.defenseBonus, h.speedBonus, h.spellPointBonus, h.dreamTeachers, h.spellPoints ?? -1, h.manaRestoredToday]
         st.visitedObjects = Array(h.visitedObjects).sorted(); st.fountainEffects = Array(h.fountainEffects).sorted(); st.timedEffects = h.timedEffects
         st.armyLuck = h.armyLuck; st.armyMorale = h.armyMorale; st.templeAlignment = h.templeAlignment
@@ -238,6 +241,7 @@ extension SaveGame {
         h.z = st.z ?? 0
         h.owner = st.owner ?? 0
         h.boat = st.boat
+        h.heroless = st.heroless ?? false; h.listRank = st.listRank ?? 0
         if let b = st.bonuses, b.count >= 7 {
             h.attackBonus = b[0]; h.defenseBonus = b[1]; h.speedBonus = b[2]; h.spellPointBonus = b[3]; h.dreamTeachers = b[4]
             h.spellPoints = b[5] < 0 ? nil : b[5]; h.manaRestoredToday = b[6]

@@ -23,7 +23,7 @@ extension Renderer {
     var overviewOrigin: (Int, Int) { ((AdventureUI.width - 800) / 2, (AdventureUI.height - 600) / 2) }
     func overviewLayout(_ name: String) -> LayerFile? { kit?.file("dialog.Kingdom_Overview.\(name)") }
     /// Every hero of the player, companions included.
-    var kingdomHeroes: [Hero] { game?.heroes.flatMap { [$0] + $0.companions } ?? [] }
+    var kingdomHeroes: [Hero] { game?.heroes.flatMap { $0.members } ?? [] }
     static let overviewTabs: [(String, KingdomOverview.Mode)] = [("Army_List", .armies), ("Town_List", .towns), ("Hero_List", .heroes)]
     static let overviewMaterials = ["Gold", "Wood", "Ore", "Crystal", "Gems", "Mercury", "Sulfur"]
 
@@ -85,7 +85,7 @@ extension Renderer {
     }
     func armyItems(_ leader: Hero) -> [(UILayer?, String?, Bool)] {
         guard let ui = ui else { return [] }
-        let heroes = [leader] + leader.companions
+        let heroes = leader.members
         return heroes.map { (ui.portrait(keyword: $0.keyword, alignment: $0.alignment), nil, true) } + leader.army.map { (ui.creatureIcon($0.creature), String($0.count), false) }
     }
 
@@ -155,7 +155,7 @@ extension Renderer {
         items += kit.layoutButton("dialog.Kingdom_Overview.Hero_List", "SpellBook", .released, vx, vy)
         let s = g.heroStats(h)
         let owner = g.heroes.first { $0 === h || $0.companions.contains { $0 === h } }
-        let army = owner.map { [$0] + $0.companions } ?? [h]
+        let army = owner.map { $0.members } ?? [h]
         let moraleArmy: [(alignment: String, undead: Bool)] = army.map { ($0.alignment, false) } + (owner?.army ?? []).compactMap { st in g.tables?.creature(st.creature).map { ($0.alignment, Combatant(creature: $0, count: 1).has("undead")) } }
         let bonus = ArmyBonuses(heroes: army)
         let morale = min(10, max(-10, Battle.armyMorale(own: h.alignment, army: moraleArmy) + bonus.morale)), luck = min(10, max(-10, bonus.luck))

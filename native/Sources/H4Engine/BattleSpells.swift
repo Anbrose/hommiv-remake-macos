@@ -292,6 +292,13 @@ extension Battle {
         let s = RuleTables.spells[spell]
         guard let targets = castTargets(spell, by: u, target: targetId, cell: cell) else { return false }
         // where the field spells go must be good before anything is spent
+        if s.has("Summ"), !s.has("Bodies"), spell != 18, spell != 64, let cr = tables?.creature(s.creature),
+           !units.contains(where: { $0.alive && $0.summoned && $0.summonedBy == spell && $0.side == side(of: u) && $0.keyword == cr.keyword }) {
+            let size = (creatureModel?(cr))?.size ?? 2
+            var room = false
+            for x in 0..<Battlefield.size where !room { for y in 0..<Battlefield.size where field.fits(x, y, size: size) && !overlaps(x, y, size, except: -1) { room = true; break } }
+            guard room else { return false }   // summoning_no_room.spell
+        }
         switch spell {
         case 178: guard let t = targets.first, let c = cell, teleportOK(t, to: c) else { return false }
         case 134: guard let c = cell, rockOK(c, by: u) else { return false }

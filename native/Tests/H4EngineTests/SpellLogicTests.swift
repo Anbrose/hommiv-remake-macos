@@ -493,4 +493,18 @@ final class SpellLogicTests: XCTestCase {
         b.smoke.insert(Battle.key(51, 55))
         XCTAssertEqual(b.rangeDivisor(a, t), 2)
     }
+
+    /// Whole battles between creature casters and the rest end.
+    func testCasterBattlesFinish() {
+        let kinds: [(String, Int, Int)] = [("faerie dragon", 40, 94), ("genie", 24, 45), ("mage", 16, 24), ("evil sorceress", 50, 100), ("archangel", 20, 100),
+                                           ("archdevil", 8, 100), ("water elemental", 24, 29), ("phoenix", 12, 0), ("satyr", 6, 0), ("nightmare", 6, 0)]
+        let ice = creature("ice demon", level: 3, hp: 70, exp: 157)
+        for (i, k) in kinds.enumerated() {
+            let a = creature(k.0, level: 3, hp: 40, low: 3, high: 6, speed: 7, sp: k.1, power: k.2)
+            let d = creature(kinds[(i + 3) % kinds.count].0, level: 3, hp: 40, low: 3, high: 6, speed: 6, sp: kinds[(i + 3) % kinds.count].1, power: kinds[(i + 3) % kinds.count].2)
+            let b = Battle(field: field, attackers: [fighter(a, 8), fighter(creature("squire"), 10)], defenders: [fighter(d, 8), fighter(creature("orc"), 10)], seed: i, tables: tables([ice, a, d]))
+            b.autoResolve()
+            XCTAssertNotNil(b.finished, k.0)
+        }
+    }
 }

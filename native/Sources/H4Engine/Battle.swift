@@ -208,6 +208,9 @@ public final class Battle {
 
     /// The rule tables (summoned and raised creatures, the summon divisor).
     public var tables: RuleTables?
+    /// The schools whose grail each side's kingdom holds (battle +0x344[side], read by 0x410040);
+    /// the caller fills it -- the exe's source object was not identified.
+    public var grails: [Set<String>] = [[], []]
     /// A creature's combat model and footprint (combat_actor), for stacks spells bring in.
     public var creatureModel: ((CreatureDef) -> (actor: String, size: Int))?
 
@@ -851,7 +854,8 @@ public final class Battle {
     func startOfTurn(_ u: Unit) {
         guard u.alive else { return }
         var heal = u.regeneration
-        if heal == 0, u.stats.has("regeneration") { heal = u.stats.isHero ? 20 + 2 * u.stats.level : 50 }
+        // the Regeneration ability goes before the spell's power (0x5679f0)
+        if u.stats.has("regeneration") { heal = u.stats.isHero ? 20 + 2 * u.stats.level : 50 }
         if heal > 0, u.stats.wounds > 0 {
             let h = min(heal, u.stats.wounds)
             u.stats.wounds -= h

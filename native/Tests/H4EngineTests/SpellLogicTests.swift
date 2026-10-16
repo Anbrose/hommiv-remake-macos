@@ -398,4 +398,61 @@ final class SpellLogicTests: XCTestCase {
         h.stats.effects = [113, 73]; XCTAssertEqual(b.cost(43, by: h), 15)
         h.stats.effects = [77]; XCTAssertEqual(b.cost(43, by: h), 3)
     }
+
+    // MARK: the smaller rules
+
+    /// Dispel keeps NoDispel spells (Poison, Plague); Cancellation takes blessings, Exorcism curses.
+    func testDispelFamily() {
+        let b = Battle(field: field, attackers: [hero(spells: [])], defenders: [fighter(creature("peasant", speed: 1), 1)], seed: 1)
+        let t = b.units.first { $0.side == 1 }!
+        t.stats.effects = [111, 10, 23]; t.poison = 5
+        b.dispel(t, kind: 2)
+        XCTAssertEqual(t.stats.effects, [111, 10])
+        b.dispel(t, kind: 1)
+        XCTAssertEqual(t.stats.effects, [111])
+        t.stats.effects.insert(55)
+        b.dispel(t, kind: 0)
+        XCTAssertEqual(t.stats.effects, [111]); XCTAssertEqual(t.poison, 5)
+    }
+
+    /// Hand of Death kills exactly min(power, count) creatures (0x61d6af): (10 + L) x pct / 1000.
+    func testHandOfDeathKillsWholeCreatures() {
+        let b = Battle(field: field, attackers: [hero(level: 20, skills: ["death": 5], spells: [54])], defenders: [fighter(creature("peasant", hp: 10, speed: 1), 10)], seed: 1)
+        let h = b.units.first { $0.side == 0 }!, t = b.units.first { $0.side == 1 }!
+        t.stats.wounds = 7
+        XCTAssertEqual(b.power(54, by: h), 3)
+        b.apply(54, to: t, power: 3)
+        XCTAssertEqual(t.stats.count, 7)
+    }
+
+    /// Bind Wound heals only; Heal also cures Poison (0x61c190 / 0x61c650).
+    func testBindWoundCuresNothing() {
+        let b = Battle(field: field, attackers: [hero(level: 1, skills: ["life": 2], spells: [8, 56]), fighter(creature("squire"), 3)], defenders: [fighter(creature("peasant", speed: 1), 1)], seed: 1)
+        let h = b.units.first { $0.stats.isHero }!, s = b.units.first { $0.keyword == "squire" }!
+        s.stats.wounds = 5; s.stats.effects = [111]; s.poison = 3
+        XCTAssertTrue(b.cast(8, on: s.id))
+        XCTAssertEqual(s.poison, 3); XCTAssertTrue(s.stats.under(111))   // (the squire's own turn then takes the poison's 3)
+        while let u = b.current, u.id != h.id { b.defend() }
+        XCTAssertTrue(b.cast(56, on: s.id))
+        XCTAssertEqual(s.poison, 0)
+    }
+
+    /// The side's grail adds 50% (nature 25%) to the power (0x410040).
+    func testGrailBonus() {
+        let b = Battle(field: field, attackers: [hero(level: 10, skills: ["chaos": 1], spells: [71])], defenders: [fighter(creature("peasant", speed: 1), 1)], seed: 1)
+        let h = b.units.first { $0.side == 0 }!
+        XCTAssertEqual(b.power(71, by: h), 60)
+        b.grails[0] = ["chaos"]
+        XCTAssertEqual(b.power(71, by: h), 90)
+    }
+
+    /// Steal Enchantment moves a blessing (not a curse) from the enemy to a friend of the caster.
+    func testStealEnchantment() {
+        let b = Battle(field: field, attackers: [hero(skills: ["order": 2], spells: [150])], defenders: [fighter(creature("peasant", speed: 1), 1)], seed: 1)
+        let h = b.units.first { $0.side == 0 }!, t = b.units.first { $0.side == 1 }!
+        t.stats.effects = [58, 23]
+        XCTAssertTrue(b.cast(150, on: t.id))
+        XCTAssertEqual(t.stats.effects, [23])
+        XCTAssertTrue(h.stats.under(58))
+    }
 }

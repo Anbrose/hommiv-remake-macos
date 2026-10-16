@@ -172,7 +172,7 @@ extension Renderer {
         var heroes: [Hero] = []
         if let i = townOpen {
             heroes = g.towns[i].garrisonHeroes
-            if let v = g.townVisitor, v.town == i { heroes += [v.hero] + v.hero.companions }
+            if let v = g.townVisitor, v.town == i { heroes += v.hero.members }
         }
         return g.recruitCost(c, discount: g.recruitDiscount(heroes))
     }

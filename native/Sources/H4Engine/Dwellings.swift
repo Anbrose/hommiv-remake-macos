@@ -54,7 +54,7 @@ extension GameState {
     /// What the recruit dialog of a dwelling offers: the creature, how many wait, the price.
     public func dwellingOffer(_ i: Int, for hero: Hero) -> (creature: CreatureDef, available: Int, cost: [(String, Int)])? {
         guard dwellings.indices.contains(i), let c = tables?.creature(dwellings[i].creature) else { return nil }
-        return (c, dwellings[i].available, recruitCost(c, discount: recruitDiscount([hero] + hero.companions)))
+        return (c, dwellings[i].available, recruitCost(c, discount: recruitDiscount(hero.members)))
     }
 
     /// Buy creatures of a dwelling into the hero's army (the dialog's Buy, 0x43e03a).
@@ -124,7 +124,7 @@ extension GameState {
             return
         }
         if !isHumanActing {   // the computer buys what it can afford (0x4879e0, simplified)
-            let n = recruitMost(available: dwellings[i].available, cost: recruitCost(c, discount: recruitDiscount([hero] + hero.companions)))
+            let n = recruitMost(available: dwellings[i].available, cost: recruitCost(c, discount: recruitDiscount(hero.members)))
             if n > 0, canAccept(c.keyword, hero) { recruit(fromDwelling: i, count: n, to: hero) }
             return
         }

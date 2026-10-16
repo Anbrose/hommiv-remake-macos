@@ -21,7 +21,7 @@ public final class Battle {
         public var moraleRoll = 0, moraleChecked = false, goodMorale = false, badMorale = false
         /// Cells walked this turn (Charge counts them), and the creatures at the start (Life Draining restores no more).
         public var moved: Float = 0
-        public let initialCount: Int
+        public var initialCount: Int
         /// Turns lost to Stun / Freeze / Blind / Terror (the unit skips its action while any is left).
         /// Lasting effects with a fixed length (spell_effects_spec §1): spell id -> the unit's own
         /// turns left, counted down at the end of each of its turns (lost ones too); an effect not
@@ -39,8 +39,9 @@ public final class Battle {
         public var hypnotized = false
         /// A hero (or spell-casting creature) with its book and spell points.
         public var caster: Caster? = nil
-        /// Summoned by a spell: gone when the battle ends.
+        /// Summoned (or raised) by a spell: gone when the battle ends; the spell that brought it.
         public var summoned = false
+        public var summonedBy: Int? = nil
         /// Its turn is lost: Blind, Stun, Terror, Confusion, Frozen.
         public var disabled: Bool { stunned > 0 || frozen > 0 || blind > 0 || durations[180] != nil || durations[21] != nil }
         public var alive: Bool { stats.alive }
@@ -91,6 +92,9 @@ public final class Battle {
         case resisted(unit: Int, spell: Int)
         /// A stack a spell brought onto the field.
         case summon(unit: Int)
+        /// Creatures a spell added to a stack on the field (a repeated summon, raised or resurrected
+        /// creatures): `amount` more, `left` now.
+        case revive(unit: Int, spell: Int, amount: Int, left: Int)
         /// The castle gate struck (and broken).
         case gateHit(unit: Int, damage: Int, broken: Bool)
     }
@@ -183,6 +187,8 @@ public final class Battle {
 
     /// The rule tables (summoned and raised creatures, the summon divisor).
     public var tables: RuleTables?
+    /// A creature's combat model and footprint (combat_actor), for stacks spells bring in.
+    public var creatureModel: ((CreatureDef) -> (actor: String, size: Int))?
 
     public init(field: Battlefield, attackers: [Fighter], defenders: [Fighter], seed: Int, formations: (Formation, Formation) = (.loose, .loose), tables: RuleTables? = nil) {
         self.field = field

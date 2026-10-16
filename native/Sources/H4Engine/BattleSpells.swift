@@ -120,7 +120,7 @@ extension Battle {
     public static func untargeted(_ spell: Int) -> Bool {
         guard spell < RuleTables.spells.count else { return false }
         let s = RuleTables.spells[spell]
-        return s.has("Mass") || s.kind == "summoning" && !s.has("Bodies") || [4, 32, 110].contains(spell)
+        return s.has("Mass") || s.kind == "summoning" && !s.has("Bodies") && spell != 18 && spell != 64 || [4, 32, 110].contains(spell)
     }
 
     /// Cast by the current unit on a target stack (nil for untargeted spells). Ends the unit's turn.
@@ -137,7 +137,7 @@ extension Battle {
             targets = units.filter { $0.alive }
         } else if spell == 32 || spell == 110 {
             targets = units.filter { $0.alive && canTarget(spell, by: u, $0) }
-        } else if s.kind == "summoning" && !s.has("Bodies") {
+        } else if Battle.untargeted(spell) {
             targets = []
         } else {
             guard let id = targetId, let t = units.first(where: { $0.id == id }), canTarget(spell, by: u, t) else { return false }
@@ -208,15 +208,10 @@ extension Battle {
                 events.append(.spellHit(unit: t.id, spell: spell, damage: -healed, killed: 0, left: t.stats.count))
             }
         case "summoning" where !s.has("Bodies"):
-            if let t = tables, let cr = t.creature(s.creature) {
-                let st = Combatant(creature: cr, count: max(1, p))
-                // next to the caster, as near as there is room
-                let spot = freeSpot(near: u, size: 2)
-                let nu = Unit(id: (units.map { $0.id }.max() ?? 0) + 1, side: u.side, stats: st, keyword: cr.keyword, actor: cr.name, size: 2,
-                              move: cr.move, shots: cr.shots, x: spot.0, y: spot.1)
-                nu.summoned = true; nu.acted = true
-                units.append(nu)
-                events.append(.summon(unit: nu.id))
+            if spell == 18 || spell == 64, let t = targets.first {
+                phantom(of: t, spell: spell, power: p, by: u)
+            } else if let cr = tables?.creature(s.creature) {
+                summon(cr, count: p, spell: spell, by: u)
             }
         default:
             for t in targets {
@@ -267,15 +262,60 @@ extension Battle {
         t.stats.effects.insert(spell)
     }
 
-    /// A free footprint of `size` near a unit, for summoned stacks.
-    func freeSpot(near u: Unit, size: Int) -> (Int, Int) {
-        for r in 1..<20 {
-            for dx in -r...r { for dy in -r...r where max(abs(dx), abs(dy)) == r {
-                let x = u.x + dx, y = u.y + dy
-                if field.fits(x, y, size: size), !overlaps(x, y, size, except: -1) { return (x, y) }
-            } }
+    /// A summoned or raised stack of `creature` on the caster's side (0x87bdd0): a second cast adds
+    /// to the stack this spell brought before (0x577fc0); otherwise a new stack is placed next to
+    /// the caster (0x87bac0). Returns the stack, or nil when there is no room.
+    @discardableResult
+    func summon(_ cr: CreatureDef, count: Int, spell: Int, by u: Unit, at corpse: Unit? = nil, phantomOf: Combatant? = nil) -> Unit? {
+        if let old = units.first(where: { $0.alive && $0.summoned && $0.summonedBy == spell && $0.side == side(of: u) && $0.keyword == cr.keyword }) {
+            old.stats.count += count
+            old.initialCount += count
+            events.append(.revive(unit: old.id, spell: spell, amount: count, left: old.stats.count))
+            return old
         }
-        return (u.x, u.y)
+        let model: (actor: String, size: Int) = creatureModel?(cr) ?? (cr.name, 2)
+        var st = phantomOf ?? Combatant(creature: cr, count: count)
+        st.count = count; st.wounds = 0
+        if phantomOf != nil { st.effects = [] ; st.cursed = false; st.weakened = false; st.aged = false; st.bound = false }
+        st.effects.insert(spell)
+        let spot: (Int, Int)?
+        if let c = corpse, c.size == model.size, !overlaps(c.x, c.y, c.size, except: c.id) { spot = (c.x, c.y) }
+        else { spot = freeSpot(near: corpse ?? u, size: model.size) }
+        guard let (x, y) = spot else { return nil }
+        let nu = Unit(id: (units.map { $0.id }.max() ?? 0) + 1, side: side(of: u), stats: st, keyword: cr.keyword, actor: model.actor, size: model.size,
+                      move: cr.move, shots: cr.shots, x: x, y: y)
+        nu.summoned = true; nu.summonedBy = spell; nu.acted = true
+        nu.caster = Caster(creature: cr.keyword, spellPoints: cr.spellPoints, spellPower: cr.spellPower)
+        units.append(nu)
+        events.append(.summon(unit: nu.id))
+        return nu
+    }
+    /// Phantom Image / Create Illusion (0x87d050): a copy of the target's creature, ceil(power /
+    /// its hit points) of them, on the caster's side; it merges with an earlier copy.
+    func phantom(of t: Unit, spell: Int, power p: Int, by u: Unit) {
+        let hp = max(1, t.stats.hitPoints)
+        let n = (p + hp - 1) / hp
+        let cr = tables?.creature(t.keyword) ?? CreatureDef(keyword: t.keyword, name: t.stats.name, plural: t.stats.name, level: t.stats.level, alignment: t.stats.alignment,
+                                                             hitPoints: t.stats.hitPoints, damageLow: t.stats.damageLow, damageHigh: t.stats.damageHigh, attack: t.stats.attack,
+                                                             defense: t.stats.defense, move: t.move, speed: t.stats.speed, growth: 0, gold: 0, experience: 0, shots: t.shots,
+                                                             spellPoints: 0, shortHelp: "", longHelp: "")
+        var copy = t.stats
+        copy.experience = 0
+        summon(cr, count: n, spell: spell, by: u, phantomOf: copy)
+    }
+
+    /// A free footprint of `size` as near to a stack as there is room (0x87bac0): of the free
+    /// places the ones whose centre is nearest the stack's centre, one of them at random.
+    func freeSpot(near u: Unit, size: Int) -> (Int, Int)? {
+        var best: [(Int, Int)] = [], bestD = Int.max
+        let cx = u.x * 16 + u.size * 8, cy = u.y * 16 + u.size * 8
+        for x in 0..<Battlefield.size { for y in 0..<Battlefield.size where field.fits(x, y, size: size) && !overlaps(x, y, size, except: -1) {
+            let dx = x * 16 + size * 8 - cx, dy = y * 16 + size * 8 - cy
+            let d = dx * dx + dy * dy
+            if d < bestD { bestD = d; best = [(x, y)] } else if d == bestD { best.append((x, y)) }
+        } }
+        guard !best.isEmpty else { return nil }
+        return best[rng.next() % best.count]
     }
 
     // MARK: the computer's spells

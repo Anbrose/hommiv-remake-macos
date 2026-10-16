@@ -156,6 +156,13 @@ public final class RuleTables {
     public static let mineIncome: [String: (String, Int)] = ["Gold": ("Gold", 1000), "Sawmill": ("Wood", 2), "Ore Pit": ("Ore", 2), "ore pit": ("Ore", 2),
                                                             "Crystal": ("Crystal", 1), "Sulfur": ("Sulfur", 1), "Gem": ("Gems", 1), "Alchemists Lab": ("Mercury", 1)]
 
+    /// Tables with only these creatures (tests and tools without the game's archive).
+    public init(creatures: [CreatureDef]) {
+        self.creatures = creatures
+        heroes = []; names = [:]; dwellingCreature = [:]; buildings = [:]; objectTexts = [:]; objectNames = [:]; artifacts = [:]
+        skillWeights = [:]; skillTexts = [:]; banks = [:]; spellHelp = [:]; abilityKeywords = [:]; abilityInfo = [:]
+        obstacleFrequency = [:]; obstacleAdjacency = [:]; strings = [:]
+    }
     public init(archive: H4Archive) throws {
         let cr = RuleTable(data: try archive.payload("table.creatures.h4d"))
         func int(_ s: String) -> Int { Int(s.trimmingCharacters(in: .whitespaces)) ?? 0 }

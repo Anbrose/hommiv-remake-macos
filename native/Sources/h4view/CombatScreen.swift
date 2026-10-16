@@ -303,6 +303,7 @@ final class CombatScreen {
         guard let f = field else { return }
         strings = t.strings
         battle = Battle(field: f, attackers: armyFighters(game: g, h, tables: t), defenders: armyFighters(game: g, e, tables: t), seed: seed, tables: t)
+        battle?.creatureModel = { [weak self] cd in (self?.actorName(cd) ?? cd.name, self.flatMap { $0.actor($0.actorName(cd))?.size } ?? 4) }
         var pieces = (1...6).map { "combat.music.\($0)" }
         let r = seed % 6; pieces = Array(pieces[r...] + pieces[..<r])
         sound?.playMusic(first: "combat.start", then: pieces)
@@ -341,6 +342,7 @@ final class CombatScreen {
         }
         let form: Battle.Formation = level == 3 ? .castle : level > 0 ? .siege : .loose
         battle = Battle(field: f, attackers: armyFighters(game: g, h, tables: t), defenders: defenders, seed: seed, formations: (.loose, form), tables: t)
+        battle?.creatureModel = { [weak self] cd in (self?.actorName(cd) ?? cd.name, self.flatMap { $0.actor($0.actorName(cd))?.size } ?? 4) }
         var pieces = (1...6).map { "combat.music.\($0)" }
         let r = seed % 6; pieces = Array(pieces[r...] + pieces[..<r])
         sound?.playMusic(first: "combat.start", then: pieces)
@@ -383,6 +385,7 @@ final class CombatScreen {
             if let st = st, let d = t.creature(st.creature) { var f = fighter(d, st.count, army: monsterArmy); f.slot = k; defenders.append(f) }
         }
         battle = Battle(field: f, attackers: attackers, defenders: defenders, seed: seed, tables: t)
+        battle?.creatureModel = { [weak self] cd in (self?.actorName(cd) ?? cd.name, self.flatMap { $0.actor($0.actorName(cd))?.size } ?? 4) }
         // combat.start, then the six combat pieces in turn (heroes4.exe 0x62a720 / 0x62a830)
         var pieces = (1...6).map { "combat.music.\($0)" }
         let r = seed % 6; pieces = Array(pieces[r...] + pieces[..<r])
@@ -588,6 +591,9 @@ final class CombatScreen {
             playing = Anim(event: e, started: now, duration: max(0.5, stateDuration(u.actor, "melee", u.facing)))
         case .summon(let id):
             effects.append(("summon", id, now))
+            playing = Anim(event: e, started: now, duration: 0.6)
+        case .revive(let id, _, _, let left):
+            shownCount[id] = left
             playing = Anim(event: e, started: now, duration: 0.6)
         case .wait(let id):
             postAction(id, "combat_action.wait", "Wait", now: now)

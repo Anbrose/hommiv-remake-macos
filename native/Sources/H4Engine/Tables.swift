@@ -42,6 +42,8 @@ public struct CreatureDef {
     public var cost: [String: Int] = [:]
     public let shots: Int, spellPoints: Int
     public let shortHelp: String, longHelp: String   // "Flying, Spellcaster" and the paragraph about it
+    /// The Spell Power column (creature record +0x6c): a creature caster's power percentage per creature.
+    public var spellPower = 0
 }
 
 public struct HeroDef {
@@ -172,6 +174,8 @@ public final class RuleTables {
                         shortHelp: cr.value($0, "Short Help Text"), longHelp: cr.value($0, "Long Help Text"))
         }
         for i in creatures.indices { creatures[i].expansion = expansionOf[creatures[i].keyword] ?? 0 }
+        let powers = cr.rows.filter { !cr.value($0, "Level").isEmpty }.map { int(cr.value($0, "Spell Power")) }
+        for i in creatures.indices where i < powers.count { creatures[i].spellPower = powers[i] }
         if let rows = Optional(cr.rows.filter { !cr.value($0, "Level").isEmpty }), rows.count == creatures.count {
             for (i, row) in rows.enumerated() {
                 for m in ["Gold", "Wood", "Ore", "Crystal", "Sulfur", "Mercury", "Gems"] where int(cr.value(row, m)) != 0 { creatures[i].cost[m] = int(cr.value(row, m)) }

@@ -32,6 +32,8 @@ public struct Combatant {
     public func under(_ spell: Int) -> Bool { effects.contains(spell) }
     /// Base magic resistance in percent (creature: "50% Magic Resistance"; hero: the Resistance skill).
     public var magicResistance = 0
+    /// A creature caster's spell points (per stack, creature record +0x68) and Spell Power (+0x6c).
+    public var spellPoints = 0, spellPower = 0
 
     public var alive: Bool { count > 0 }
     public var totalHealth: Int { count * hitPoints - wounds }
@@ -43,6 +45,7 @@ public struct Combatant {
         name = c.name; self.count = count; hitPoints = c.hitPoints; damageLow = c.damageLow; damageHigh = c.damageHigh
         attack = c.attack; defense = c.defense; speed = c.speed; experience = c.experience
         level = c.level; alignment = c.alignment
+        spellPoints = c.spellPoints; spellPower = c.spellPower
         if let r = c.shortHelp.range(of: #"(\d+)% Magic Resistance"#, options: .regularExpression) {
             magicResistance = Int(c.shortHelp[r].prefix { $0.isNumber }) ?? 0
         }

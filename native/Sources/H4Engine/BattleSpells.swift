@@ -26,6 +26,16 @@ public struct Caster {
         for sp in all { costs[sp] = h.spellCost(sp); let b = h.spellPowerBonus(sp); if b != 0 { powerBonus[sp] = b } }
     }
     func skill(_ k: String) -> Int { skills[k] ?? 0 }
+    /// A creature stack's own spells (RuleTables.creatureSpells, 0x656ef0): level 0, its spell
+    /// points per stack (creature record +0x68, not times the count), its Spell Power.
+    public init?(creature keyword: String, spellPoints: Int, spellPower: Int) {
+        guard let list = RuleTables.creatureSpells[keyword.lowercased()] else { return nil }
+        self.init(level: 0, skills: [:], spells: list, spellPoints: spellPoints)
+        creature = true
+        self.spellPower = spellPower
+    }
+    /// The spell a click casts without opening the book: the first with the Default flag (0x656c20).
+    public var defaultSpell: Int? { spells.first { $0 < RuleTables.spells.count && RuleTables.spells[$0].has("Default") } ?? spells.first }
 }
 
 /// Casting in battle, as heroes4.exe does it (spells_spec: power 0x865200 / 0x72db90, damage
@@ -37,10 +47,11 @@ extension Battle {
     static let massOf: [Int: Int] = [12: 13, 29: 58, 32: 61, 52: 47, 80: 10, 127: 109, 81: 15, 82: 23, 83: 27, 84: 35, 85: 45, 86: 48, 87: 104,
                                      88: 56, 89: 102, 90: 115, 91: 117, 92: 118, 93: 120, 94: 121, 95: 140, 96: 105, 97: 143, 98: 145, 99: 148, 100: 185]
 
-    /// The spell's power for this caster: (base + increment x level) x pct / 100, pct = 100 + 20
-    /// per level of the school's power skill (+ Sorcery 20...100 on damage spells); summons divide
-    /// by the creature's gold cost; creatures cast at level 0, damage and summons scaled by their
-    /// Spell Power x casters.
+    /// The spell's power for this caster (0x865200): (base + increment x level) x pct / 100, pct =
+    /// 100 + 20 per level of the school's power skill (+ Sorcery 20...100 on spells with the Dmg
+    /// flag, 0x72db90); summons divide by the creature's Experience (+0x74); creatures cast at
+    /// level 0, spells with the Dmg or Summ flag and Resurrection scaled by Spell Power x count
+    /// (0x63dd90), Rebirth by the count.
     public func power(_ spell: Int, by u: Unit, creatures: RuleTables? = nil) -> Int {
         guard spell < RuleTables.spells.count, let c = u.caster else { return 0 }
         let s = RuleTables.spells[spell]
@@ -48,15 +59,16 @@ extension Battle {
         var level = c.level
         if c.creature {
             level = 0
-            if s.kind == "damage" || s.kind == "summoning" || spell == 133 { pct = c.spellPower * pct * u.stats.count / 100 }
+            if s.has("Dmg") || s.has("Summ") || spell == 133 { pct = c.spellPower * pct * u.stats.count / 100 }
+            else if spell == 129 { pct *= u.stats.count }
         } else {
             pct += 20 * c.skill(Battle.powerSkill[s.school] ?? "") + (c.powerBonus[spell] ?? 0)
-            if s.kind == "damage" || s.has("Dmg") { pct += 20 * c.skill("sorcery") }
+            if s.has("Dmg") { pct += 20 * c.skill("sorcery") }
         }
         var p = s.base * pct / 100
         if s.increment != 0 { p = (s.base + s.increment * level) * pct / 100 }
         if spell == 53 || spell == 54 { p = (10 + level) * pct / 1000 }
-        if s.kind == "summoning", let cr = creatures?.creature(s.creature), cr.gold > 0 { p = max(1, p / cr.gold) }
+        if s.has("Summ"), let cr = (creatures ?? tables)?.creature(s.creature), cr.experience > 0 { p = max(1, p / cr.experience) }
         return p
     }
 
@@ -91,6 +103,9 @@ extension Battle {
         if [61, 32].contains(spell), t.stats.alignment != "death" { return false }   // Holy Word / Holy Shout: death creatures only
         return true
     }
+    /// Combat spells the exe registers no factory for (0x614220 / 0x614270): only abilities,
+    /// artifacts or other spells apply them.
+    static let noFactory: Set<Int> = [9, 20, 42, 107, 119, 152, 191, 194]
     /// Spells the unit can cast now: known, affordable, a combat spell, the school skill high enough.
     public func castable(_ u: Unit) -> [Int] {
         guard let c = u.caster else { return [] }
@@ -98,7 +113,7 @@ extension Battle {
             guard sp < RuleTables.spells.count else { return false }
             let s = RuleTables.spells[sp]
             let skillOK = c.creature || c.free.contains(sp) || (s.schoolSkill >= 0 && (c.skills[RuleTables.skillIds[s.schoolSkill]] ?? 0) >= s.level)
-            return s.has("Cmb") && c.cost(sp) <= c.spellPoints && skillOK
+            return s.has("Cmb") && !Battle.noFactory.contains(sp) && c.cost(sp) <= c.spellPoints && skillOK
         }
     }
     /// A spell that needs no target (mass spells, Armageddon, summons...).
@@ -110,7 +125,9 @@ extension Battle {
 
     /// Cast by the current unit on a target stack (nil for untargeted spells). Ends the unit's turn.
     @discardableResult
-    public func cast(_ spell: Int, on targetId: Int?, tables: RuleTables? = nil) -> Bool {
+    public func cast(_ spell: Int, on targetId: Int?, cell: (Int, Int)? = nil, tables: RuleTables? = nil) -> Bool {
+        if let t = tables { self.tables = t }
+        let tables = self.tables
         guard finished == nil, let u = current, var c = u.caster, castable(u).contains(spell) else { return false }
         let s = RuleTables.spells[spell]
         var targets: [Unit] = []
@@ -259,5 +276,69 @@ extension Battle {
             } }
         }
         return (u.x, u.y)
+    }
+
+    // MARK: the computer's spells
+
+    /// Every target the spell could be cast at now: nil for spells without one, else the stacks it can land on.
+    func aiTargets(_ spell: Int, by u: Unit) -> [(target: Int?, cell: (Int, Int)?)] {
+        if Battle.untargeted(spell) { return [(nil, nil)] }
+        return units.filter { canTarget(spell, by: u, $0) }.map { ($0.id, nil) }
+    }
+    /// The stacks a cast would touch (for the computer's estimate).
+    func aiAffected(_ spell: Int, by u: Unit, target: Int?, cell: (Int, Int)?) -> [Unit] {
+        if let m = Battle.massOf[spell] { return units.filter { $0.alive && canTarget(m, by: u, $0) } }
+        if Battle.untargeted(spell) { return units.filter { $0.alive && canTarget(spell, by: u, $0) } }
+        return units.filter { $0.id == target }
+    }
+    /// What a spell is worth to the caster's side, in hit points (the exe's AI was not traced: a
+    /// value estimate -- damage done to enemies, healing and raising on friends, summoned hit
+    /// points, a share of the target's hit points for a blessing or curse it does not have yet).
+    func aiValue(_ spell: Int, by u: Unit, target: Int?, cell: (Int, Int)?) -> Int {
+        let s = RuleTables.spells[spell]
+        let effect = Battle.massOf[spell] ?? spell
+        let p = power(spell, by: u)
+        var v = 0
+        if s.has("Summ"), !s.has("Bodies"), let cr = tables?.creature(s.creature) { return p * cr.hitPoints }
+        for t in aiAffected(spell, by: u, target: target, cell: cell) {
+            let enemy = side(of: t) != side(of: u)
+            let r = resistance(t, to: spell)
+            if s.kind == "damage" && ![111, 110, 112].contains(effect) || effect == 54 || effect == 5 {
+                var d = r >= 100 ? 0 : (p * (100 - r) + 99) / 100
+                if effect == 54 { d = d * t.stats.hitPoints }
+                d = min(d, t.stats.totalHealth)
+                v += enemy ? d : -2 * d
+            } else if s.kind == "healing" || s.kind == "resurrection" || s.has("Bodies") {
+                let lost = max(0, t.initialCount - t.stats.count) * t.stats.hitPoints + t.stats.wounds
+                v += enemy ? 0 : min(p, lost)
+            } else {
+                if t.stats.under(effect) || !t.alive { continue }
+                let share = [11, 21, 154, 180, 186, 174, 62, 138].contains(effect) ? 2 : 5
+                let hp = t.stats.totalHealth / share
+                if enemy, s.has("Enemy") { v += (s.has("Resisted") || s.has("ResIfEnemy")) ? hp * (100 - r) / 100 : hp }
+                else if !enemy, s.has("Friend") { v += hp }
+            }
+        }
+        return v
+    }
+    /// The best spell the unit can cast now and what it is worth.
+    func aiSpell(_ u: Unit) -> (spell: Int, target: Int?, cell: (Int, Int)?, value: Int)? {
+        var best: (spell: Int, target: Int?, cell: (Int, Int)?, value: Int)? = nil
+        for sp in castable(u) {
+            for o in aiTargets(sp, by: u) {
+                let v = aiValue(sp, by: u, target: o.target, cell: o.cell)
+                if v > (best?.value ?? 0) { best = (sp, o.target, o.cell, v) }
+            }
+        }
+        return best
+    }
+    /// What the unit's own blow or shot is worth now (its average damage on the enemy it would hit).
+    func aiBlowValue(_ u: Unit, _ enemies: [Unit]) -> Int {
+        let ranged = canShoot(u)
+        return enemies.map { t -> Int in
+            guard ranged || attackPosition(u, t) != nil else { return 0 }
+            let (lo, hi) = damageRange(u, t, ranged: ranged)
+            return min(t.stats.totalHealth, (lo + hi) / 2)
+        }.max() ?? 0
     }
 }

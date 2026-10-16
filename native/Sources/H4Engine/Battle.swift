@@ -181,8 +181,12 @@ public final class Battle {
         [[(71, 41), (78, 48), (71, 48), (78, 55), (71, 55), (78, 62), (71, 62)],
          [(31, 62), (24, 55), (31, 55), (24, 48), (31, 48), (24, 41), (31, 41)]]]
 
-    public init(field: Battlefield, attackers: [Fighter], defenders: [Fighter], seed: Int, formations: (Formation, Formation) = (.loose, .loose)) {
+    /// The rule tables (summoned and raised creatures, the summon divisor).
+    public var tables: RuleTables?
+
+    public init(field: Battlefield, attackers: [Fighter], defenders: [Fighter], seed: Int, formations: (Formation, Formation) = (.loose, .loose), tables: RuleTables? = nil) {
         self.field = field
+        self.tables = tables
         rng = GameRandom(seed: seed)
         var id = 0
         // deployment (heroes4.exe 0x62df10): each army slot has its cell in the formation's
@@ -201,7 +205,7 @@ public final class Battle {
                         let x = tx + dx, y = ty + dy
                         if field.fits(x, y, size: f.size), !overlaps(x, y, f.size, except: -1) {
                             let u = Unit(id: id, side: side, stats: f.stats, keyword: f.keyword, actor: f.actor, size: f.size, move: f.move, shots: f.shots, x: x, y: y)
-                            u.caster = f.caster
+                            u.caster = f.caster ?? (f.stats.isHero ? nil : Caster(creature: f.keyword, spellPoints: f.stats.spellPoints, spellPower: f.stats.spellPower))
                             units.append(u)
                             bySlot[slot] = units.count - 1
                             placed = true
@@ -946,17 +950,9 @@ public final class Battle {
         guard finished == nil, let u = current else { return }
         let enemies = units.filter { $0.alive && $0.id != u.id && side(of: $0) != side(of: u) }
         guard !enemies.isEmpty else { defend(); return }
-        // a caster opens with its best damage spell on the most dangerous stack it can hurt
-        if u.caster != nil {
-            var best: (spell: Int, target: Int, dmg: Int)? = nil
-            for sp in castable(u) where RuleTables.spells[sp].kind == "damage" && !Battle.untargeted(sp) {
-                let p = power(sp, by: u)
-                for t in enemies where canTarget(sp, by: u, t) {
-                    let d = min(t.stats.totalHealth, p * (100 - resistance(t, to: sp)) / 100)
-                    if d > (best?.dmg ?? 0) { best = (sp, t.id, d) }
-                }
-            }
-            if let b = best, cast(b.spell, on: b.target) { return }
+        // a caster (hero or spellcasting creature) casts when its best spell is worth more than its blow
+        if u.caster != nil, let c = aiSpell(u), c.value > aiBlowValue(u, enemies) {
+            if cast(c.spell, on: c.target, cell: c.cell) { return }
         }
         if field.castleLevel > 0 {   // a siege
             if canShoot(u), let t = enemies.filter({ shotOverWallOK(u, $0) }).max(by: { QuickCombat.threat($0.stats) < QuickCombat.threat($1.stats) }) { _ = shoot(t.id); return }

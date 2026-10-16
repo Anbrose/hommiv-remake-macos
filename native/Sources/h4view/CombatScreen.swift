@@ -302,7 +302,7 @@ final class CombatScreen {
         Combatant.abilityKeywords = t.abilityKeywords
         guard let f = field else { return }
         strings = t.strings
-        battle = Battle(field: f, attackers: armyFighters(game: g, h, tables: t), defenders: armyFighters(game: g, e, tables: t), seed: seed)
+        battle = Battle(field: f, attackers: armyFighters(game: g, h, tables: t), defenders: armyFighters(game: g, e, tables: t), seed: seed, tables: t)
         var pieces = (1...6).map { "combat.music.\($0)" }
         let r = seed % 6; pieces = Array(pieces[r...] + pieces[..<r])
         sound?.playMusic(first: "combat.start", then: pieces)
@@ -340,7 +340,7 @@ final class CombatScreen {
             defenders.append(Battle.Fighter(stats: c, keyword: cd.keyword, actor: actorName(cd), size: actor(actorName(cd))?.size ?? 4, move: cd.move, shots: cd.shots, slot: k))
         }
         let form: Battle.Formation = level == 3 ? .castle : level > 0 ? .siege : .loose
-        battle = Battle(field: f, attackers: armyFighters(game: g, h, tables: t), defenders: defenders, seed: seed, formations: (.loose, form))
+        battle = Battle(field: f, attackers: armyFighters(game: g, h, tables: t), defenders: defenders, seed: seed, formations: (.loose, form), tables: t)
         var pieces = (1...6).map { "combat.music.\($0)" }
         let r = seed % 6; pieces = Array(pieces[r...] + pieces[..<r])
         sound?.playMusic(first: "combat.start", then: pieces)
@@ -382,7 +382,7 @@ final class CombatScreen {
         for (k, st) in split.enumerated() {
             if let st = st, let d = t.creature(st.creature) { var f = fighter(d, st.count, army: monsterArmy); f.slot = k; defenders.append(f) }
         }
-        battle = Battle(field: f, attackers: attackers, defenders: defenders, seed: seed)
+        battle = Battle(field: f, attackers: attackers, defenders: defenders, seed: seed, tables: t)
         // combat.start, then the six combat pieces in turn (heroes4.exe 0x62a720 / 0x62a830)
         var pieces = (1...6).map { "combat.music.\($0)" }
         let r = seed % 6; pieces = Array(pieces[r...] + pieces[..<r])

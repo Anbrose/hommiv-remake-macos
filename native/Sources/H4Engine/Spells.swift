@@ -234,5 +234,14 @@ extension RuleTables {
         .init(keyword: "speed_potion", name: "(no table row)", school: "", level: 0, cost: 0, base: 0, increment: 0, creature: "", kind: "", flags: ""),
         .init(keyword: "strength_potion", name: "(no table row)", school: "", level: 0, cost: 0, base: 0, increment: 0, creature: "", kind: "", flags: ""),
     ]
+    /// Creature spellcasters (heroes4.exe's static initialiser 0x656c20: 31 (creature, spell) pairs,
+    /// looked up by 0x656ef0), in the exe's order; the default spell is the first one with the
+    /// Default flag. Monk, Zealot, Shaman, Witch, Lich, Vampire, Pixie, Sprite and Unicorn have none
+    /// (their effects are abilities).
+    public static let creatureSpells: [String: [Int]] = [
+        "archangel": [133], "archdevil": [160], "faerie dragon": [69, 21, 41, 43], "genie": [63, 105, 22, 64, 144, 148],
+        "leprechaun": [48], "mage": [72, 23, 111, 125, 109], "nightmare": [180], "ogre mage": [13], "phoenix": [129],
+        "satyr": [148], "water elemental": [63, 123, 141, 185], "evil sorceress": [65, 81, 5, 96], "dark champion": [180],
+    ]
     public static func spellId(_ keyword: String) -> Int? { spells.firstIndex { $0.keyword == keyword.lowercased() } }
 }

@@ -65,6 +65,7 @@ extension CombatScreen {
 
     func begin(_ e: Battle.Event, now: Date) {
         guard let b = battle else { return }
+        if CombatScreen.trace { print(String(format: "  [%.3f] begin ", now.timeIntervalSince(traceStart)) + "\(e)".prefix(90)) }
         switch e {
         case .move(let id, let path, let start, let flying):
             beginMove(id, path: path, start: start, flying: flying, now: now)

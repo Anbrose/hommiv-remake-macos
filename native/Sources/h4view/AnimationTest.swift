@@ -4,7 +4,7 @@ import H4Engine
 /// Snapshot hook for the combat presentation (debugging): H4ANIM="orc:30,titan:2" stages the first
 /// hero's army (H4ARMY) against those stacks; H4ANIMACT is a ';' list of actions played in turn on a
 /// fixed clock -- "shoot:<attacker>:<target>", "melee:<attacker>:<target>", "cast:<spell>[:<target>|@x,y]",
-/// "tele:<unit>:x,y", "disp:<unit>:x,y", "revive:<unit>:n", "phantom:<unit>" (units by keyword, a
+/// "fx:<unit>:<name>[:damage]", "tele:<unit>:x,y", "disp:<unit>:x,y", "revive:<unit>:n", "phantom:<unit>" (units by keyword, a
 /// target on the other side); H4ANIMT="0.3,0.6" the times (s) of the frames written next to the
 /// snapshot path as <name>_<t>.png; H4ANIMLOG prints the playback's timeline.
 func runAnimationTest(_ spec: String, game g: GameState, cs: CombatScreen, hero: Hero, out: String, render: (String) -> Void) {
@@ -18,6 +18,7 @@ func runAnimationTest(_ spec: String, game g: GameState, cs: CombatScreen, hero:
         b.units.first { ($0.keyword == k || $0.actor.lowercased() == k.lowercased() || "\($0.id)" == k) && (side == nil || $0.side == side) && $0.alive }
     }
     let base = Date()
+    cs.traceStart = base
     var now = base
     cs.clock = now
     _ = b.takeEvents()
@@ -37,6 +38,13 @@ func runAnimationTest(_ spec: String, game g: GameState, cs: CombatScreen, hero:
             if let at = p[1].split(separator: "@").dropFirst().first { let xy = at.split(separator: ",").compactMap { Int($0) }; if xy.count == 2 { cell = (xy[0], xy[1]) } }
             let target = p.count >= 3 ? b.units.first { ($0.keyword == p[2] || "\($0.id)" == p[2]) && $0.alive } : nil
             print("cast \(RuleTables.spells[spell].name): \(b.cast(spell, on: target?.id ?? (cell == nil && !Battle.untargeted(spell) ? b.units.first { $0.side == 1 && $0.alive }?.id : nil), at: cell, tables: g.tables))")
+        case "fx":
+            // an ability effect as the battle emits it: "fx:<unit>:<name>[:damage]"
+            guard p.count >= 3, let u = unit(p[1], side: nil) else { return }
+            let d = p.count >= 4 ? Int(p[3]) ?? 0 : 0
+            let k = d > 0 ? u.stats.take(d) : 0
+            cs.take([.effect(unit: u.id, name: p[2], damage: d, killed: k, left: u.stats.count)])
+            return
         case "tele", "disp", "revive", "phantom":
             // presentation only: the event as the battle would emit it
             guard p.count >= 2, let u = unit(p[1], side: nil), let caster = b.units.first(where: { $0.side == 0 && $0.caster != nil }) else { return }
@@ -56,22 +64,31 @@ func runAnimationTest(_ spec: String, game g: GameState, cs: CombatScreen, hero:
     }
     let actions = (env["H4ANIMACT"] ?? "").split(separator: ";").map(String.init)
     let times = (env["H4ANIMT"] ?? "0.5").split(separator: ",").compactMap { Double($0) }.sorted()
-    var pending = actions
-    // the first action now, each next one when the playback is idle again
-    if !pending.isEmpty { act(pending.removeFirst()); let ev = b.takeEvents(); if env["H4ANIMLOG"] != nil { for e in ev { print("  \(e)") } }; cs.take(ev) }
-    let stem = (out as NSString).deletingPathExtension
-    var lastBusy = true
-    for t in times {
-        let end = base.addingTimeInterval(t)
-        while now < end {
-            now = min(end, now.addingTimeInterval(0.005))
+    // every action but the last played out first; the frame times count from the last one
+    func step(until end: Date?) {
+        var lastBusy = cs.busy
+        var guardN = 0
+        while guardN < 12000 {
+            guardN += 1
+            if let e = end { if now >= e { break } } else if !cs.busy { break }
+            now = end.map { min($0, now.addingTimeInterval(0.005)) } ?? now.addingTimeInterval(0.005)
             cs.clock = now
             cs.update(now: now)
-            let busy = cs.busy
-            if busy != lastBusy, env["H4ANIMLOG"] != nil { print(String(format: "  %.3f s: %@", now.timeIntervalSince(base), busy ? "busy" : "idle")) }
-            lastBusy = busy
-            if !busy, !pending.isEmpty { act(pending.removeFirst()); let ev = b.takeEvents(); if env["H4ANIMLOG"] != nil { for e in ev { print("  \(e)") } }; cs.take(ev) }
+            if cs.busy != lastBusy, env["H4ANIMLOG"] != nil { print(String(format: "  %.3f s: %@", now.timeIntervalSince(base), cs.busy ? "busy" : "idle")) }
+            lastBusy = cs.busy
         }
+    }
+    for (k, a) in actions.enumerated() {
+        act(a)
+        let ev = b.takeEvents()
+        if env["H4ANIMLOG"] != nil { for e in ev { print("  \(e)") } }
+        cs.take(ev)
+        if k < actions.count - 1 { step(until: nil) }
+    }
+    let start = now
+    let stem = (out as NSString).deletingPathExtension
+    for t in times {
+        step(until: start.addingTimeInterval(t))
         if env["H4ANIMLOG"] != nil {
             for m in cs.missiles { print("  missile \(m.model) pos \(m.pos) delta \(m.delta) left \(m.remaining) facing \(m.facing)") }
             print(String(format: "t=%.3f missiles %d windows %@ field %@ states %@", t, cs.missiles.count, cs.windows.map { "\($0.name)@\($0.unit)" }.joined(separator: ","),

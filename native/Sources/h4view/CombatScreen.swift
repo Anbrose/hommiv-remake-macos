@@ -26,6 +26,9 @@ final class CombatScreen {
     var queue: [Battle.Event] = []
     /// A fixed time to show (the snapshot hooks step the playback on their own clock).
     var clock: Date?
+    /// Debugging: print each action as it begins (H4ANIMLOG), times from `traceStart`.
+    static let trace = ProcessInfo.processInfo.environment["H4ANIMLOG"] != nil
+    var traceStart = Date()
     /// Timers of the animations in flight; those that hold keep the next action waiting.
     var timers: [Timer] = []
     var timerSeq = 0

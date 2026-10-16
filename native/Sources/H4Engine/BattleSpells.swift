@@ -133,6 +133,7 @@ extension Battle {
         guard finished == nil, let u = current, var c = u.caster, castable(u).contains(spell) else { return false }
         let s = RuleTables.spells[spell]
         var targets: [Unit] = []
+        var aim: (Int, Int)? = nil   // the clicked stack's centre cell
         if let m = Battle.massOf[spell] {
             targets = units.filter { $0.alive && canTarget(m, by: u, $0) }
         } else if spell == 4 {   // Armageddon: every stack
@@ -146,6 +147,7 @@ extension Battle {
         } else {
             guard let id = targetId, let t = units.first(where: { $0.id == id }), canTarget(spell, by: u, t) else { return false }
             targets = [t]
+            aim = (t.x + t.size / 2, t.y + t.size / 2)
             // area spells: Fireball 3x3, Inferno 5x5, Fire Ring around the cell, the others single
             let radius = spell == 43 ? 1 : spell == 66 ? 2 : spell == 41 ? 1 : 0
             if radius > 0 {
@@ -158,7 +160,7 @@ extension Battle {
         u.caster = c
         let p = power(spell, by: u, creatures: tables)
         events.append(.cast(unit: u.id, spell: spell, targets: targets.map { $0.id }))
-        if Battle.areaRadius(spell) != nil, let c = cell ?? targets.first.map({ ($0.x + $0.size / 2, $0.y + $0.size / 2) }) {
+        if Battle.areaRadius(spell) != nil || spell == 41, let c = cell ?? aim ?? targets.first.map({ ($0.x + $0.size / 2, $0.y + $0.size / 2) }) {
             events.append(.castAt(unit: u.id, spell: spell, cell: c))
         }
         let effectSpell = Battle.massOf[spell] ?? spell

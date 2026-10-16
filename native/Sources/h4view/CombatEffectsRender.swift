@@ -28,7 +28,7 @@ extension Renderer {
     /// k >> 10 down, right and bottom rounded up.
     static func scaledBox(_ b: (left: Int, top: Int, right: Int, bottom: Int)) -> (Int, Int, Int, Int) {
         let k = Int(CombatScreen.sceneScale * 1024)
-        return (b.left * k >> 10, b.top * k >> 10, (b.right * k + 1023) >> 10, (b.bottom * k + 1023) >> 10)
+        return ((b.left * k) >> 10, (b.top * k) >> 10, (b.right * k + 1023) >> 10, (b.bottom * k + 1023) >> 10)
     }
 
     /// One effect window's quad: the image of step `step`, anchored on the stack (0x5f6fe0): the

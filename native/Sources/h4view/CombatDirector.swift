@@ -421,6 +421,12 @@ extension CombatScreen {
             armageddon(strikes, at: t)
         case 17:
             chainLightning(strikes, at: t)
+        case 41:
+            fireRing(strikes, cell: cell, at: t)
+        case 14:
+            sparks(strikes, by: caster, at: t)
+        case 68:
+            lifeDrain(strikes, to: caster, at: t)
         case 39, 63, 71, 72:
             // t_missile_spell (0x61a750): the sound at launch, the missile (fire bolt 7, ice bolt 9,
             // magic arrow 13, magic fist 14), the struck stack's reaction at impact
@@ -545,6 +551,55 @@ extension CombatScreen {
                    then: { tj in jump(1, tj) })
     }
 
+    /// Fire Ring (t_fire_ring 0x714dc0): every target struck first, then the sound; a ring of
+    /// spells.Fire Ring flames (cast_spell, 1000 / fps) around the aimed stack's footprint centre at
+    /// R = size x 8 (24 with no stack) + 16, n = (round(2 pi R) / 2) >> 4 flames at pi/4 + 2 pi j / n.
+    func fireRing(_ strikes: [Strike], cell: (Int, Int)?, at t: Date) {
+        guard let b = battle else { return }
+        for s in strikes { react(s, at: t, rule: .spell, deferBusy: true) }
+        playSpellSound(41)
+        guard let c = cell else { return }
+        var centre = (Double(c.0 * 16 + 8), Double(c.1 * 16 + 8)), r = 24.0 + 16
+        if let v = b.units.first(where: { shownAlive($0) && c.0 >= $0.x && c.0 < $0.x + $0.size && c.1 >= $0.y && c.1 < $0.y + $0.size }) {
+            let w = worldPos(v)
+            centre = (Double(w.0 + v.size * 8), Double(w.1 + v.size * 8)); r = Double(v.size * 8 + 16)
+        }
+        let n = max(1, (Int((2 * Double.pi * r).rounded()) / 2) >> 4)
+        for j in 0..<n {
+            let th = Double.pi / 4 + 2 * Double.pi * Double(j) / Double(n)
+            let p = (Float(centre.0 + r * sin(th)), Float(centre.1 + r * cos(th)), Float(0))
+            fieldActor("spells.Fire Ring", states: ["cast_spell"], at: p, t: t, unscaled: true)
+        }
+    }
+    /// Sparks (t_spell_sparks 0x866c60): the sound, a spells.sparks actor in melee facing the caster's
+    /// way at its front edge (13 frames x 100 ms); the targets struck at its hit frame (5).
+    func sparks(_ strikes: [Strike], by caster: Int, at t: Date) {
+        guard let b = battle else { return }
+        let u = b.unit(caster)
+        playSpellSound(14)
+        let w = worldPos(u)
+        let d = CombatScreen.directions[u.facing] ?? (0, 0)
+        let p = (Float(w.0 + u.size * 8 + d.0 * u.size * 8), Float(w.1 + u.size * 8 + d.1 * u.size * 8), Float(0))
+        fieldActor("spells.sparks", states: ["melee"], at: p, facing: u.facing, t: t, unscaled: true,
+                   hit: { [weak self] th in for s in strikes { self?.react(s, at: th, rule: .spell, deferBusy: true) } })
+    }
+    /// Life Drain: each target struck at once, then a life_force missile from it back to the caster
+    /// carrying half the damage; the caster's "+N" on arrival.
+    func lifeDrain(_ strikes: [Strike], to caster: Int, at t: Date) {
+        guard let b = battle else { return }
+        let u = b.unit(caster)
+        for s in strikes {
+            react(s, at: t, rule: .blow, deferBusy: true)
+            let gain = s.damage / 2
+            launch(10, from: aimPoint(b.unit(s.target)), to: aimPoint(u), at: t, impact: { [weak self] ti in
+                guard let self = self, gain > 0, self.showOtherNumbers else { return }
+                self.floatOver(u, [("+\(gain)", "heal")], since: ti)
+            })
+        }
+    }
+    /// The grid direction of a facing (table 0x705b60): ne (-1, 0), e (-1, 1), ... n (-1, -1).
+    static let directions: [String: (Int, Int)] = ["ne": (-1, 0), "e": (-1, 1), "se": (0, 1), "s": (1, 1), "sw": (1, 0), "w": (1, -1), "nw": (0, -1), "n": (-1, -1)]
+
     /// Teleport, Displacement, raising, phantoms (area_spells_spec 5.2, 6.1, 6.2).
     func special(_ e: Battle.Event, spell: Int?, caster: Int?, at t: Date) {
         guard let b = battle else { return }
@@ -564,8 +619,7 @@ extension CombatScreen {
             let v = b.unit(id)
             let dir = Battle.facing(dx: Float(to.0 - from.0), dy: Float(to.1 - from.1))
             let back = AdvActor.facings[((AdvActor.facings.firstIndex(of: dir) ?? 0) + 4) & 7]
-            let vec: [String: (Int, Int)] = ["ne": (-1, 0), "e": (-1, 1), "se": (0, 1), "s": (1, 1), "sw": (1, 0), "w": (1, -1), "nw": (0, -1), "n": (-1, -1)]
-            let dv = vec[back] ?? (0, 0)
+            let dv = CombatScreen.directions[back] ?? (0, 0)
             let c = (from.0 * 16 + v.size * 8 + dv.0 * v.size * 8, from.1 * 16 + v.size * 8 + dv.1 * v.size * 8)
             fieldActor("spells.displacement", states: ["cast_spell"], at: (Float(c.0), Float(c.1), 0), facing: dir, t: t, unscaled: true,
                        hit: { [weak self] th in self?.slide(id, from: (Float(from.0), Float(from.1)), to: (Float(to.0), Float(to.1)), at: th) })

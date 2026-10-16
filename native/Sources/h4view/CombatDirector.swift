@@ -41,15 +41,16 @@ extension CombatScreen {
         guard let b = battle else { return }
         advance(to: now)
         updateMoves(now)
-        // the next action: only when nothing is pending
+        // the next action: only when nothing is pending; the exchange's aftermath first (0x56b310 drains
+        // bf+0x478 before the continuation), one effect after the other
         var guardN = 0
-        while holds == 0, !queue.isEmpty, guardN < 500 {
+        while holds == 0, !queue.isEmpty || !aftermathQueue.isEmpty, guardN < 500 {
             guardN += 1
-            begin(queue.removeFirst(), now: now)
+            if !aftermathQueue.isEmpty { aftermathQueue.removeFirst()(now) } else { begin(queue.removeFirst(), now: now) }
             advance(to: now)
         }
-        if holds == 0, queue.isEmpty { pump(); if !queue.isEmpty { update(now: now); return } }
-        if holds == 0, queue.isEmpty {
+        if holds == 0, queue.isEmpty, aftermathQueue.isEmpty { pump(); if !queue.isEmpty { update(now: now); return } }
+        if holds == 0, queue.isEmpty, aftermathQueue.isEmpty {
             shownPos.removeAll(); shownCount.removeAll(); acting = nil; lastBlow = nil
             for u in b.units { lastCount[u.id] = u.stats.count }
             // the icy tint lasts while the stack is frozen (removing effect 186 resets it, 0x5f24c7)
@@ -320,16 +321,22 @@ extension CombatScreen {
         for k in s.strikes {
             if let good = pendingLuck.removeValue(forKey: k.target) { showLuck(k.target, good: good, at: t) }
             if !deferBusy, busy(k.target) {
-                // a stack swinging its own blow (a simultaneous exchange) is not cut short by a flinch;
-                // its fall waits for the swing
+                // a stack swinging its own blow (a simultaneous exchange) does not flinch (t_combat_flinch
+                // with the simultaneous flag, 0x5fc6a0); wiped out, it starts dying at once, its swing cut
+                // short and its own blow landing on the swing's next tick (0x5f53c0, 0x7dcf60)
                 shownCount[k.target] = k.left
                 if let b = battle, k.damage > 0 || k.killed > 0 { blowMessages(damage: k.damage, killed: k.killed, unit: b.unit(k.target), since: t) }
-                if k.dies { var d = k; d.damage = 0; d.killed = 0; react(d, at: t, rule: .blow, deferBusy: true) }
+                if k.dies, moving[k.target] == nil {
+                    cutSwing(k.target, at: t)
+                    var d = k; d.damage = 0; d.killed = 0
+                    react(d, at: t, rule: .blow, deferBusy: false)
+                } else if k.dies { var d = k; d.damage = 0; d.killed = 0; react(d, at: t, rule: .blow, deferBusy: true) }
                 continue
             }
             react(k, at: t, rule: .blow, deferBusy: deferBusy)
         }
-        for e in s.effects { abilityEffect(e.strike, name: e.name, at: t) }
+        // the on-hit effects wait until the exchange's animations have ended (bf+0x478 -> 0x553440)
+        for e in s.effects { aftermathQueue.append { [weak self] ta in self?.abilityEffect(e.strike, name: e.name, at: ta) } }
     }
 
     /// An ability's or a turn start's effect on a stack (the fixed ids of spell_visuals_spec 3.2): its

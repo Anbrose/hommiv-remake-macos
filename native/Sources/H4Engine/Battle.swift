@@ -694,7 +694,11 @@ public final class Battle {
         flushDeferred()
         // the Stone_Gaze window and the grey fade (t_stoning_animation, 0x553359)
         if stoned { events.append(.effect(unit: b.id, name: "stone_gaze", damage: 0, killed: 0, left: b.stats.count)) }
-        if !secondary { aftermath(a, b, ranged: ranged, damage: dmg, healthBefore: before) }
+        if !secondary {
+            // a simultaneous exchange rolls both blows first, the aftermath of both after (0x56ef40 / 0x5762a0)
+            if heldAftermath != nil { heldAftermath!.append { [unowned self] in self.aftermath(a, b, ranged: ranged, damage: dmg, healthBefore: before) } }
+            else { aftermath(a, b, ranged: ranged, damage: dmg, healthBefore: before) }
+        }
         return dmg
     }
 
@@ -749,6 +753,28 @@ public final class Battle {
             }
         }
         return killed
+    }
+    /// The on-hit effects held back while both blows of a simultaneous exchange are rolled.
+    var heldAftermath: [() -> Void]? = nil
+    /// Both sides strike at once (0x56ef40 / 0x5695b0 -> 0x568ee0): the target's blow is rolled from the stack
+    /// it had before the first one lands, even when that kills it; the deaths and the aftermath of both come after.
+    func together(_ first: () -> Void, _ second: () -> Void, target t: Unit) {
+        let before = t.stats
+        let mark = events.count
+        heldAftermath = []
+        first()
+        let after = t.stats
+        let isDeath: (Event) -> Bool = { if case .die = $0 { return true }; return false }
+        let deaths = events[mark...].filter(isDeath)
+        events = Array(events[..<mark]) + events[mark...].filter { !isDeath($0) }
+        t.stats.count = before.count; t.stats.wounds = before.wounds
+        events.append(.together)
+        second()
+        t.stats.count = after.count; t.stats.wounds = after.wounds
+        events += deaths
+        let held = heldAftermath ?? []
+        heldAftermath = nil
+        for f in held { f() }
     }
     /// What the damage function did besides the blow (Martyr, Guardian Angel, Pain Mirror): shown right after it.
     var deferred: [Event] = []
@@ -1027,13 +1053,17 @@ public final class Battle {
         }
         let start = (u.x, u.y)
         beginAction(u)
+        var movedPoints: Float = 0
         if pos != (u.x, u.y), let p = path(u, to: pos.0, pos.1) {
+            movedPoints = reachable(u)[Battle.key(pos.0, pos.1)] ?? 0
             u.moved += reachable(u)[Battle.key(pos.0, pos.1)] ?? 0
             events.append(.move(unit: u.id, path: p, from: (u.x, u.y), flying: u.stats.has("flying"))); u.x = pos.0; u.y = pos.1
             release(by: u)
         }
-        Battle.face(u, towards: t); Battle.face(t, towards: u)
-        meleeExchange(u, t)
+        // only the striker turns now; the target turns when it swings back, blocks or dies (0x56e680 /
+        // 0x5f62e0) -- the playback turns it then
+        Battle.face(u, towards: t)
+        meleeExchange(u, t, moved: movedPoints * 100 >= 4)
         if u.stats.under(6) { remove(6, from: u) }   // Berserk lasts until it has attacked (0x56ec57)
         // Strike and Return: back to where it started
         if u.alive, u.stats.has("strike_and_return"), (u.x, u.y) != start, !overlaps(start.0, start.1, u.size, except: u.id) {
@@ -1093,27 +1123,17 @@ public final class Battle {
     /// at once (0x56e680 with the simultaneous flag) -- the target strikes back with the stack it had
     /// before the blow, even when the blow kills it; with First Strike one side strikes first and the
     /// other answers with what is left.
-    func meleeExchange(_ u: Unit, _ t: Unit) {
+    /// A First Strike defender strikes first only when the attacker moved to attack (0x56f0b5: the move
+    /// points of the move-and-attack, bf+0x314, at least 4); otherwise the two strike together.
+    func meleeExchange(_ u: Unit, _ t: Unit, moved: Bool = true) {
         let retaliates = canRetaliate(t, against: u)
-        if retaliates, strikesFirst(t, over: u) {
+        if retaliates, strikesFirst(t, over: u), moved {
             t.retaliated = true
             blow(t, u)
             if u.alive { blow(u, t) }
         } else if retaliates, !strikesFirst(u, over: t) {
             t.retaliated = true
-            let before = t.stats
-            let mark = events.count
-            blow(u, t)
-            let after = t.stats
-            // the target's fall waits until its own blow has landed
-            let isDeath: (Event) -> Bool = { if case .die = $0 { return true }; return false }
-            let deaths = events[mark...].filter(isDeath)
-            events = Array(events[..<mark]) + events[mark...].filter { !isDeath($0) }
-            t.stats.count = before.count; t.stats.wounds = before.wounds
-            events.append(.together)
-            blow(t, u)
-            t.stats.count = after.count; t.stats.wounds = after.wounds
-            events += deaths
+            together({ blow(u, t) }, { blow(t, u) }, target: t)
         } else {
             blow(u, t)
             if retaliates, canRetaliate(t, against: u) { t.retaliated = true; blow(t, u) }
@@ -1138,16 +1158,20 @@ public final class Battle {
         guard canShoot(u), shotOverWallOK(u, t) else { return attack(targetId) }
         beginAction(u)
         Battle.face(u, towards: t)
-        // a shooter that is shot at shoots back (once per round, like melee retaliation);
-        // Ranged First Strike shoots first; Shoots Twice fires again after the retaliation
+        // a shooter that is shot at shoots back (once per round, like melee retaliation), at once with the
+        // stack it has before the shot lands (0x5695b0 -> 0x568ee0); only a shooter with Ranged First Strike
+        // against one without it shoots first and is answered after (0x5696f2). Shoots Twice fires again
+        // after it all. The retaliating shooter turns as its shot starts (the playback turns it).
         let shootsBack = canRetaliate(t, against: u) || (t.alive && !t.disabled && !u.stats.has("no_retaliation") && (!t.retaliated || t.stats.has("unlimited_retaliation")))
         let back = shootsBack && canShoot(t)
-        if back, t.stats.has("ranged_first_strike"), !u.stats.has("ranged_first_strike") {
-            t.retaliated = true; Battle.face(t, towards: u); volley(t, u)
-            if u.alive { volley(u, t) }
+        if back, u.stats.has("ranged_first_strike"), !t.stats.has("ranged_first_strike") {
+            volley(u, t)
+            if t.alive, !t.disabled, canShoot(t) { t.retaliated = true; volley(t, u) }
+        } else if back {
+            t.retaliated = true
+            together({ volley(u, t) }, { volley(t, u) }, target: t)
         } else {
             volley(u, t)
-            if back, t.alive, !t.disabled { t.retaliated = true; Battle.face(t, towards: u); volley(t, u) }
         }
         for _ in 1..<strikes(u, ranged: true) where u.alive && t.alive && canShoot(u) { volley(u, t) }
         if u.stats.under(6) { remove(6, from: u) }   // (0x569bf4)

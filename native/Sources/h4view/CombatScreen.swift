@@ -55,6 +55,11 @@ final class CombatScreen {
     var hidden: Set<Int> = []
     /// The luck a stack about to be struck rolled (Battle.Event.luck): shown when that blow lands.
     var pendingLuck: [Int: Bool] = [:]
+    /// A swing's hit not yet landed and its end timer, per stack (cut short when the stack starts dying, 0x7dcf60).
+    var pendingHits: [Int: (token: Int, seq: Int, since: Date, period: Double, fn: (Date) -> Void)] = [:]
+    var swingEnds: [Int: (token: Int, seq: Int)] = [:]
+    /// The on-hit effects of the exchange (0x553440), run once its animations have all ended (bf+0x478).
+    var aftermathQueue: [(Date) -> Void] = []
     /// What waits for a stack's fall to end (its bodies fading once they are gone).
     var waitingDeath: [Int: [(Date) -> Void]] = [:]
     /// Ground a spell made, as drawn: Smoke's cloud and Rock Growth's rock (combat_object sprites,
@@ -456,11 +461,11 @@ final class CombatScreen {
     func resetPlayback() {
         queue = []; timers = []; missiles = []; waitingOnUnit = [:]; windows = []; windowBusy = []; windowWaiting = [:]
         fades = [:]; alphaLevel = [:]; tints = [:]; slides = [:]; fieldActors = []; moving = [:]; hidden = []
-        pendingLuck = [:]; waitingDeath = [:]; spellObstacles = []
+        pendingLuck = [:]; waitingDeath = [:]; spellObstacles = []; pendingHits = [:]; swingEnds = [:]; aftermathQueue = []
         unitPos = [:]; unitState = [:]; lastCount = Dictionary(uniqueKeysWithValues: (battle?.units ?? []).map { ($0.id, $0.stats.count) }); dead = []; dying = []; pendingDeaths = []; shownPos = [:]; shownCount = [:]; lastBlow = nil; acting = nil
     }
 
-    var busy: Bool { holds > 0 || !queue.isEmpty }
+    var busy: Bool { holds > 0 || !queue.isEmpty || !aftermathQueue.isEmpty }
     /// The unit whose action is playing (the screen shows it as the active one meanwhile).
     var acting: Int?
     /// The unit the screen shows as active: the one acting while its action plays, then the battle's.

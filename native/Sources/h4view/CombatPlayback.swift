@@ -84,9 +84,18 @@ extension CombatScreen {
         if playSound { sound?.actor(u.actor, state) }
         let n = frameCount(u.actor, state, u.facing)
         let d = Double(n) * framePeriod(u.actor, state)
-        if let h = hit { after(t.addingTimeInterval(n == 0 ? 0 : hitTime(u.actor, state, u.facing)), h) }
+        if let h = hit {
+            let period = framePeriod(u.actor, state)
+            after(t.addingTimeInterval(n == 0 ? 0 : hitTime(u.actor, state, u.facing))) { [weak self] th in
+                guard let self = self, let p = self.pendingHits[id], p.token == token else { return }
+                self.pendingHits[id] = nil
+                h(th)
+            }
+            pendingHits[id] = (token, timerSeq, t, period, h)
+        }
         after(t.addingTimeInterval(d)) { [weak self] t2 in
             guard let self = self else { return }
+            if self.swingEnds[id]?.token == token { self.swingEnds[id] = nil }
             if self.unitState[id]?.token == token {
                 self.unitState[id] = nil
                 if state == "die", !reverse { self.dying.remove(id); self.dead.insert(id); self.fallen(id, at: t2) }
@@ -95,7 +104,21 @@ extension CombatScreen {
             then?(t2)
             self.unitIdle(id, at: t2)
         }
+        if hit != nil { swingEnds[id] = (token, timerSeq) }
         return d
+    }
+    /// A stack starts dying in the middle of its own swing (0x7dcd16 effect 0xba -> 0x7dcf60): the swing
+    /// stops at once, its blow, if it has not landed, lands on the swing's next tick, and it no longer holds.
+    func cutSwing(_ id: Int, at t: Date) {
+        if let e = swingEnds.removeValue(forKey: id), unitState[id]?.token == e.token {
+            timers.removeAll { $0.seq == e.seq }
+            unitState[id] = nil
+        }
+        if let p = pendingHits.removeValue(forKey: id) {
+            timers.removeAll { $0.seq == p.seq }
+            let k = (t.timeIntervalSince(p.since) / p.period).rounded(.down) + 1
+            after(p.since.addingTimeInterval(k * p.period), p.fn)
+        }
     }
     /// A stack's animation ended: what waited for it runs now (t_delayed_missile_impact,
     /// t_delayed_spell_animation).

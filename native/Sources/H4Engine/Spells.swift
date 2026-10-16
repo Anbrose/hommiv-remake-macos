@@ -59,7 +59,7 @@ extension RuleTables {
         .init(keyword: "fire ring", name: "Fire Ring", school: "chaos", level: 3, cost: 5, base: 40, increment: 4, creature: "", kind: "damage", flags: "Cmb Dmg Elem Enemy Friend Mech Undead Default Fire LoS Teach HiPri"),
         .init(keyword: "fire shield", name: "Fire Shield", school: "chaos", level: 1, cost: 2, base: 0, increment: 0, creature: "", kind: "", flags: "Bless Cmb Elem Enemy Friend Mech Undead Fire"),
         .init(keyword: "fireball", name: "Fireball", school: "chaos", level: 3, cost: 5, base: 40, increment: 4, creature: "", kind: "damage", flags: "Cmb Dmg Elem Enemy Friend Mech Undead Default Fire LoS Teach HiPri"),
-        .init(keyword: "firebreathing", name: "Fire Aura", school: "chaos", level: 1, cost: 2, base: 10, increment: 1, creature: "", kind: "damage", flags: "Bless Cmb Elem Friend Mech Undead Default Teach HiPri"),
+        .init(keyword: "firebreathing", name: "Fire Aura", school: "chaos", level: 1, cost: 2, base: 10, increment: 1, creature: "", kind: "blessing", flags: "Bless Cmb Elem Friend Mech Undead Default Teach HiPri"),
         .init(keyword: "first strike", name: "First Strike", school: "chaos", level: 2, cost: 3, base: 0, increment: 0, creature: "", kind: "blessing", flags: "Bless Cmb Elem Friend Mech Undead Default Teach HiPri Off"),
         .init(keyword: "flight", name: "Flight", school: "order", level: 2, cost: 3, base: 0, increment: 0, creature: "", kind: "blessing", flags: "Bless Cmb Elem Friend Mech Undead Default Teach Off"),
         .init(keyword: "forgetfulness", name: "Forgetfulness", school: "order", level: 3, cost: 5, base: 0, increment: 0, creature: "", kind: "curse", flags: "Cmb Curse Enemy Default Mind Resisted Teach HiPri Off"),
@@ -74,7 +74,7 @@ extension RuleTables {
         .init(keyword: "heal", name: "Heal", school: "life", level: 2, cost: 3, base: 50, increment: 5, creature: "", kind: "healing", flags: "Adv Bless Cmb Friend Default Heal Teach HiPri"),
         .init(keyword: "health boost", name: "Health", school: "nature", level: 1, cost: 2, base: 0, increment: 0, creature: "", kind: "blessing", flags: "Adv Bless Cmb Friend Def"),
         .init(keyword: "holy armor", name: "Spiritual Armor", school: "life", level: 1, cost: 2, base: 0, increment: 0, creature: "", kind: "blessing", flags: "Bless Cmb Elem Friend Mech Undead Default Teach HiPri Def"),
-        .init(keyword: "holy retribution", name: "Retribution", school: "life", level: 2, cost: 3, base: 10, increment: 1, creature: "", kind: "damage", flags: "Bless Cmb Elem Enemy Friend Mech Undead Default Teach HiPri"),
+        .init(keyword: "holy retribution", name: "Retribution", school: "life", level: 2, cost: 3, base: 10, increment: 1, creature: "", kind: "blessing", flags: "Bless Cmb Elem Enemy Friend Mech Undead Default Teach HiPri"),
         .init(keyword: "holy water", name: "Holy Water", school: "life", level: 2, cost: 3, base: 45, increment: 4, creature: "", kind: "damage", flags: "Bless Cmb Curse Elem Enemy Friend Mech Undead Default LoS"),
         .init(keyword: "holy word", name: "Holy Word", school: "life", level: 1, cost: 2, base: 45, increment: 4, creature: "", kind: "damage", flags: "Cmb Dmg Elem Enemy Friend Undead Default Resisted Teach"),
         .init(keyword: "hypnotize", name: "Hypnotize", school: "order", level: 5, cost: 12, base: 0, increment: 0, creature: "", kind: "curse", flags: "Cmb Curse Enemy Default Mind Resisted Teach HiPri Off"),
@@ -233,6 +233,15 @@ extension RuleTables {
         .init(keyword: "smoke_potion", name: "(no table row)", school: "", level: 0, cost: 0, base: 0, increment: 0, creature: "", kind: "", flags: ""),
         .init(keyword: "speed_potion", name: "(no table row)", school: "", level: 0, cost: 0, base: 0, increment: 0, creature: "", kind: "", flags: ""),
         .init(keyword: "strength_potion", name: "(no table row)", school: "", level: 0, cost: 0, base: 0, increment: 0, creature: "", kind: "", flags: ""),
+    ]
+    /// Creature spellcasters (heroes4.exe's static initialiser 0x656c20: 31 (creature, spell) pairs,
+    /// looked up by 0x656ef0), in the exe's order; the default spell is the first one with the
+    /// Default flag. Monk, Zealot, Shaman, Witch, Lich, Vampire, Pixie, Sprite and Unicorn have none
+    /// (their effects are abilities).
+    public static let creatureSpells: [String: [Int]] = [
+        "archangel": [133], "archdevil": [160], "faerie dragon": [69, 21, 41, 43], "genie": [63, 105, 22, 64, 144, 148],
+        "leprechaun": [48], "mage": [72, 23, 111, 125, 109], "nightmare": [180], "ogre mage": [13], "phoenix": [129],
+        "satyr": [148], "water elemental": [63, 123, 141, 185], "evil sorceress": [65, 81, 5, 96], "dark champion": [180],
     ]
     public static func spellId(_ keyword: String) -> Int? { spells.firstIndex { $0.keyword == keyword.lowercased() } }
 }

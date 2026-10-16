@@ -3,7 +3,7 @@ import H4Engine
 
 /// Snapshot hook for the combat presentation (debugging): H4ANIM="orc:30,titan:2" stages the first
 /// hero's army (H4ARMY) against those stacks; H4ANIMACT is a ';' list of actions played in turn on a
-/// fixed clock -- "shoot:<attacker>:<target>", "melee:<attacker>:<target>", "cast:<spell>[:<target>|@x,y]",
+/// fixed clock -- "shoot:<attacker>:<target>", "melee:<attacker>:<target>", "cast:<spell>[@x,y][:<target>[:<caster>]]",
 /// "fx:<unit>:<name>[:damage]", "tele:<unit>:x,y", "disp:<unit>:x,y", "revive:<unit>:n", "phantom:<unit>" (units by keyword, a
 /// target on the other side); H4ANIMT="0.3,0.6" the times (s) of the frames written next to the
 /// snapshot path as <name>_<t>.png; H4ANIMLOG prints the playback's timeline.
@@ -31,12 +31,20 @@ func runAnimationTest(_ spec: String, game g: GameState, cs: CombatScreen, hero:
             b.putFirst(u.id)
             print("\(kind) \(u.keyword) -> \(t.keyword): \(kind == "shoot" ? b.shoot(t.id) : b.attack(t.id))")
         case "cast":
-            guard p.count >= 2, let spell = Int(p[1].split(separator: "@")[0]), let u = b.units.first(where: { $0.side == 0 && $0.caster != nil }) else { print("no caster"); return }
+            // "cast:<spell>[@x,y][:<target>[:<caster>]]": a hero caster knows every spell; a creature
+            // caster (by keyword or id, either side) casts with its own spells
+            let byCaster = p.count >= 4 ? unit(p[3], side: nil) : nil
+            guard p.count >= 2, let spell = Int(p[1].split(separator: "@")[0]), let u = byCaster ?? b.units.first(where: { $0.side == 0 && $0.caster != nil }) else { print("no caster"); return }
             b.putFirst(u.id)
-            if var c = u.caster { c.spells = Array(0..<RuleTables.spells.count); c.spellPoints = 500; for k in ["chaos", "life", "order", "death", "nature"] { c.skills[k] = 5 }; u.caster = c }
+            if var c = u.caster {
+                if u.stats.isHero { c.spells = Array(0..<RuleTables.spells.count); for k in ["chaos", "life", "order", "death", "nature"] { c.skills[k] = 5 } }
+                c.spellPoints = max(c.spellPoints, 500); u.caster = c
+            }
             var cell: (Int, Int)? = nil
             if let at = p[1].split(separator: "@").dropFirst().first { let xy = at.split(separator: ",").compactMap { Int($0) }; if xy.count == 2 { cell = (xy[0], xy[1]) } }
-            let target = p.count >= 3 ? b.units.first { ($0.keyword == p[2] || "\($0.id)" == p[2]) && $0.alive } : nil
+            // a living stack, else a dead one (the Bodies spells, Resurrection)
+            let named = p.count >= 3 && !p[2].isEmpty ? b.units.filter { $0.keyword == p[2] || "\($0.id)" == p[2] } : []
+            let target = named.first { $0.alive } ?? named.first
             print("cast \(RuleTables.spells[spell].name): \(b.cast(spell, on: target?.id ?? (cell == nil && !Battle.untargeted(spell) ? b.units.first { $0.side == 1 && $0.alive }?.id : nil), at: cell, tables: g.tables))")
         case "fx":
             // an ability effect as the battle emits it: "fx:<unit>:<name>[:damage]"

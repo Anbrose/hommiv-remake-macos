@@ -180,6 +180,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     var market: MarketState? = nil         // the marketplace, when open
     var spellBook: SpellBookState? = nil   // the spell book, when open
     var casting: Int? = nil               // a combat spell being aimed
+    var castFirst: Int? = nil             // its first stack when it takes two clicks (Sacrifice, Martyr, Teleport)
     var optionsOpen: GameSettings? = nil   // the options dialog, while open (the values being edited)
     var settings = GameSettings.load()
     var hire: HireOffer? = nil             // the tavern's dialog

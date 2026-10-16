@@ -42,6 +42,8 @@ public struct CreatureDef {
     public var cost: [String: Int] = [:]
     public let shots: Int, spellPoints: Int
     public let shortHelp: String, longHelp: String   // "Flying, Spellcaster" and the paragraph about it
+    /// The Spell Power column (creature record +0x6c): a creature caster's power percentage per creature.
+    public var spellPower = 0
 }
 
 public struct HeroDef {
@@ -154,6 +156,13 @@ public final class RuleTables {
     public static let mineIncome: [String: (String, Int)] = ["Gold": ("Gold", 1000), "Sawmill": ("Wood", 2), "Ore Pit": ("Ore", 2), "ore pit": ("Ore", 2),
                                                             "Crystal": ("Crystal", 1), "Sulfur": ("Sulfur", 1), "Gem": ("Gems", 1), "Alchemists Lab": ("Mercury", 1)]
 
+    /// Tables with only these creatures (tests and tools without the game's archive).
+    public init(creatures: [CreatureDef]) {
+        self.creatures = creatures
+        heroes = []; names = [:]; dwellingCreature = [:]; buildings = [:]; objectTexts = [:]; objectNames = [:]; artifacts = [:]
+        skillWeights = [:]; skillTexts = [:]; banks = [:]; spellHelp = [:]; abilityKeywords = [:]; abilityInfo = [:]
+        obstacleFrequency = [:]; obstacleAdjacency = [:]; strings = [:]
+    }
     public init(archive: H4Archive) throws {
         let cr = RuleTable(data: try archive.payload("table.creatures.h4d"))
         func int(_ s: String) -> Int { Int(s.trimmingCharacters(in: .whitespaces)) ?? 0 }
@@ -172,6 +181,8 @@ public final class RuleTables {
                         shortHelp: cr.value($0, "Short Help Text"), longHelp: cr.value($0, "Long Help Text"))
         }
         for i in creatures.indices { creatures[i].expansion = expansionOf[creatures[i].keyword] ?? 0 }
+        let powers = cr.rows.filter { !cr.value($0, "Level").isEmpty }.map { int(cr.value($0, "Spell Power")) }
+        for i in creatures.indices where i < powers.count { creatures[i].spellPower = powers[i] }
         if let rows = Optional(cr.rows.filter { !cr.value($0, "Level").isEmpty }), rows.count == creatures.count {
             for (i, row) in rows.enumerated() {
                 for m in ["Gold", "Wood", "Ore", "Crystal", "Sulfur", "Mercury", "Gems"] where int(cr.value(row, m)) != 0 { creatures[i].cost[m] = int(cr.value(row, m)) }

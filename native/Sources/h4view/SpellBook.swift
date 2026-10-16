@@ -325,7 +325,7 @@ extension Renderer {
         guard let cs = combat, let b = cs.battle, let u = b.current, let c = u.caster else { return }
         let all = Set(c.spells).union(c.free)
         var sb = SpellBookState(spells: Array(all), castable: Set(b.castable(u)), points: c.spellPoints, combat: true,
-                                costs: Dictionary(all.map { ($0, c.cost($0)) }, uniquingKeysWith: { a, _ in a }), items: c.free)
+                                costs: Dictionary(all.map { ($0, b.cost($0, by: u)) }, uniquingKeysWith: { a, _ in a }), items: c.free)
         for sp in all { sb.powers[sp] = b.power(sp, by: u, creatures: game?.tables) }
         spellBook = sb
     }
@@ -335,7 +335,7 @@ extension Renderer {
             castAdventure(spell); return
         }
         if Battle.untargeted(spell) { b.cast(spell, on: nil, tables: game?.tables); cs.pump() }
-        else { casting = spell }
+        else { casting = spell; castFirst = nil }
     }
     /// Adventure-map casting (heroes' map spells).
     func castAdventure(_ spell: Int) {

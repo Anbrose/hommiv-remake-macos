@@ -89,7 +89,7 @@ extension CombatScreen {
             guard let self = self else { return }
             if self.unitState[id]?.token == token {
                 self.unitState[id] = nil
-                if state == "die", !reverse { self.dying.remove(id); self.dead.insert(id) }
+                if state == "die", !reverse { self.dying.remove(id); self.dead.insert(id); self.fallen(id, at: t2) }
                 if state == "die", reverse { self.dead.remove(id); self.dying.remove(id) }
             }
             then?(t2)
@@ -102,6 +102,14 @@ extension CombatScreen {
     func unitIdle(_ id: Int, at t: Date) {
         guard !busy(id), let list = waitingOnUnit[id], !list.isEmpty else { return }
         waitingOnUnit[id] = nil
+        for fn in list { fn(t) }
+    }
+    /// Run `fn` once the stack lies dead on screen: now, or when the fall pending or playing has ended.
+    func afterFall(_ id: Int, at t: Date, _ fn: @escaping (Date) -> Void) {
+        if dying.contains(id) || pendingDeaths.contains(id) { waitingDeath[id, default: []].append(fn) } else { fn(t) }
+    }
+    func fallen(_ id: Int, at t: Date) {
+        guard let list = waitingDeath.removeValue(forKey: id) else { return }
         for fn in list { fn(t) }
     }
     /// Run `fn` now, or when the stack's running animation has ended.
@@ -261,7 +269,7 @@ extension CombatScreen {
     /// frame for `period(state)` s, then removed (or kept on its last frame).
     @discardableResult
     func fieldActor(_ model: String, states: [String], at p: (x: Float, y: Float, z: Float), facing: String = "ne",
-                    t: Date, unscaled: Bool = false, holdLast: Bool = false, hit: ((Date) -> Void)? = nil, then: ((Date) -> Void)? = nil) -> Double {
+                    t: Date, unscaled: Bool = false, holdLast: Bool = false, ground: Bool = false, hit: ((Date) -> Void)? = nil, then: ((Date) -> Void)? = nil) -> Double {
         guard let a = actor(model) else { hit?(t); then?(t); return 0 }
         var parts: [(state: String, frames: Int, period: Double)] = []
         for s in states {
@@ -275,7 +283,7 @@ extension CombatScreen {
         let total = parts.reduce(0) { $0 + Double($1.frames) * $1.period }
         fieldSeq += 1
         let seq = fieldSeq
-        fieldActors.append(FieldActor(model: model, parts: parts, world: p, facing: facing, since: t, holdLast: holdLast, seq: seq))
+        fieldActors.append(FieldActor(model: model, parts: parts, world: p, facing: facing, since: t, holdLast: holdLast, seq: seq, ground: ground))
         if let h = hit, let first = parts.first {
             let hf = a.state(first.state)?.hitFrame ?? 0
             after(t.addingTimeInterval(Double(min(hf, first.frames - 1)) * first.period), h)
@@ -393,6 +401,8 @@ extension CombatScreen {
         let since: Date
         let holdLast: Bool
         let seq: Int
+        /// Drawn on the ground, under every stack (quicksand).
+        var ground = false
         /// The state and frame shown at a time.
         func frame(at now: Date) -> (String, Int)? {
             var e = now.timeIntervalSince(since)

@@ -125,6 +125,22 @@ extension Renderer {
             q.append(Quad(texture: texture(for: fr, of: o.name), x: Int(px + Float(s.origin.x + Int32(fr.box.left)) * sc), y: Int(py + Float(s.origin.y + Int32(fr.box.top)) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc)))
             drawn.append((o.w * o.h > 9 ? CombatScreen.point(Float(o.x) + Float(o.w) / 2, Float(o.y) + Float(o.h) / 2).1 : py - 1, q))
         }
+        // the ground spells made: Smoke's cloud (its frames in turn, INFERRED 100 ms each), Rock Growth's
+        // rock fading in (alpha 0...15, 75 ms a step)
+        for o in cs.spellObstacles {
+            guard let s = cs.obstacleSprite(o.name) else { continue }
+            let tl = s.timeline
+            let fr: SpriteImage?, sh: SpriteImage?
+            if tl.isEmpty { fr = s.frames.first; sh = fr.flatMap { s.shadow(for: $0) } }
+            else { let e = tl[Int(max(0, now.timeIntervalSince(o.since)) / 0.1) % tl.count]; fr = e.frame; sh = e.shadow }
+            guard let fr else { continue }
+            let alpha: Float = o.fadeIn ? Float(min(15, max(0, Int(now.timeIntervalSince(o.since) / 0.075)))) / 15 : 1
+            let (px, py) = CombatScreen.point(Float(o.x), Float(o.y))
+            var q: [Quad] = []
+            if let sh { q.append(Quad(texture: texture(for: sh, of: o.name), x: Int(px + Float(s.origin.x + Int32(sh.box.left)) * sc), y: Int(py + Float(s.origin.y + Int32(sh.box.top)) * sc), w: Int(Float(sh.bitmap.width) * sc), h: Int(Float(sh.bitmap.height) * sc), alpha: alpha)) }
+            q.append(Quad(texture: texture(for: fr, of: o.name), x: Int(px + Float(s.origin.x + Int32(fr.box.left)) * sc), y: Int(py + Float(s.origin.y + Int32(fr.box.top)) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc), alpha: alpha))
+            drawn.append((CombatScreen.point(Float(o.x) + Float(o.w) / 2, Float(o.y) + Float(o.h) / 2).1, q))
+        }
         // the castle gate, in its state (intact, light_damage, heavy_damage, destroyed)
         if !f.gateCells.isEmpty {
             let gx = f.gateCells.map { $0 / Battlefield.size }.min() ?? 0, gy = f.gateCells.map { $0 % Battlefield.size }.min() ?? 0
@@ -199,12 +215,17 @@ extension Renderer {
                 drawn.append((CombatScreen.point(cx, cy).1, q))
             }
         }
-        for fa in cs.fieldActors {
+        for fa in cs.fieldActors where !fa.ground {
             guard let (state, k) = fa.frame(at: now) else { continue }
             let cx = fa.world.x / 16, cy = fa.world.y / 16
             if let q = fieldActorQuads(cs, model: fa.model, state: state, facing: fa.facing, frame: k, at: (cx, cy), z: fa.world.z) {
                 drawn.append((CombatScreen.point(cx, cy).1, q))
             }
+        }
+        // ground actors (quicksand) under everything standing on the field
+        for fa in cs.fieldActors where fa.ground {
+            guard let (state, k) = fa.frame(at: now) else { continue }
+            if let q = fieldActorQuads(cs, model: fa.model, state: state, facing: fa.facing, frame: k, at: (fa.world.x / 16, fa.world.y / 16), z: fa.world.z) { out += q }
         }
         for (_, q) in drawn.sorted(by: { $0.0 < $1.0 }) { out += q }
         // the spell effect windows: children of the battlefield window, so over every unit (2.5)

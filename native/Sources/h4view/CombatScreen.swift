@@ -53,6 +53,14 @@ final class CombatScreen {
     var moving: [Int: MoveAnim] = [:]
     /// Stacks not on the field yet (a summon before its spell is released).
     var hidden: Set<Int> = []
+    /// The luck a stack about to be struck rolled (Battle.Event.luck): shown when that blow lands.
+    var pendingLuck: [Int: Bool] = [:]
+    /// What waits for a stack's fall to end (its bodies fading once they are gone).
+    var waitingDeath: [Int: [(Date) -> Void]] = [:]
+    /// Ground a spell made, as drawn: Smoke's cloud and Rock Growth's rock (combat_object sprites,
+    /// `x`, `y` the footprint's top cell), shown from `since`, fading in over 15 x 75 ms when `fadeIn`.
+    struct SpellObstacle { let name: String; let x: Int, y: Int; let w: Int, h: Int; let since: Date; let fadeIn: Bool }
+    var spellObstacles: [SpellObstacle] = []
     /// Each stack's count when the playback was last idle (what a stack killed outright had).
     var lastCount: [Int: Int] = [:]
     var unitPos: [Int: (Float, Float)] = [:]     // visual lattice positions while moving
@@ -322,7 +330,8 @@ final class CombatScreen {
         Combatant.abilityKeywords = t.abilityKeywords
         guard let f = field else { return }
         strings = t.strings
-        battle = Battle(field: f, attackers: armyFighters(game: g, h, tables: t), defenders: armyFighters(game: g, e, tables: t), seed: seed)
+        battle = Battle(field: f, attackers: armyFighters(game: g, h, tables: t), defenders: armyFighters(game: g, e, tables: t), seed: seed, tables: t)
+        attachModels()
         var pieces = (1...6).map { "combat.music.\($0)" }
         let r = seed % 6; pieces = Array(pieces[r...] + pieces[..<r])
         sound?.playMusic(first: "combat.start", then: pieces)
@@ -360,7 +369,8 @@ final class CombatScreen {
             defenders.append(Battle.Fighter(stats: c, keyword: cd.keyword, actor: actorName(cd), size: actor(actorName(cd))?.size ?? 4, move: cd.move, shots: cd.shots, slot: k))
         }
         let form: Battle.Formation = level == 3 ? .castle : level > 0 ? .siege : .loose
-        battle = Battle(field: f, attackers: armyFighters(game: g, h, tables: t), defenders: defenders, seed: seed, formations: (.loose, form))
+        battle = Battle(field: f, attackers: armyFighters(game: g, h, tables: t), defenders: defenders, seed: seed, formations: (.loose, form), tables: t)
+        attachModels()
         var pieces = (1...6).map { "combat.music.\($0)" }
         let r = seed % 6; pieces = Array(pieces[r...] + pieces[..<r])
         sound?.playMusic(first: "combat.start", then: pieces)
@@ -402,7 +412,8 @@ final class CombatScreen {
         for (k, st) in split.enumerated() {
             if let st = st, let d = t.creature(st.creature) { var f = fighter(d, st.count, army: monsterArmy); f.slot = k; defenders.append(f) }
         }
-        battle = Battle(field: f, attackers: attackers, defenders: defenders, seed: seed)
+        battle = Battle(field: f, attackers: attackers, defenders: defenders, seed: seed, tables: t)
+        attachModels()
         // combat.start, then the six combat pieces in turn (heroes4.exe 0x62a720 / 0x62a830)
         var pieces = (1...6).map { "combat.music.\($0)" }
         let r = seed % 6; pieces = Array(pieces[r...] + pieces[..<r])
@@ -425,20 +436,27 @@ final class CombatScreen {
             guard let cd = t.creature(name) else { continue }
             defenders.append(Battle.Fighter(stats: Combatant(creature: cd, count: n), keyword: cd.keyword, actor: actorName(cd), size: actor(actorName(cd))?.size ?? 4, move: cd.move, shots: cd.shots, slot: k))
         }
-        battle = Battle(field: f, attackers: armyFighters(game: g, h, tables: t), defenders: defenders, seed: seed)
+        battle = Battle(field: f, attackers: armyFighters(game: g, h, tables: t), defenders: defenders, seed: seed, tables: t)
+        attachModels()
         resetPlayback(); resultShownAt = nil; result = nil; showResults = false; floaters = []; actionMessage = nil; attackMode = [:]; autoCombat = false; surrendered = false
+    }
+
+    /// The battle places the stacks spells bring with their real combat actors and footprints.
+    func attachModels() {
+        battle?.creatureModel = { [weak self] cd in (self?.actorName(cd) ?? cd.name, self.flatMap { $0.actor($0.actorName(cd))?.size } ?? 4) }
     }
 
     /// Pull new events from the battle and let the defender's side act on its own.
     func pump() {
         guard let b = battle else { return }
         take(b.takeEvents())
-        if holds == 0, queue.isEmpty, b.finished == nil, let u = b.current, u.side == 1 || u.hypnotized || autoCombat { b.autoAct(); take(b.takeEvents()) }
+        if holds == 0, queue.isEmpty, b.finished == nil, let u = b.current, u.side == 1 || u.hypnotized || u.stats.under(6) || autoCombat { b.autoAct(); take(b.takeEvents()) }
     }
     /// Forget everything playing (a new battle).
     func resetPlayback() {
         queue = []; timers = []; missiles = []; waitingOnUnit = [:]; windows = []; windowBusy = []; windowWaiting = [:]
         fades = [:]; alphaLevel = [:]; tints = [:]; slides = [:]; fieldActors = []; moving = [:]; hidden = []
+        pendingLuck = [:]; waitingDeath = [:]; spellObstacles = []
         unitPos = [:]; unitState = [:]; lastCount = Dictionary(uniqueKeysWithValues: (battle?.units ?? []).map { ($0.id, $0.stats.count) }); dead = []; dying = []; pendingDeaths = []; shownPos = [:]; shownCount = [:]; lastBlow = nil; acting = nil
     }
 

@@ -17,6 +17,7 @@ extension CombatScreen {
             // a summoned stack is not there before the spell is released
             if case .summon(let id) = e { hidden.insert(id) }
             if case .phantom(let id, _) = e { hidden.insert(id) }
+            if case .revived(let id, _, _, true) = e, lastCount[id] == nil { hidden.insert(id) }   // a stack raised anew
             // a stack keeps the count it had until the blow or spell that cuts it lands on screen
             switch e {
             case .melee(_, let t, _, let k, let l), .shoot(_, let t, _, let k, let l), .effect(let t, _, _, let k, let l), .spellHit(let t, _, _, let k, let l):
@@ -110,8 +111,13 @@ extension CombatScreen {
             })
         case .summon(let id):
             appear(id, spell: nil, at: now)
-        case .teleported, .displaced, .revived, .phantom:
+        case .teleported, .displaced, .revived, .phantom, .bodiesGone:
             special(e, spell: nil, caster: nil, at: now)
+        case .luck(let id, let good):
+            // rolled as the blow that follows is worked out; shown when it lands
+            pendingLuck[id] = good
+        case .obstacle(let spell, let cells):
+            placeObstacle(spell, cells: cells, at: now)
         case .wait(let id):
             postAction(id, "combat_action.wait", "Wait", now: now)
         case .finished(let won):
@@ -229,8 +235,12 @@ extension CombatScreen {
         var swings: [Swing] = []
         parse: while let e = queue.first {
             switch e {
+            case .luck(let id, let good):
+                queue.removeFirst()
+                pendingLuck[id] = good
             case .together:
                 queue.removeFirst()
+                while case .luck(let id, let good)? = queue.first { queue.removeFirst(); pendingLuck[id] = good }
                 guard let n = queue.first, let s = swing(n) else { break parse }
                 queue.removeFirst()
                 swings.append(current); current = s
@@ -308,6 +318,7 @@ extension CombatScreen {
     /// The swing's strikes and aftermath take effect.
     func land(_ s: Swing, at t: Date, deferBusy: Bool) {
         for k in s.strikes {
+            if let good = pendingLuck.removeValue(forKey: k.target) { showLuck(k.target, good: good, at: t) }
             if !deferBusy, busy(k.target) {
                 // a stack swinging its own blow (a simultaneous exchange) is not cut short by a flinch;
                 // its fall waits for the swing
@@ -375,7 +386,7 @@ extension CombatScreen {
             case .die(let id):
                 if let i = strikes.lastIndex(where: { $0.target == id }) { strikes[i].dies = true }
                 else { strikes.append(Strike(attacker: caster, target: id, damage: 0, killed: shownCount[id] ?? 0, left: 0, dies: true)) }
-            case .teleported, .displaced, .revived, .phantom: specials.append(e)
+            case .teleported, .displaced, .revived, .phantom, .bodiesGone, .obstacle: specials.append(e)
             default: break parse
             }
             queue.removeFirst()
@@ -401,7 +412,10 @@ extension CombatScreen {
         let u = b.unit(caster)
         for id in resisted { resist(id, at: t) }
         for id in summons { appear(id, spell: spell, at: t) }
-        for e in specials { special(e, spell: spell, caster: caster, at: t) }
+        var obstacleCells: [(Int, Int)] = []
+        for e in specials {
+            if case .obstacle(_, let cells) = e { obstacleCells += cells } else { special(e, spell: spell, caster: caster, at: t) }
+        }
         switch spell {
         case 43, 66, 67, 19, 25, 50:
             // the fireball family (t_fireball): missile #6 (none for Cloud of Confusion) to the cell's
@@ -423,19 +437,20 @@ extension CombatScreen {
         case 17:
             chainLightning(strikes, at: t)
         case 142:
-            // Smoke (t_summon_smoke): a potion (#17) to the target's cell, then at impact the sound and
-            // the spells.smoke puff (cast_spell, 1000 / fps); the 4 x 4 Spells.Smoke obstacle it leaves is
-            // the battle's to place
-            for s in strikes {
-                let tg = b.unit(s.target), w = worldPos(tg)
-                let p = ((w.0 / 16 + tg.size / 2) * 16, (w.1 / 16 + tg.size / 2) * 16, 0)
-                launch(17, from: launchPoint(u), to: p, at: t, impact: { [weak self] ti in
-                    guard let self = self else { return }
-                    self.playSpellSound(142)
-                    self.fieldActor("spells.smoke", states: ["cast_spell"], at: (Float(p.0), Float(p.1), 0), t: ti, unscaled: true)
-                    self.spellTarget(142, s, at: ti)
-                })
-            }
+            // Smoke (t_summon_smoke): a potion (#17) to the aimed cell's centre, then at impact the sound
+            // and the spells.smoke puff (cast_spell, 1000 / fps); at its hit frame (INFERRED) the 4 x 4
+            // combat_object.Spells.Smoke the battle placed from the cell - 1
+            guard let x0 = obstacleCells.map({ $0.0 }).min(), let y0 = obstacleCells.map({ $0.1 }).min() else { break }
+            let p = ((x0 + 1) * 16 + 8, (y0 + 1) * 16 + 8, 0)
+            face(u, toward: (p.0, p.1))
+            launch(17, from: launchPoint(u), to: p, at: t, impact: { [weak self] ti in
+                guard let self = self else { return }
+                self.playSpellSound(142)
+                self.fieldActor("spells.smoke", states: ["cast_spell"], at: (Float(p.0), Float(p.1), 0), t: ti, unscaled: true,
+                                hit: { [weak self] th in self?.placeObstacle(142, cells: obstacleCells, at: th) })
+            })
+        case 123, 134:
+            placeObstacle(spell, cells: obstacleCells, at: t)
         case 41:
             fireRing(strikes, cell: cell, at: t)
         case 14:
@@ -640,10 +655,20 @@ extension CombatScreen {
                        hit: { [weak self] th in self?.slide(id, from: (Float(from.0), Float(from.1)), to: (Float(to.0), Float(to.1)), at: th) })
         case .revived(let id, let sp, let count, let rose):
             // the effect, the rise (the die animation backwards) at the same time, "+N"
+            hidden.remove(id)
             showEffect(CombatScreen.effectKeyword(sp), on: id, at: t, sound: sp)
             if rose { dead.insert(id); play(id, "die", at: t, reverse: true) }
             if let s = shownCount[id] { shownCount[id] = s + count }
             if showOtherNumbers { floatOver(b.unit(id), [("+\(count)", nil)], since: t) }
+        case .bodiesGone(let id):
+            // the bodies are used up or destroyed: once the stack lies dead, its corpse fades out
+            afterFall(id, at: t) { [weak self] t2 in
+                guard let self = self, !b.unit(id).alive else { return }
+                self.fade(id, from: self.alpha(id, now: t2), to: 0, at: t2, then: { [weak self] _ in
+                    guard let self = self, !b.unit(id).alive else { return }
+                    self.hidden.insert(id); self.alphaLevel[id] = nil
+                })
+            }
         case .phantom(let id, let of):
             // the copy at alpha 10 / 15, sliding from the original to its own place (0x87d050)
             hidden.remove(id)
@@ -653,6 +678,51 @@ extension CombatScreen {
             c.facing = o.facing
             let op = unitPos[of] ?? shownPos[of] ?? (Float(o.x), Float(o.y))
             slide(id, from: op, to: (Float(c.x), Float(c.y)), at: t)
+        default: break
+        }
+    }
+}
+
+extension CombatScreen {
+    /// The luck of a struck stack as its blow lands: the panel's message and, as morale has its
+    /// sorrow / spiritual fervor windows (0x5f37a8), the Fortune or Misfortune window with its sound.
+    /// (INFERRED: spell_visuals_spec does not trace the exe's luck presentation.)
+    func showLuck(_ id: Int, good: Bool, at t: Date) {
+        postAction(id, good ? "combat_action.good_luck" : "combat_action.bad_luck", good ? "Good Luck" : "Bad Luck", now: t)
+        showEffect(good ? "fortune" : "misfortune", on: id, at: t, sound: good ? 48 : 102)
+    }
+
+    /// Ground a spell made (area_spells_spec 5.3-5.5): Quicksand a spells.quicksand actor on each cell
+    /// that keeps its last frame, after the sound (t_quicksand_creator); Smoke its combat_object.Spells.Smoke
+    /// on the 4 x 4 cells; Rock Growth a rock of the field's terrain on the 3 x 3 cells fading in
+    /// (0x556950, 75 ms a step), then the sound.
+    func placeObstacle(_ spell: Int, cells: [(Int, Int)], at t: Date) {
+        guard let x0 = cells.map({ $0.0 }).min(), let y0 = cells.map({ $0.1 }).min() else { return }
+        let w = (cells.map { $0.0 }.max() ?? x0) - x0 + 1, h = (cells.map { $0.1 }.max() ?? y0) - y0 + 1
+        switch spell {
+        case 123:
+            playSpellSound(123)
+            for c in cells {
+                fieldActor("spells.quicksand", states: ["cast_spell"], at: (Float(c.0 * 16), Float(c.1 * 16), 0), t: t, holdLast: true, ground: true)
+            }
+        case 142:
+            spellObstacles.append(SpellObstacle(name: "combat_object.Spells.Smoke.h4d", x: x0, y: y0, w: w, h: h, since: t, fadeIn: false))
+        case 134:
+            // "a random obstacle for the dominant terrain under the area": a blocking kind of the
+            // field's terrain groups that fits the 3 x 3 cells (INFERRED: 0x556240's pick is not decoded)
+            guard let b = battle else { return }
+            let key = CombatScreen.terrainKeys[b.field.terrain] ?? "grass"
+            let groups = Set((b.tables?.obstacleFrequency[key] ?? [:]).keys)
+            let fits = obstacleKinds.filter { $0.blocks && $0.w <= w && $0.h <= h && groups.contains($0.group) }
+            // a rock where there is one, the largest that fits (the rock blocks all 3 x 3 cells)
+            let rocks = fits.filter { $0.name.lowercased().contains("rock") }
+            let kinds = rocks.isEmpty ? fits : rocks
+            let biggest = kinds.map { $0.w * $0.h }.max() ?? 0
+            let pool = kinds.filter { $0.w * $0.h == biggest }
+            guard !pool.isEmpty else { playSpellSound(134); return }
+            let kind = pool[(x0 * 31 + y0 * 17 + b.round) % pool.count]
+            spellObstacles.append(SpellObstacle(name: kind.name, x: x0 + (w - kind.w) / 2, y: y0 + (h - kind.h) / 2, w: kind.w, h: kind.h, since: t, fadeIn: true))
+            after(t.addingTimeInterval(15 * 0.075)) { [weak self] _ in self?.playSpellSound(134) }
         default: break
         }
     }

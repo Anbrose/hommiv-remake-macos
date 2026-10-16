@@ -4,7 +4,18 @@ import Foundation
 public struct Combatant {
     public var name: String
     public var count: Int
-    public var hitPoints: Int
+    /// Hit points per creature without spells; `hitPoints` is the live value (0x5f57a0): Giant
+    /// Strength, Health and Prayer each add (hp + 2) >> 2 in that order, then Dragon Strength doubles.
+    public var baseHitPoints: Int
+    public var hitPoints: Int {
+        get {
+            var hp = baseHitPoints
+            for sp in [51, 57, 114] where effects.contains(sp) { hp += (hp + 2) >> 2 }
+            if effects.contains(33) { hp *= 2 }
+            return hp
+        }
+        set { baseHitPoints = newValue }
+    }
     public var damageLow: Int, damageHigh: Int
     public var attack: Int, defense: Int
     public var speed: Int
@@ -16,10 +27,28 @@ public struct Combatant {
     public var defending = false        // Defend doubles the defense until the next turn
     /// Morale from the army's sources (heroes4.exe keeps two, +0xae8 and +0xaec on the combat creature).
     public var morale = 0
+    /// Luck from the army and its items (the slot's luck +0x10, artifact luck +0xacc).
+    public var luck = 0
+    /// Standing on quicksand: melee attack x 0.75 (flag +0xa4e, 0x5f1cc0 / 0x5ee170).
+    public var onQuicksand = false
     /// The game's ability keywords ("first_strike", "no_retaliation", ...), from heroes4.exe's
     /// per-creature table (RuleTables.creatureAbilities).
     public var abilities: Set<String> = []
-    public func has(_ ability: String) -> Bool { abilities.contains(ability.lowercased()) }
+    /// An ability, its own or one a spell on it grants (has_ability 0x5edcc0); Bind Flyer takes flight away.
+    public func has(_ ability: String) -> Bool {
+        let k = ability.lowercased()
+        if k == "flying", effects.contains(7) { return false }
+        if abilities.contains(k) { return true }
+        guard !effects.isEmpty, let by = Combatant.grantedBy[k] else { return false }
+        return by.contains { effects.contains($0) }
+    }
+    /// The abilities spells grant (0x5edcc0's switch 0x5edf6c, the path finder for Flight 0x60d610,
+    /// the five wards for the x 2/3 damage 0x5ee50a).
+    static let grantedBy: [String: [Int]] = [
+        "chaos_protection": [117], "death_protection": [118], "life_protection": [119], "nature_protection": [120], "order_protection": [121],
+        "cold_resistance": [20], "fire_resistance": [40], "first_strike": [45, 143], "freeze": [49], "long_range": [115],
+        "magic_immunity": [3], "magic_mirror": [74], "mechanical": [18, 64], "undead": [2, 24], "flying": [46],
+    ]
     public var level = 0
     public var alignment = ""
     /// Spell effects the creature abilities put on a stack (they last the battle unless noted).
@@ -28,10 +57,14 @@ public struct Combatant {
     public var aged = false            // Aging: 25% less damage, defense -20%, speed and move halved
     public var bound = false           // Binding: half damage, cannot move
     /// Spells on the stack (spell ids, RuleTables.spells), each as heroes4.exe's stat getters apply it.
-    public var effects: Set<Int> = []
+    public var effects: Set<Int> = [] {
+        didSet { if count > 0, wounds >= hitPoints { wounds = hitPoints - 1 } }   // a buff gone leaves the top creature alive
+    }
     public func under(_ spell: Int) -> Bool { effects.contains(spell) }
     /// Base magic resistance in percent (creature: "50% Magic Resistance"; hero: the Resistance skill).
     public var magicResistance = 0
+    /// A creature caster's spell points (per stack, creature record +0x68) and Spell Power (+0x6c).
+    public var spellPoints = 0, spellPower = 0
 
     public var alive: Bool { count > 0 }
     public var totalHealth: Int { count * hitPoints - wounds }
@@ -40,9 +73,10 @@ public struct Combatant {
     public static var abilityKeywords: [String: String] = [:]
 
     public init(creature c: CreatureDef, count: Int) {
-        name = c.name; self.count = count; hitPoints = c.hitPoints; damageLow = c.damageLow; damageHigh = c.damageHigh
+        name = c.name; self.count = count; baseHitPoints = c.hitPoints; damageLow = c.damageLow; damageHigh = c.damageHigh
         attack = c.attack; defense = c.defense; speed = c.speed; experience = c.experience
         level = c.level; alignment = c.alignment
+        spellPoints = c.spellPoints; spellPower = c.spellPower
         if let r = c.shortHelp.range(of: #"(\d+)% Magic Resistance"#, options: .regularExpression) {
             magicResistance = Int(c.shortHelp[r].prefix { $0.isNumber }) ?? 0
         }
@@ -65,7 +99,7 @@ public struct Combatant {
         func sk(_ k: String) -> Int { max(0, min(5, skills[k] ?? 0)) }
         let melee = [10, 15, 20, 30, 40, 40], ranged = [7, 10, 15, 20, 30, 30], def = [10, 15, 20, 30, 40, 60]
         self.name = name; count = 1
-        hitPoints = 10 * level + 90
+        baseHitPoints = 10 * level + 90
         damageLow = (16 * level - 16) / 10 + 16; damageHigh = (24 * level - 24) / 10 + 24
         attack = melee[sk("combat")]; defense = def[sk("toughness")]; speed = 6; experience = 0; isHero = true
         rangedAttack = ranged[sk("archery")]
@@ -137,6 +171,7 @@ public enum QuickCombat {
         let points = moved * 100
         if !ranged, a.has("charging"), points > 500 { base = base * (points * 10 / 350 + 85) / 100 }
         if b.level == 4, a.has("giantslayer") || a.has(ranged ? "ranged_giantslayer" : "melee_giantslayer") { base *= 2 }
+        if b.level == 4, a.under(140) { base = base * 3 / 2 }   // Slayer: half again against 4th level creatures (0x5ee456)
         var attack = Float(ranged ? (a.rangedAttack ?? a.attack) : a.attack)
         if !ranged, a.shooter, !a.noMeleePenalty { attack *= 0.5 }
         if a.weakened { attack *= 0.75 }
@@ -145,6 +180,7 @@ public enum QuickCombat {
         // spells on the attacker (0x5ee170): Bloodlust +25% melee, Precision +25% ranged, Prayer
         // +25%; Weakness and Aging -25% (above), Unholy Song -20%, Choking Gas -15%
         if !ranged, a.under(13) { attack *= 1.25 }
+        if !ranged, a.onQuicksand { attack *= 0.75 }
         if ranged, a.under(115) { attack *= 1.25 }
         if a.under(114) { attack *= 1.25 }
         if a.under(185), !a.weakened { attack *= 0.75 }
@@ -164,7 +200,7 @@ public enum QuickCombat {
         if b.aged { defense *= 0.8 }
         let ratio = min(20, max(0.05, attack / defense))   // clamped to 0.05...20 (0x650e30)
         var d = Int((Float(base) * ratio).rounded())
-        let ward = ["life": "life_protection", "death": "death_protection", "chaos": "chaos_protection"][a.alignment]
+        let ward = ["life": "life_protection", "death": "death_protection", "chaos": "chaos_protection", "order": "order_protection", "nature": "nature_protection"][a.alignment]
         if let w = ward, b.has(w) { d = d * 100 / 150 }
         if a.has("fire_attack") || a.has("breath_attack") || a.has("arc_breath_attack") || (ranged && a.has("large_area_effect")), b.has("fire_resistance") { d >>= 1 }
         if a.has("cold_attack"), b.has("cold_resistance") { d >>= 1 }

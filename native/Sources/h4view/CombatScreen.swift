@@ -10,7 +10,16 @@ final class CombatScreen {
     let frame: LayerFile
     var fields: [String: Battlefield] = [:]
     var actors: [String: CombatActor] = [:]
-    var battle: Battle?
+    var battle: Battle? {
+        // the battle knows when each melee swing lands, to tell whose blow comes first (Battle.together);
+        // the facing is the one toward the other stack, as the swing will play it
+        didSet {
+            battle?.meleeHitTime = { [weak self] u in
+                guard let self = self else { return 0 }
+                return self.hitTime(u.actor, "melee", u.facing) * Double(max(1, self.animationSpeed)) / 100
+            }
+        }
+    }
     var field: Battlefield?
     var fieldName = ""
     /// Who fights: the hero and the monster index, to apply the result on the map.

@@ -74,7 +74,7 @@ extension CombatScreen {
             beginMove(id, path: path, start: start, flying: flying, now: now)
         case .melee, .shoot:
             beginSwings(e, now: now)
-        case .together, .newRound, .castAt:
+        case .together, .newRound, .castAt, .blocked:
             break
         case .die(let id):
             pendingDeaths.remove(id); dying.insert(id)
@@ -251,6 +251,12 @@ extension CombatScreen {
                 guard a == current.attacker, ranged == current.ranged, !current.strikes.contains(where: { $0.target == t }) else { break parse }
                 queue.removeFirst()
                 if let s = swing(e) { current.strikes += s.strikes }
+            case .blocked(let id):
+                // the blow just made was blocked: the struck stack blocks instead of flinching
+                guard let k = current.strikes.lastIndex(where: { $0.target == id }) else { break parse }
+                queue.removeFirst()
+                current.strikes[k].blocked = true
+                current.strikes[k].blockMessage = current.ranged
             case .effect(let id, let name, let d, let k, let l):
                 // the aftermath (0x553440) on the stacks of this exchange
                 let involved = Set(swings.flatMap { $0.strikes.map { $0.target } + [$0.attacker] } + current.strikes.map { $0.target } + [current.attacker])

@@ -28,6 +28,10 @@ public final class Battle {
         /// here lasts the battle.
         public var durations: [Int: Int] = [:]
         public var stunned: Int { get { durations[154] ?? 0 } set { durations[154] = newValue > 0 ? newValue : nil } }
+        /// The block roll of the last blow aimed at it (creature +0xa24, rolled by 0x5f3f20): a blocked blow
+        /// does nothing. Only the stack about to be struck is rolled, so an attacker struck back keeps the
+        /// result of the last roll made on it, as the exe does.
+        public var blocking = false
         public var frozen: Int { get { durations[186] ?? 0 } set { durations[186] = newValue > 0 ? newValue : nil } }
         public var blind: Int { get { durations[11] ?? 0 } set { durations[11] = newValue > 0 ? newValue : nil } }
         /// What acts at the start of each of its turns: Poison's and Plague's stored damage,
@@ -94,6 +98,8 @@ public final class Battle {
         case wait(unit: Int)
         /// The next blow starts together with the one before it (a simultaneous melee exchange).
         case together
+        /// The blow just made was blocked (0x5f3f20): the stack plays block, the Block window and sound.
+        case blocked(unit: Int)
         case newRound(Int)
         case finished(attackerWon: Bool)
         /// A spell cast by `unit` (its cast animation and the spell's sound), then per target:
@@ -687,6 +693,13 @@ public final class Battle {
         }
         dmg = luckyDamage(b, dmg)
         dmg = min(dmg, before)
+        // a blocked blow does no damage (0x575fe0: 0 when the target's block flag is set)
+        if b.blocking {
+            events.append(ranged ? .shoot(unit: a.id, target: b.id, damage: 0, killed: 0, left: b.stats.count)
+                                 : .melee(unit: a.id, target: b.id, damage: 0, killed: 0, left: b.stats.count))
+            events.append(.blocked(unit: b.id))
+            return 0
+        }
         let killed = wound(b, dmg, by: a)
         events.append(ranged ? .shoot(unit: a.id, target: b.id, damage: dmg, killed: killed, left: b.stats.count)
                              : .melee(unit: a.id, target: b.id, damage: dmg, killed: killed, left: b.stats.count))
@@ -756,22 +769,47 @@ public final class Battle {
     }
     /// The on-hit effects held back while both blows of a simultaneous exchange are rolled.
     var heldAftermath: [() -> Void]? = nil
-    /// Both sides strike at once (0x56ef40 / 0x5695b0 -> 0x568ee0): the target's blow is rolled from the stack
-    /// it had before the first one lands, even when that kills it; the deaths and the aftermath of both come after.
-    func together(_ first: () -> Void, _ second: () -> Void, target t: Unit) {
-        let before = t.stats
-        let mark = events.count
+    /// When a stack's melee blow lands after its swing starts, in s at 100% (the screen sets it from the
+    /// combat_actor: hit frame x frame period); nil: every swing lands at the same moment.
+    public var meleeHitTime: ((Unit) -> Double)? = nil
+    /// The block chance of a stack (creature +0xa28): 30 with the Block ability (0x5eb92b).
+    func blockChance(_ u: Unit) -> Int { u.stats.has("block") ? 30 : 0 }
+    /// The block roll of the stack about to be struck (0x5f3f20): never while stunned or frozen.
+    func rollBlock(_ u: Unit) {
+        u.blocking = false
+        let c = blockChance(u)
+        guard c > 0, u.stunned == 0, u.frozen == 0 else { return }
+        if rng.next() % 100 < c { u.blocking = true }
+    }
+    /// Both sides strike at once (0x56ef40 / 0x5695b0 -> 0x568ee0): each blow is rolled from the stacks as
+    /// they were before either lands, the deaths and the aftermath of both come after. In melee a stack
+    /// wiped out before its own swing reaches its hit frame lands nothing: its die (0x5f53c0) resets its
+    /// pose at once (0x7dcc40 -> 0x564480) and the cut swing ends without its hit (0x7dd1b5); on equal
+    /// times the attacker's swing, started first, lands first. A shot always leaves: the reaction to a
+    /// missile waits for the struck shooter's own animation (t_delayed_missile_impact).
+    func together(_ u: Unit, _ t: Unit, ranged: Bool, _ blowU: () -> Void, _ blowT: () -> Void) {
+        let hu = ranged ? 0 : meleeHitTime?(u) ?? 0, ht = ranged ? 0 : meleeHitTime?(t) ?? 0
+        let tFirst = ht < hu
+        let (s1, v1) = tFirst ? (t, u) : (u, t), s2 = v1
         heldAftermath = []
-        first()
-        let after = t.stats
+        var made: [Int: [Event]] = [:]
+        let pre = v1.stats
+        var mark = events.count
+        if tFirst { blowT() } else { blowU() }
+        made[s1.id] = Array(events[mark...]); events.removeLast(events.count - mark)
+        if !ranged, !v1.alive {
+            made[s2.id] = [.melee(unit: s2.id, target: s1.id, damage: 0, killed: 0, left: s1.stats.count)]
+        } else {
+            let after = v1.stats
+            v1.stats.count = pre.count; v1.stats.wounds = pre.wounds
+            mark = events.count
+            if tFirst { blowU() } else { blowT() }
+            made[s2.id] = Array(events[mark...]); events.removeLast(events.count - mark)
+            v1.stats.count = after.count; v1.stats.wounds = after.wounds
+        }
         let isDeath: (Event) -> Bool = { if case .die = $0 { return true }; return false }
-        let deaths = events[mark...].filter(isDeath)
-        events = Array(events[..<mark]) + events[mark...].filter { !isDeath($0) }
-        t.stats.count = before.count; t.stats.wounds = before.wounds
-        events.append(.together)
-        second()
-        t.stats.count = after.count; t.stats.wounds = after.wounds
-        events += deaths
+        let all = made[u.id]! + made[t.id]!
+        events += made[u.id]!.filter { !isDeath($0) } + [.together] + made[t.id]!.filter { !isDeath($0) } + all.filter(isDeath)
         let held = heldAftermath ?? []
         heldAftermath = nil
         for f in held { f() }
@@ -1125,20 +1163,24 @@ public final class Battle {
     /// other answers with what is left.
     /// A First Strike defender strikes first only when the attacker moved to attack (0x56f0b5: the move
     /// points of the move-and-attack, bf+0x314, at least 4); otherwise the two strike together.
+    /// The target rolls its block first (0x56efb3); a block on either side (the attacker's from the last
+    /// roll made on it) puts the attacker first, answered after (0x56f08d).
     func meleeExchange(_ u: Unit, _ t: Unit, moved: Bool = true) {
         let retaliates = canRetaliate(t, against: u)
-        if retaliates, strikesFirst(t, over: u), moved {
+        rollBlock(t)
+        let aFirst = strikesFirst(u, over: t) || u.blocking || t.blocking
+        if retaliates, !aFirst, strikesFirst(t, over: u), moved {
             t.retaliated = true
             blow(t, u)
-            if u.alive { blow(u, t) }
-        } else if retaliates, !strikesFirst(u, over: t) {
+            if u.alive { rollBlock(t); blow(u, t) }
+        } else if retaliates, !aFirst {
             t.retaliated = true
-            together({ blow(u, t) }, { blow(t, u) }, target: t)
+            together(u, t, ranged: false, { blow(u, t) }, { blow(t, u) })
         } else {
             blow(u, t)
             if retaliates, canRetaliate(t, against: u) { t.retaliated = true; blow(t, u) }
         }
-        for _ in 1..<strikes(u, ranged: false) where u.alive && t.alive { blow(u, t) }
+        for _ in 1..<strikes(u, ranged: false) where u.alive && t.alive { rollBlock(t); blow(u, t) }
         checkEnd()
     }
 
@@ -1149,6 +1191,8 @@ public final class Battle {
     func spendShot(_ u: Unit) { if !u.stats.has("unlimited_shots") { u.shots -= 1 } }
     func volley(_ u: Unit, _ t: Unit) {
         let extra = extraTargets(u, t, ranged: true)
+        // the shot's target rolls its block as the shot starts (0x56979e, 0x568d7a)
+        rollBlock(t)
         spendShot(u); hit(u, t, ranged: true)
         for e in extra where e.alive { hit(u, e, ranged: true, secondary: true) }
     }
@@ -1169,7 +1213,7 @@ public final class Battle {
             if t.alive, !t.disabled, canShoot(t) { t.retaliated = true; volley(t, u) }
         } else if back {
             t.retaliated = true
-            together({ volley(u, t) }, { volley(t, u) }, target: t)
+            together(u, t, ranged: true, { volley(u, t) }, { volley(t, u) })
         } else {
             volley(u, t)
         }

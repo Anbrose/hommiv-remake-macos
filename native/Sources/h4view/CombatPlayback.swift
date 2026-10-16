@@ -108,17 +108,15 @@ extension CombatScreen {
         return d
     }
     /// A stack starts dying in the middle of its own swing (0x7dcd16 effect 0xba -> 0x7dcf60): the swing
-    /// stops at once, its blow, if it has not landed, lands on the swing's next tick, and it no longer holds.
+    /// stops at once, without its hit if that has not come, and no longer holds.
     func cutSwing(_ id: Int, at t: Date) {
         if let e = swingEnds.removeValue(forKey: id), unitState[id]?.token == e.token {
             timers.removeAll { $0.seq == e.seq }
             unitState[id] = nil
         }
-        if let p = pendingHits.removeValue(forKey: id) {
-            timers.removeAll { $0.seq == p.seq }
-            let k = (t.timeIntervalSince(p.since) / p.period).rounded(.down) + 1
-            after(p.since.addingTimeInterval(k * p.period), p.fn)
-        }
+        // the cut swing's blow does not land (0x7dd1b5 calls only the end handler); the battle has
+        // already made it a blow of nothing (Battle.together)
+        if let p = pendingHits.removeValue(forKey: id) { timers.removeAll { $0.seq == p.seq } }
     }
     /// A stack's animation ended: what waited for it runs now (t_delayed_missile_impact,
     /// t_delayed_spell_animation).
@@ -147,6 +145,9 @@ extension CombatScreen {
     struct Strike {
         var attacker: Int?, target: Int, damage: Int, killed: Int, left: Int
         var dies = false
+        /// The blow was blocked (0x5f62e0 -> state 0); `blockMessage`: the panel says Block (only the missile
+        /// reaction posts combat_action.block, 0x56a92a).
+        var blocked = false, blockMessage = false
     }
     enum ReactionRule {
         /// A blow or a missile (0x56a710): survivors flinch.
@@ -165,6 +166,17 @@ extension CombatScreen {
         let u = b.unit(s.target)
         shownCount[s.target] = s.left
         if s.damage > 0 || s.killed > 0 { blowMessages(damage: s.damage, killed: s.killed, unit: u, since: t) }
+        if s.blocked {
+            // block (0x5f6480): turned toward the striker, the Block window (0xbd, animation.spell.block with
+            // sound.spell.block) and the block state with its sound; a stack with no block sequence flinches
+            if s.blockMessage { postAction(s.target, "combat_action.block", "Block", now: t) }
+            if let a = s.attacker, let bb = battle { let ac = shownCentre(bb.unit(a)), tc = shownCentre(u); if ac != tc { u.facing = Battle.facing(dx: ac.0 - tc.0, dy: ac.1 - tc.1) } }
+            if actor(u.actor)?.sequenceEntry(state: "block", facing: u.facing) != nil {
+                showEffect("block", on: s.target, at: t, sound: 189)
+                play(s.target, "block", at: t)
+            } else if !busy(s.target) { play(s.target, "flinch", at: t) }
+            return
+        }
         if s.dies {
             let fall: (Date) -> Void = { [weak self] t2 in
                 guard let self = self else { return }

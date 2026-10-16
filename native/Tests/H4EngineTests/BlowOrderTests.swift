@@ -29,6 +29,7 @@ final class BlowOrderTests: XCTestCase {
             case .together: return "+"
             case .die(let u): return "x\(names[u]!)"
             case .effect(let u, let n, _, _, _): return "fx:\(n)@\(names[u]!)"
+            case .blocked(let u): return "block\(names[u]!)"
             default: return nil
             }
         }
@@ -84,6 +85,49 @@ final class BlowOrderTests: XCTestCase {
             let (b, u, t) = battle(fighter("crossbowman", 5, shots: 10, fast: true), fighter("elf", 5, shots: 10, fast: false), from: (20, 50))
             XCTAssertTrue(b.shoot(t.id))
             XCTAssertEqual(order(b, [u.id: "A", t.id: "B"]), ["A)B", "+", "B)A"])
+        }
+    }
+
+    /// Block (0x5f3f20 / 0x575fe0): the stack about to be struck blocks 30% of blows with the ability, a
+    /// blocked blow does nothing, and a block puts the attacker first, answered after (0x56f08d).
+    func testBlock() {
+        var blocks = 0, trials = 0
+        for seed in 1...200 {
+            let field = Battlefield(terrain: 1, variant: 0, kinds: [], frequency: [:], adjacency: [:], seed: 1)
+            let b = Battle(field: field, attackers: [fighter("squire", 5, fast: true)], defenders: [fighter("minotaur", 5, fast: false)], seed: seed)
+            _ = b.takeEvents()
+            let u = b.units.first { $0.side == 0 }!, t = b.units.first { $0.side == 1 }!
+            t.x = 50; t.y = 50; u.x = 48; u.y = 50
+            let health = t.stats.totalHealth
+            XCTAssertTrue(b.attack(t.id))
+            let o = order(b, [u.id: "A", t.id: "B"])
+            trials += 1
+            if o.contains("blockB") {
+                blocks += 1
+                XCTAssertEqual(Array(o.prefix(3)), ["A>B", "blockB", "B>A"], "\(o)")
+                XCTAssertEqual(t.stats.totalHealth, health)
+            } else {
+                XCTAssertEqual(Array(o.prefix(3)), ["A>B", "+", "B>A"], "\(o)")
+            }
+        }
+        XCTAssertGreaterThan(blocks, trials / 5); XCTAssertLessThan(blocks, trials * 2 / 5)
+        // no block chance without the ability
+        let (b, u, t) = battle(fighter("squire", 5, fast: true), fighter("skeleton", 5, fast: false), from: (48, 50))
+        for _ in 0..<50 { b.rollBlock(t); XCTAssertFalse(t.blocking) }
+        _ = u
+    }
+
+    /// In a melee exchange a stack wiped out before its own swing reaches its hit frame lands nothing
+    /// (its die resets its pose at once, 0x564480, and the cut swing ends without its hit, 0x7dd1b5).
+    func testWipedOutBeforeItsHitLandsNothing() {
+        for (peasantFirst, struck) in [(false, false), (true, true)] {
+            let (b, u, t) = battle(fighter("squire", 10, hp: 100, dmg: 100, fast: true), fighter("peasant", 3, hp: 1, dmg: 10, fast: false), from: (48, 50))
+            b.meleeHitTime = { $0.keyword == "peasant" ? (peasantFirst ? 0.2 : 0.5) : 0.4 }
+            let health = u.stats.totalHealth
+            XCTAssertTrue(b.attack(t.id))
+            XCTAssertFalse(t.alive)
+            XCTAssertEqual(order(b, [u.id: "A", t.id: "B"]).prefix(4), ["A>B", "+", "B>A", "xB"])
+            XCTAssertEqual(u.stats.totalHealth < health, struck)
         }
     }
 }

@@ -111,6 +111,9 @@ final class BattleAbilityTests: XCTestCase {
         let b = Battle(field: field, attackers: [a], defenders: [d], seed: 5)
         _ = b.takeEvents()
         let u = b.units.first { $0.side == 0 }!, t = b.units.first { $0.side == 1 }!
+        // the peasants' swing lands before the squires' (heroes4.exe: a stack wiped out before its own hit
+        // frame lands nothing, 0x7dd1b5)
+        b.meleeHitTime = { $0.keyword == "peasant" ? 0.2 : 0.5 }
         XCTAssertTrue(b.attack(t.id))
         XCTAssertFalse(t.alive)
         XCTAssertLessThan(u.stats.totalHealth, 500)      // the peasants still struck back

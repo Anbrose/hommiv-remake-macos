@@ -22,12 +22,36 @@ final class CombatScreen {
     var monsterIndex = 0
     var placed: MapScene.Placed?
 
-    // animation state
-    struct Anim { var event: Battle.Event; var started: Date; var duration: Double }
+    // animation state (CombatPlayback.swift / CombatDirector.swift)
     var queue: [Battle.Event] = []
-    var playing: Anim?
+    /// A fixed time to show (the snapshot hooks step the playback on their own clock).
+    var clock: Date?
+    /// Timers of the animations in flight; those that hold keep the next action waiting.
+    var timers: [Timer] = []
+    var timerSeq = 0
+    var missiles: [Missile] = []
+    /// Reactions and fades waiting for a stack's running animation to end.
+    var waitingOnUnit: [Int: [(Date) -> Void]] = [:]
+    /// The one-shot effect windows playing, the stacks that have one (+0xbfc) and what waits for them.
+    var windows: [EffectWindow] = []
+    var windowSeq = 0
+    var windowBusy: Set<Int> = []
+    var windowWaiting: [Int: [(Date) -> Void]] = [:]
+    /// Alpha fades, alpha levels other than 15, colour tints, slides, actors on the field.
+    var fades: [Int: Fade] = [:]
+    var alphaLevel: [Int: Int] = [:]
+    var tints: [Int: Tint] = [:]
+    var slides: [Int: Slide] = [:]
+    var fieldActors: [FieldActor] = []
+    var fieldSeq = 0
+    var stateToken = 0
+    var frameCounts: [String: Int] = [:]
+    /// Moves in progress.
+    var moving: [Int: MoveAnim] = [:]
+    /// Stacks not on the field yet (a summon before its spell is released).
+    var hidden: Set<Int> = []
     var unitPos: [Int: (Float, Float)] = [:]     // visual lattice positions while moving
-    var unitState: [Int: (state: String, since: Date, once: Bool)] = [:]
+    var unitState: [Int: UnitAnim] = [:]
     var dead: Set<Int> = []
     var result: (won: Bool, rounds: Int)?
     var showResults = false
@@ -74,13 +98,7 @@ final class CombatScreen {
         floatOver(u, lines, since: since)
     }
     /// The actor's height (combat_actor byte 3: squire 96, titan 140), scene px.
-    var actorHeights: [String: Float] = [:]
-    func actorHeight(_ name: String) -> Float {
-        if let h = actorHeights[name] { return h }
-        let h = payload("combat_actor.\(name).h4d").map { $0.count > 3 ? Float($0[$0.startIndex + 3]) : 96 } ?? 96
-        actorHeights[name] = h
-        return h
-    }
+    func actorHeight(_ name: String) -> Float { Float(actor(name)?.height ?? 96) }
 
     /// The panel's action message (0x5d47c0 / 0x6065b0): one line at a time about one stack, shown
     /// for ms x 100 / animation speed (Defend and Wait post 1500 ms); while it shows, the panel's
@@ -122,8 +140,6 @@ final class CombatScreen {
     /// The battle was ended by surrender (the player's) and what it cost.
     var surrendered = false
 
-    /// Spell-style effects playing over a unit (morale shows "sorrow" / "spiritual fervor").
-    var effects: [(name: String, unit: Int, since: Date)] = []
     /// Idle creatures stand in their "wait" loop; the battle's idle timer (heroes4.exe 0x563870)
     /// makes one waiting creature at random play "fidget", then waits the fidget's length plus
     /// 1000 + rand % 2001 ms (500 ms when no creature is waiting). Moving the pointer onto a
@@ -142,52 +158,51 @@ final class CombatScreen {
     var sound: GameSound?
     var idleRandom = GameRandom(seed: 0x563870)
     var strings: [String: String] = [:]
-    var effectSprites: [String: Sprite] = [:]
-    var effectInfo: [String: (ms: Int, order: [Int], anchor: (Int, Int))] = [:]
-    func effectSprite(_ name: String) -> Sprite? {
-        if effectSprites[name] == nil, let d = payload("animation.spell.\(name).h4d") {
-            effectSprites[name] = try? Sprite(data: d)
-            effectInfo[name] = CombatScreen.animationTrailer(d)
-        }
-        return effectSprites[name]
+    /// An animation.spell file (spell_visuals_spec 2.1): u16 image count, the images, then the trailer
+    /// u16 version, u16 frame time (ms at 100 % speed), u32 n, n x u32 image order (0: every image in
+    /// turn), u8 use anchor x, u8 use anchor y, i32 anchor x, i32 anchor y (canvas coordinates).
+    struct EffectInfo {
+        let sprite: Sprite
+        let frameTime: Int
+        let order: [Int]
+        let useX: Bool, useY: Bool
+        let anchor: (Int, Int)
     }
-    /// An animation file's trailer (animation.*): u16 2, u16 ms per frame, u32 n, n x u32 frame
-    /// order, u8, u8, i32 x, i32 y -- the point of the frame placed on the target.
-    static func animationTrailer(_ d: Data) -> (ms: Int, order: [Int], anchor: (Int, Int))? {
+    var effectFiles: [String: EffectInfo?] = [:]
+    /// animation.spell.<name> by the keyword only, whatever its case, aliases followed (no fallback).
+    func effectInfo(_ name: String) -> EffectInfo? {
+        let key = name.lowercased()
+        if let e = effectFiles[key] { return e }
+        var info: EffectInfo? = nil
+        if let d = payload("animation.spell.\(name).h4d"), let sp = try? Sprite(data: d), !sp.images.isEmpty {
+            info = CombatScreen.effectTrailer(d, sprite: sp)
+        }
+        effectFiles[key] = .some(info)
+        return info
+    }
+    static func effectTrailer(_ d: Data, sprite sp: Sprite) -> EffectInfo {
         let b = [UInt8](d)
-        func u16(_ o: Int) -> Int { Int(b[o]) | Int(b[o + 1]) << 8 }
-        func i32(_ o: Int) -> Int { Int(Int32(bitPattern: UInt32(b[o]) | UInt32(b[o + 1]) << 8 | UInt32(b[o + 2]) << 16 | UInt32(b[o + 3]) << 24)) }
-        for n in 1...400 {
-            let p = b.count - 10 - 4 * n - 8
-            guard p >= 0 else { break }
-            if u16(p) == 2, i32(p + 4) == n {
-                let order = (0..<n).map { i32(p + 8 + 4 * $0) }
-                guard order.allSatisfy({ $0 >= 0 && $0 < 400 }) else { continue }
-                return (u16(p + 2), order, (i32(b.count - 8), i32(b.count - 4)))
-            }
+        var p = sp.trailerOffset
+        func u8() -> Int { guard p < b.count else { return 0 }; p += 1; return Int(b[p - 1]) }
+        func u16() -> Int { let v = u8(); return v | u8() << 8 }
+        func i32() -> Int { let v = UInt32(u16()) | UInt32(u16()) << 16; return Int(Int32(bitPattern: v)) }
+        let version = u16()
+        var ms = 0, order: [Int] = [], fx = false, fy = false, ax = 0, ay = 0
+        if version <= 10 {
+            ms = u16()
+            let n = i32()
+            if n > 0, n < 4096 { order = (0..<n).map { _ in i32() } }
+            if version >= 2 { fx = u8() != 0; fy = u8() != 0; ax = i32(); ay = i32() }
         }
-        return nil
+        let count = sp.images.count
+        order = order.filter { $0 >= 0 && $0 < count }
+        if order.isEmpty { order = Array(0..<count) }
+        return EffectInfo(sprite: sp, frameTime: ms, order: order, useX: fx, useY: fy, anchor: (ax, ay))
     }
-    /// How long an effect runs: its frames at the file's pace (ms per frame).
-    func effectDuration(_ name: String) -> Double {
-        guard let s = effectSprite(name) else { return 1 }
-        if let t = effectInfo[name], t.ms > 0 { return Double(t.order.count * t.ms) / 1000 }
-        return Double(s.frames.count) / 12
-    }
-
-    /// The spell's animation (animation.spell.<keyword>, the archive's aliases included), if any.
-    func spellAnimation(_ s: SpellDef) -> String? {
-        for n in [s.keyword, s.name.lowercased(), s.name] where effectSprite(n) != nil { return n }
-        return nil
-    }
-    /// sound.spell.<keyword> (or the name as the sound files spell it).
-    @discardableResult
-    func playSpellSound(_ s: SpellDef) -> Bool {
-        for n in [s.keyword, s.name.lowercased(), s.keyword.replacingOccurrences(of: "fireball", with: "fire ball")] where sound?.has("spell.\(n)") == true {
-            sound?.play("spell.\(n)"); return true
-        }
-        return false
-    }
+    /// How long an effect window runs (0x51ef50): every step of its order at frame time x 100 / animation speed ms.
+    func effectDuration(_ e: EffectInfo) -> Double { Double(e.order.count * effectStep(e)) / 1000 }
+    /// ms a step of an effect shows (integer division, as 0x5754b0 passes it).
+    func effectStep(_ e: EffectInfo, speed: Int? = nil) -> Int { max(1, e.frameTime * 100 / max(1, speed ?? animationSpeed)) }
 
     static let sceneScale: Float = 0.75
     /// Cells walked per second (the original crosses a diamond in about a fifth of a second).
@@ -306,7 +321,7 @@ final class CombatScreen {
         var pieces = (1...6).map { "combat.music.\($0)" }
         let r = seed % 6; pieces = Array(pieces[r...] + pieces[..<r])
         sound?.playMusic(first: "combat.start", then: pieces)
-        queue = []; playing = nil; unitPos = [:]; unitState = [:]; resultShownAt = nil; dead = []; dying = []; pendingDeaths = []; hits = []; pendingCount = []; shownPos = [:]; shownCount = [:]; result = nil; showResults = false; floaters = []; effects = []; actionMessage = nil; attackMode = [:]; autoCombat = false; surrendered = false; lastBlow = nil
+        resetPlayback(); resultShownAt = nil; result = nil; showResults = false; floaters = []; actionMessage = nil; attackMode = [:]; autoCombat = false; surrendered = false
         pump()
     }
 
@@ -344,7 +359,7 @@ final class CombatScreen {
         var pieces = (1...6).map { "combat.music.\($0)" }
         let r = seed % 6; pieces = Array(pieces[r...] + pieces[..<r])
         sound?.playMusic(first: "combat.start", then: pieces)
-        queue = []; playing = nil; unitPos = [:]; unitState = [:]; resultShownAt = nil; dead = []; dying = []; pendingDeaths = []; hits = []; pendingCount = []; shownPos = [:]; shownCount = [:]; result = nil; showResults = false; floaters = []; effects = []; actionMessage = nil; attackMode = [:]; autoCombat = false; surrendered = false; lastBlow = nil
+        resetPlayback(); resultShownAt = nil; result = nil; showResults = false; floaters = []; actionMessage = nil; attackMode = [:]; autoCombat = false; surrendered = false
         pump()
     }
 
@@ -387,286 +402,46 @@ final class CombatScreen {
         var pieces = (1...6).map { "combat.music.\($0)" }
         let r = seed % 6; pieces = Array(pieces[r...] + pieces[..<r])
         sound?.playMusic(first: "combat.start", then: pieces)
-        queue = []; playing = nil; unitPos = [:]; unitState = [:]; resultShownAt = nil; dead = []; dying = []; pendingDeaths = []; hits = []; pendingCount = []; shownPos = [:]; shownCount = [:]; result = nil; showResults = false; floaters = []; effects = []; actionMessage = nil; attackMode = [:]; autoCombat = false; surrendered = false; lastBlow = nil
+        resetPlayback(); resultShownAt = nil; result = nil; showResults = false; floaters = []; actionMessage = nil; attackMode = [:]; autoCombat = false; surrendered = false
         pump()
+    }
+
+    /// A test battle (the snapshot hooks): the hero's army against stacks "creature:n,...", on grass.
+    func startTest(game g: GameState, hero h: Hero, defenders spec: [(String, Int)], seed: Int = 1) {
+        guard let t = g.tables else { return }
+        hero = h; enemy = nil; placed = nil; siegeTown = nil
+        fieldName = "test.\(seed)"
+        field = generatedField(terrain: 1, variant: 0, seed: seed, tables: t)
+        Combatant.abilityKeywords = t.abilityKeywords
+        guard let f = field else { return }
+        strings = t.strings
+        var defenders: [Battle.Fighter] = []
+        for (k, (name, n)) in spec.enumerated() {
+            guard let cd = t.creature(name) else { continue }
+            defenders.append(Battle.Fighter(stats: Combatant(creature: cd, count: n), keyword: cd.keyword, actor: actorName(cd), size: actor(actorName(cd))?.size ?? 4, move: cd.move, shots: cd.shots, slot: k))
+        }
+        battle = Battle(field: f, attackers: armyFighters(game: g, h, tables: t), defenders: defenders, seed: seed)
+        resetPlayback(); resultShownAt = nil; result = nil; showResults = false; floaters = []; actionMessage = nil; attackMode = [:]; autoCombat = false; surrendered = false
     }
 
     /// Pull new events from the battle and let the defender's side act on its own.
     func pump() {
         guard let b = battle else { return }
         take(b.takeEvents())
-        if playing == nil, queue.isEmpty, b.finished == nil, let u = b.current, u.side == 1 || u.hypnotized || autoCombat { b.autoAct(); take(b.takeEvents()) }
+        if holds == 0, queue.isEmpty, b.finished == nil, let u = b.current, u.side == 1 || u.hypnotized || autoCombat { b.autoAct(); take(b.takeEvents()) }
     }
-    /// Queue new events. The battle has already moved the units, so a unit about to move is held
-    /// where it starts until its move plays (otherwise it shows at its end for a frame and jumps back).
-    func take(_ events: [Battle.Event]) {
-        for e in events {
-            if case .move(let id, _, let from, _) = e, unitPos[id] == nil, shownPos[id] == nil { shownPos[id] = (Float(from.0), Float(from.1)) }
-            if case .die(let id) = e { pendingDeaths.insert(id) }
-            // a stack keeps the count it had until the blow or spell that cuts it lands on screen
-            switch e {
-            case .melee(_, let t, _, let k, let l), .shoot(_, let t, _, let k, let l), .effect(let t, _, _, let k, let l), .spellHit(let t, _, _, let k, let l):
-                if shownCount[t] == nil { shownCount[t] = l + k }
-            default: break
-            }
-            // the unit whose action this is stays the active one until it has played out
-            if acting == nil {
-                switch e {
-                case .move(let id, _, _, _), .melee(let id, _, _, _, _), .shoot(let id, _, _, _, _), .cast(let id, _, _), .gateHit(let id, _, _), .defend(let id), .wait(let id), .morale(let id, _):
-                    acting = id
-                default: break
-                }
-            }
-        }
-        queue += events
+    /// Forget everything playing (a new battle).
+    func resetPlayback() {
+        queue = []; timers = []; missiles = []; waitingOnUnit = [:]; windows = []; windowBusy = []; windowWaiting = [:]
+        fades = [:]; alphaLevel = [:]; tints = [:]; slides = [:]; fieldActors = []; moving = [:]; hidden = []
+        unitPos = [:]; unitState = [:]; dead = []; dying = []; pendingDeaths = []; shownPos = [:]; shownCount = [:]; lastBlow = nil; acting = nil
     }
 
-    /// Advance the animation queue.
-    func update(now: Date) {
-        guard let b = battle else { return }
-        landHits(now)
-        if let p = playing {
-            if now.timeIntervalSince(p.started) >= p.duration {
-                finish(p.event)
-                playing = nil
-            } else if case .move(let id, let path, let start, _) = p.event, teleporting.contains(id), let m = moves[id], let end = path.last {
-                let first = now.timeIntervalSince(p.started) < m.preTime
-                unitPos[id] = first ? (Float(start.0), Float(start.1)) : (Float(end.0), Float(end.1))
-                let state = first ? "prewalk" : "postwalk"
-                if unitState[id]?.state != state {
-                    unitState[id] = (state, now, true)
-                    if !first { sound?.play("miscellaneous.teleport_in") }
-                }
-            } else if case .move(let id, let path, let start, let flying) = p.event, !path.isEmpty, let m = moves[id] {
-                // prewalk (a flyer's take-off), whole loops of walk, postwalk, each covering its
-                // share of the path's length (0x7dec80)
-                let elapsed = now.timeIntervalSince(p.started)
-                let state: String, d: Float
-                if elapsed < m.preTime {
-                    state = "prewalk"; d = m.preDist * Float(elapsed / max(0.001, m.preTime))
-                } else if elapsed < m.preTime + m.walkTime {
-                    state = "walk"; d = m.preDist + (m.length - m.preDist - m.postDist) * Float((elapsed - m.preTime) / max(0.001, m.walkTime))
-                } else {
-                    state = "postwalk"; d = (m.length - m.postDist) + m.postDist * Float(min(1, (elapsed - m.preTime - m.walkTime) / max(0.001, m.postTime)))
-                }
-                // a flight is one straight line from where it took off to where it lands
-                let pts = flying ? [start, path[path.count - 1]] : [start] + path
-                var geo: Float = 0
-                for k in 1..<pts.count { let dx = Float(pts[k].0 - pts[k - 1].0), dy = Float(pts[k].1 - pts[k - 1].1); geo += (dx * dx + dy * dy).squareRoot() }
-                let (pos, dir) = CombatScreen.along(pts, m.length > 0 ? d / m.length * geo : geo)
-                unitPos[id] = pos
-                if unitState[id]?.state != state { unitState[id] = (state, now, state != "walk") }
-                if dir.0 != 0 || dir.1 != 0 { b.unit(id).facing = Battle.facing(dx: dir.0, dy: dir.1) }
-            }
-            return
-        }
-        while playing == nil, !queue.isEmpty {
-            let e = queue.removeFirst()
-            begin(e, now: now)
-        }
-        if playing == nil { pump() }
-        if playing == nil, queue.isEmpty { shownPos.removeAll(); shownCount.removeAll(); acting = nil; lastBlow = nil }
-        landHits(now)
-        if fidgeting == nil, now >= nextFidget {
-            let waiting = b.units.filter { $0.alive && unitState[$0.id] == nil && unitPos[$0.id] == nil && !$0.disabled }
-            if waiting.isEmpty { nextFidget = now.addingTimeInterval(0.5) }
-            else { fidget(waiting[idleRandom.next() % waiting.count].id, now: now); fidgeting = unitState.first { $0.value.state == "fidget" }?.key }
-        }
-        floaters.removeAll { now.timeIntervalSince($0.since) > floaterLife }
-        if let m = actionMessage, now >= m.until { actionMessage = nil }
-        effects.removeAll { now.timeIntervalSince($0.since) > effectDuration($0.name) }
-    }
-
-    func begin(_ e: Battle.Event, now: Date) {
-        guard let b = battle else { return }
-        switch e {
-        case .move(let id, let path, let start, _) where b.unit(id).stats.has("teleport") && !path.isEmpty:
-            // a teleporter (the devil) goes up in flames where it stands (its prewalk) and comes out of
-            // them at the end (postwalk), with no travel in between
-            let u = b.unit(id)
-            let end = path[path.count - 1]
-            let face = Battle.facing(dx: Float(end.0 - start.0), dy: Float(end.1 - start.1))
-            let preTime = max(0.3, stateDuration(u.actor, "prewalk", face)), postTime = max(0.3, stateDuration(u.actor, "postwalk", face))
-            moves[id] = Move(length: 0, preDist: 0, postDist: 0, preTime: preTime, walkTime: 0, postTime: postTime)
-            teleporting.insert(id)
-            unitPos[id] = (Float(start.0), Float(start.1))
-            sound?.play("miscellaneous.teleport_out")
-            playing = Anim(event: e, started: now, duration: preTime + postTime)
-        case .move(let id, let path, let start, let flying):
-            // flyers take off first (0x7dd400: prewalk, walk, postwalk); walkers walk and stop (0x7de960: walk, postwalk)
-            let u = b.unit(id)
-            let pts = flying ? [start] + (path.last.map { [$0] } ?? []) : [start] + path
-            let face = pts.count > 1 ? Battle.facing(dx: Float(pts[1].0 - pts[0].0), dy: Float(pts[1].1 - pts[0].1)) : u.facing
-            // the path's length in world units: 16 a straight step, 24 a diagonal one (0x7dec80); a flight is a straight line
-            var length: Float = 0
-            for k in 1..<max(1, pts.count) {
-                let dx = abs(pts[k].0 - pts[k - 1].0), dy = abs(pts[k].1 - pts[k - 1].1)
-                length += flying ? 16 * Float(dx * dx + dy * dy).squareRoot() : Float(dx != 0 && dy != 0 ? 24 : 16)
-            }
-            let a = actor(u.actor)
-            let preTime = flying ? stateDuration(u.actor, "prewalk", face) : 0
-            let postTime = stateDuration(u.actor, "postwalk", face)
-            var preDist = preTime > 0 ? Float(a?.prewalkDistance ?? 16) : 0
-            var postDist = postTime > 0 ? Float(a?.postwalkDistance ?? 16) : 0
-            if preDist + postDist > length { let k = length / max(1, preDist + postDist); preDist *= k; postDist *= k }
-            let loop = Float(a?.walkDistance ?? 64)
-            let loops = max(length - preDist - postDist > 0 ? 1 : 0, Int((length - preDist - postDist + loop / 2) / loop))
-            let loopTime = stateDuration(u.actor, "walk", face)
-            let walkTime = Double(loops) * (loopTime > 0 ? loopTime : Double(loop / 16) / CombatScreen.cellsPerSecond)
-            sound?.startLoop("\(u.actor).walk", key: "walk|\(id)")
-            moves[id] = Move(length: length / 16, preDist: preDist / 16, postDist: postDist / 16, preTime: preTime, walkTime: walkTime, postTime: postTime)
-            unitPos[id] = (Float(start.0), Float(start.1))   // from this frame on, not only from the next update
-            playing = Anim(event: e, started: now, duration: preTime + walkTime + postTime)
-        case .melee, .shoot:
-            var duration = startBlow(e, now: now)
-            // a simultaneous exchange: the answering blow starts at the same moment
-            while case .together? = queue.first {
-                queue.removeFirst()
-                guard let next = queue.first else { break }
-                queue.removeFirst()
-                duration = max(duration, startBlow(next, now: now))
-            }
-            playing = Anim(event: e, started: now, duration: duration)
-        case .together:
-            break
-        case .die(let id):
-            sound?.actor(b.unit(id).actor, "die")
-            pendingDeaths.remove(id)
-            dying.insert(id)
-            unitState[id] = ("die", now, true)
-            let du = b.unit(id)
-            playing = Anim(event: e, started: now, duration: max(0.2, stateDuration(du.actor, "die", du.facing)))
-        case .defend(let id):
-            unitState[id] = ("block", now, true)
-            postAction(id, "combat_action.defend", "Defend", now: now)
-            sound?.actor(b.unit(id).actor, "block")
-            let bu = b.unit(id)
-            playing = Anim(event: e, started: now, duration: max(0.1, stateDuration(bu.actor, "block", bu.facing)))
-        case .morale(let id, let good):
-            // bad morale plays the sorrow effect, good morale spiritual fervor (0x5f3710 -> 0x575a70 with 0x91 / 0x94)
-            let name = good ? "spiritual fervor" : "sorrow"
-            effects.append((name, id, now))
-            // no floating text: the panel's message line says it
-            postAction(id, good ? "combat_action.good_morale" : "combat_action.bad_morale", good ? "Good Morale" : "Bad Morale", now: now)
-            playing = Anim(event: e, started: now, duration: effectDuration(name))
-        case .effect(let id, let name, let dmg, let killed, let left):
-            if effectSprite(name) != nil { effects.append((name, id, now)) }
-            sound?.play("spell.\(name)")
-            shownCount[id] = left
-            blowMessages(damage: dmg, killed: killed, unit: b.unit(id), since: now)
-            playing = Anim(event: e, started: now, duration: min(1.2, effectSprite(name) != nil ? effectDuration(name) : 0.4))
-        case .cast(let id, let spell, _):
-            // the caster's cast_spell state, the spell's sound
-            let u = b.unit(id)
-            let def = RuleTables.spells[spell]
-            unitState[id] = ("cast_spell", now, true)
-            postAction(id, "combat_action.cast_spell", "Cast %Spell", now: now, replacing: ["%Spell": def.name, "%spell": def.name])
-            if !playSpellSound(def) { sound?.actor(u.actor, "cast_spell") }
-            playing = Anim(event: e, started: now, duration: max(0.3, min(1.2, stateDuration(u.actor, "cast_spell", u.facing))))
-        case .spellHit(let id, let spell, let dmg, let killed, let left):
-            let def = RuleTables.spells[spell]
-            let name = spellAnimation(def)
-            if let n = name { effects.append((n, id, now)) }
-            shownCount[id] = left
-            if dmg > 0 { blowMessages(damage: dmg, killed: killed, unit: b.unit(id), since: now); unitState[id] = ("flinch", now, true) }
-            else if dmg < 0, showOtherNumbers { floatOver(b.unit(id), [("+\(-dmg)", "heal")], since: now) }   // healed hit points
-            playing = Anim(event: e, started: now, duration: name.map { min(1.4, effectDuration($0)) } ?? 0.35)
-        case .resisted(let id, _):
-            effects.append(("resist_spell", id, now))
-            postAction(id, "combat_action.magic_resistance", "Magic Resistance", now: now)
-            playing = Anim(event: e, started: now, duration: min(1.2, effectDuration("resist_spell")))
-        case .gateHit(let id, let dmg, let broken):
-            let u = b.unit(id)
-            unitState[id] = (u.stats.shooter && !b.nextToGate(u) ? "ranged" : "melee", now, true)
-            sound?.actor(u.actor, "melee")
-            if let c = b.field.gateCells.first {
-                let gx = Float(c / Battlefield.size) + 1, gy = Float(c % Battlefield.size) + 5
-                // wall / gate damage: white, no icon (t_castle_gate 0x5bff70)
-                if showOtherNumbers { floaters.append(Floater(lines: [("-\(dmg)", nil)], world: (gx, gy), height: 80, since: now.addingTimeInterval(0.3), colour: (255, 255, 255))) }
-            }
-            _ = broken
-            playing = Anim(event: e, started: now, duration: max(0.5, stateDuration(u.actor, "melee", u.facing)))
-        case .summon(let id):
-            effects.append(("summon", id, now))
-            playing = Anim(event: e, started: now, duration: 0.6)
-        case .wait(let id):
-            postAction(id, "combat_action.wait", "Wait", now: now)
-        case .newRound:
-            break
-        case .finished(let won):
-            result = (won, b.round)
-            sound?.playMusic(won ? "combat.win" : "combat.lose", loop: false)
-            playing = Anim(event: e, started: now, duration: 0.6)
-        }
-    }
-    func finish(_ e: Battle.Event) {
-        switch e {
-        case .move(let id, let path, _, _):
-            // it stays where this move ended until the queue has played out (the battle may already have moved it on)
-            if let last = path.last { shownPos[id] = (Float(last.0), Float(last.1)) }
-            unitPos[id] = nil; unitState[id] = nil; moves[id] = nil; teleporting.remove(id)
-            sound?.stopLoop("walk|\(id)")
-        case .melee, .shoot:
-            break
-        case .die(let id): dead.insert(id)
-        case .finished: showResults = true
-        default: break
-        }
-    }
-
-    var busy: Bool { playing != nil || !queue.isEmpty }
+    var busy: Bool { holds > 0 || !queue.isEmpty }
     /// The unit whose action is playing (the screen shows it as the active one meanwhile).
     var acting: Int?
     /// The unit the screen shows as active: the one acting while its action plays, then the battle's.
     var shownCurrent: Int? { busy ? acting : battle?.current?.id }
-
-    /// Start a blow's animation; returns how long it lasts. The blow lands on the attack state's hit
-    /// frame (combat_actor): the target turns to the attacker and flinches then (unless it dies of
-    /// it), its count and the damage show then.
-    func startBlow(_ e: Battle.Event, now: Date) -> Double {
-        guard let b = battle else { return 0 }
-        let id: Int, target: Int, dmg: Int, killed: Int, left: Int, ranged: Bool
-        switch e {
-        case .melee(let i, let t, let d, let k, let l): (id, target, dmg, killed, left, ranged) = (i, t, d, k, l, false)
-        case .shoot(let i, let t, let d, let k, let l): (id, target, dmg, killed, left, ranged) = (i, t, d, k, l, true)
-        default: return 0
-        }
-        let a = b.unit(id), t = b.unit(target)
-        let ac = shownCentre(a), tc = shownCentre(t)
-        a.facing = Battle.facing(dx: tc.0 - ac.0, dy: tc.1 - ac.1)
-        let state = ranged ? "ranged" : "melee"
-        unitState[id] = (state, now, true)
-        sound?.actor(a.actor, state)
-        let hitAt = Double(actor(a.actor)?.state(state)?.hitFrame ?? 0) * framePeriod(a.actor, state) + (ranged ? 0.25 : 0)
-        let attackTime = max(0.2, stateDuration(a.actor, state, a.facing))
-        let flinchTime = left > 0 ? stateDuration(t.actor, "flinch", t.facing) : 0
-        hits.append((target: target, at: now.addingTimeInterval(hitAt), left: left))
-        blowMessages(damage: dmg, killed: killed, unit: t, since: now.addingTimeInterval(hitAt))
-        // the panel: "Melee Attack" / "Ranged Attack", or "Retaliate" for a blow back at the striker
-        let back = lastBlow.map { $0.target == id && $0.attacker == target } ?? false
-        if back { postAction(id, ranged ? "combat_action.ranged_retaliation" : "combat_action.melee_retaliation", "Retaliate", now: now) }
-        else { postAction(id, ranged ? "combat_action.ranged_attack" : "combat_action.melee_attack", ranged ? "Ranged Attack" : "Melee Attack", now: now) }
-        lastBlow = (id, target)
-        pendingCount.append((target, left, now.addingTimeInterval(hitAt)))
-        return max(attackTime, hitAt + flinchTime)
-    }
-
-    /// Blows waiting for their hit frame: the target flinches and its count drops then.
-    var hits: [(target: Int, at: Date, left: Int)] = []
-    var pendingCount: [(unit: Int, left: Int, at: Date)] = []
-    func landHits(_ now: Date) {
-        for h in hits where h.at <= now {
-            // a unit swinging its own blow (a simultaneous exchange) is not cut short by a flinch
-            let busySwinging = ["melee", "ranged"].contains(unitState[h.target]?.state ?? "")
-            if h.left > 0, !dying.contains(h.target), !busySwinging {
-                unitState[h.target] = ("flinch", now, true)
-                if let b = battle { sound?.actor(b.unit(h.target).actor, "flinch") }
-            }
-        }
-        hits.removeAll { $0.at <= now }
-        for p in pendingCount where p.at <= now { shownCount[p.unit] = p.left }
-        pendingCount.removeAll { $0.at <= now }
-    }
 
     /// What the screen shows while the queue plays: the battle has already resolved the whole
     /// action, so positions, stack sizes and deaths follow the events as they are played.
@@ -675,7 +450,7 @@ final class CombatScreen {
     var dying: Set<Int> = []
     /// Deaths queued but not played yet: those units still stand.
     var pendingDeaths: Set<Int> = []
-    func shownAlive(_ u: Battle.Unit) -> Bool { !dying.contains(u.id) && !dead.contains(u.id) && (u.alive || pendingDeaths.contains(u.id)) }
+    func shownAlive(_ u: Battle.Unit) -> Bool { !hidden.contains(u.id) && !dying.contains(u.id) && !dead.contains(u.id) && (u.alive || pendingDeaths.contains(u.id)) }
     func shownCentre(_ u: Battle.Unit) -> (Float, Float) {
         let p = unitPos[u.id] ?? shownPos[u.id] ?? (Float(u.x), Float(u.y))
         return (p.0 + Float(u.size) / 2, p.1 + Float(u.size) / 2)
@@ -683,9 +458,6 @@ final class CombatScreen {
 
     /// The move being played: its length and the part each phase covers (cells) and lasts (s).
     struct Move { var length, preDist, postDist: Float; var preTime, walkTime, postTime: Double }
-    var moves: [Int: Move] = [:]
-    /// Units whose move is a teleport (flames out, flames in).
-    var teleporting: Set<Int> = []
     /// The point `d` cells along a polyline of cells, and the direction there.
     static func along(_ pts: [(Int, Int)], _ d: Float) -> ((Float, Float), (Float, Float)) {
         var left = max(0, d)
@@ -725,10 +497,10 @@ final class CombatScreen {
     }
 
     /// Play a unit's fidget once (it returns to "wait" when done).
-    func fidget(_ id: Int, now: Date) { unitState[id] = ("fidget", now, true) }
+    func fidget(_ id: Int, now: Date) { unitState[id] = UnitAnim(state: "fidget", since: now, once: true) }
     /// The renderer calls this when a one-off idle animation has played out.
     func idleDone(_ id: Int, now: Date) {
-        unitState[id] = nil
+        if unitState[id]?.state == "fidget" { unitState[id] = nil }
         if fidgeting == id { fidgeting = nil; nextFidget = now.addingTimeInterval(1 + Double(idleRandom.next() % 2001) / 1000) }
     }
     /// The pointer moved onto a unit (nil: onto none).

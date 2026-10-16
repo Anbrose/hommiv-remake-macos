@@ -129,7 +129,11 @@ extension Renderer {
         guard !cs.busy, cs.result == nil, !cs.autoCombat, let cur = b.current, cur.side == 0 else { return }
         if let spell = casting {   // aiming a spell: a stack it can land on, anything else cancels
             casting = nil
-            if x < 885, let t = unitUnder(b, x: x, y: y), b.canTarget(spell, by: cur, t) { b.cast(spell, on: t.id, tables: g.tables); cs.pump() }
+            if x < 885, Battle.areaRadius(spell) != nil {
+                // an area spell goes off at the clicked cell, a stack on it or not (slot 16, 0x717dd0)
+                let c = CombatScreen.cell(at: x, y)
+                if Battlefield.onField(c.0, c.1), b.cast(spell, on: nil, at: c, tables: g.tables) { cs.pump() }
+            } else if x < 885, let t = unitUnder(b, x: x, y: y), b.canTarget(spell, by: cur, t) { b.cast(spell, on: t.id, tables: g.tables); cs.pump() }
             return
         }
         guard x < Float(cs.hotspot("battle_scene")?.width ?? 885) else { return }

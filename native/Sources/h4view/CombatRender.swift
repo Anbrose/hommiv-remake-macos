@@ -106,7 +106,7 @@ extension Renderer {
         }
         // movement shading (show_movement_grid, 0x57bae0): every cell the acting stack can reach this
         // turn in (50,50,200) at level 5 of 15
-        if showReach, let cur = b.current, cur.side == 0, !cs.busy, cs.result == nil {
+        if showReach, casting == nil, let cur = b.current, cur.side == 0, !cs.busy, cs.result == nil {
             let a = UInt8(5 * 255 / 15)
             for (k, _) in b.reachable(cur) {
                 let x = k / Battlefield.size, y = k % Battlefield.size
@@ -136,9 +136,12 @@ extension Renderer {
             }
         }
         let labels = combatLabels(cs, b, now: now)
+        // the area spell being aimed: every stack it would take in gets its target shadow (0x717b40)
+        var targetedSet: Set<Int> = combatTarget.map { [$0] } ?? []
+        if let area = combatArea { targetedSet.formUnion(area) }
         // every unit, the dead too: a dead stack stays on the field as the last frame of its
         // die sequence (the combat actor has no other corpse state), under the living
-        for u in b.units {
+        for u in b.units where !cs.hidden.contains(u.id) {
             let pos = cs.unitPos[u.id] ?? cs.shownPos[u.id] ?? (Float(u.x), Float(u.y))
             let shownAlive = cs.shownAlive(u)
             // the actor's origin is the footprint's centre
@@ -148,7 +151,7 @@ extension Renderer {
             // the acting unit's, and the red one under the creature the pointer targets
             let shadowSize = min(7, max(2, u.size))
             let (tx, ty) = CombatScreen.point(pos.0, pos.1)
-            let targeted = combatTarget == u.id && cs.shownAlive(u)
+            let targeted = targetedSet.contains(u.id) && cs.shownAlive(u)
             if targeted, let ring = arrowSprite("target_shadow.\(shadowSize)", prefix: "combat_object"), let fr = ring.frames.first {
                 q.append(Quad(texture: texture(for: fr, of: "target_shadow.\(shadowSize)"), x: Int(tx + Float(ring.origin.x + Int32(fr.box.left)) * sc), y: Int(ty + Float(ring.origin.y + Int32(fr.box.top)) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc)))
             }
@@ -157,6 +160,8 @@ extension Renderer {
             }
             let st = cs.unitState[u.id]
             let state = st?.state ?? (shownAlive ? "wait" : "die")
+            let alpha = Float(cs.alpha(u.id, now: now)) / 15
+            let adjust = cs.colourAdjust(u.id, now: now)
             if let (s, entry) = combatSprite(cs, actor: u.actor, state: state, facing: u.facing) {
                 let tl = s.timeline
                 var frame = s.frames.first, shadow = frame.flatMap { s.shadow(for: $0) }
@@ -165,7 +170,8 @@ extension Renderer {
                     var index: Int
                     if let st = st, st.once {
                         index = min(tl.count - 1, Int(now.timeIntervalSince(st.since) / period))
-                        if index == tl.count - 1, now.timeIntervalSince(st.since) >= Double(tl.count) * period, state == "flinch" || state == "block" || state == "fidget" { cs.idleDone(u.id, now: now) }
+                        if st.reverse { index = tl.count - 1 - index }
+                        if state == "fidget", now.timeIntervalSince(st.since) >= Double(tl.count) * period { cs.idleDone(u.id, now: now) }
                     } else if state == "walk" {   // loops at its own speed (one loop covers the actor's walk distance)
                         index = Int(now.timeIntervalSince(st?.since ?? now) / period) % tl.count
                     } else {
@@ -173,32 +179,36 @@ extension Renderer {
                     }
                     let e = tl[index]; frame = e.frame; shadow = e.shadow
                 }
-                if !shownAlive, cs.dead.contains(u.id) || st == nil, let last = tl.last { frame = last.frame; shadow = last.shadow }
-                let ox = px + Float(s.origin.x) * sc, oy = py + Float(s.origin.y) * sc
-                if let sh = shadow { q.append(Quad(texture: texture(for: sh, of: entry), x: Int(ox + Float(sh.box.left) * sc), y: Int(oy + Float(sh.box.top) * sc), w: Int(Float(sh.bitmap.width) * sc), h: Int(Float(sh.bitmap.height) * sc))) }
-                if let fr = frame { q.append(Quad(texture: texture(for: fr, of: entry), x: Int(ox + Float(fr.box.left) * sc), y: Int(oy + Float(fr.box.top) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc))) }
+                if !shownAlive, st == nil, let last = tl.last { frame = last.frame; shadow = last.shadow }
+                // the actor's draw offset (combat_actor trailer) moves every sprite rect
+                let off: (x: Int, y: Int) = cs.actor(u.actor)?.drawOffset ?? (0, 0)
+                let ox = px + Float(Int(s.origin.x) + off.x) * sc, oy = py + Float(Int(s.origin.y) + off.y) * sc
+                if let sh = shadow { q.append(Quad(texture: texture(for: sh, of: entry), x: Int(ox + Float(sh.box.left) * sc), y: Int(oy + Float(sh.box.top) * sc), w: Int(Float(sh.bitmap.width) * sc), h: Int(Float(sh.bitmap.height) * sc), alpha: alpha, adjust: adjust)) }
+                if let fr = frame { q.append(Quad(texture: texture(for: fr, of: entry), x: Int(ox + Float(fr.box.left) * sc), y: Int(oy + Float(fr.box.top) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc), alpha: alpha, adjust: adjust)) }
                 let c = cs.shownCentre(u)
                 unitHeads.append((c.0, c.1, px, frame.map { oy + Float($0.box.top) * sc } ?? (py - 100 * sc)))
             }
-            q += labels[u.id] ?? []
+            if alpha >= 1 { q += labels[u.id] ?? [] }
             drawn.append((py + (shownAlive ? 0 : -1000), q))
         }
-        for (_, q) in drawn.sorted(by: { $0.0 < $1.0 }) { out += q }
-        // spell-style effects over units: the frame canvas centred on the unit, its bottom at the feet
-        for fx in cs.effects {
-            guard let sp = cs.effectSprite(fx.name), !sp.frames.isEmpty else { continue }
-            let frames = sp.frames
-            let info = cs.effectInfo[fx.name]
-            let order = info?.order.isEmpty == false ? info!.order : Array(frames.indices)
-            let step = Int(now.timeIntervalSince(fx.since) * 1000) / max(1, info?.ms ?? 83)
-            let fr = frames[max(0, min(frames.count - 1, order[min(order.count - 1, step)]))]
-            let width = frames.map { $0.box.right }.max() ?? fr.box.right, height = frames.map { $0.box.bottom }.max() ?? fr.box.bottom
-            let u = b.unit(fx.unit)
-            let corners = [(Float(u.x), Float(u.y)), (Float(u.x + u.size), Float(u.y)), (Float(u.x), Float(u.y + u.size)), (Float(u.x + u.size), Float(u.y + u.size))].map { CombatScreen.point($0.0, $0.1) }
-            let px = corners.map { $0.0 }.min() ?? 0, py = CombatScreen.point(u.centre.0, u.centre.1).1
-            let anchor = info.map { $0.anchor.0 != 0 || $0.anchor.1 != 0 ? $0.anchor : (width / 2, height - 8) } ?? (width / 2, height - 8)
-            out.append(Quad(texture: texture(for: fr, of: "spell.\(fx.name)"), x: Int(px) - anchor.0 + fr.box.left, y: Int(py) - anchor.1 + fr.box.top, w: fr.bitmap.width, h: fr.bitmap.height))
+        // missiles and the actors spells and impacts put on the field, depth-sorted with the units by
+        // their ground point; a missile's height lifts it 1 px per world unit before the scale
+        for m in cs.missiles {
+            let cx = Float(m.pos.0 + m.size * 8) / 16, cy = Float(m.pos.1 + m.size * 8) / 16
+            if let q = fieldActorQuads(cs, model: m.model, state: "walk", facing: m.facing, frame: m.frame, at: (cx, cy), z: Float(m.pos.2)) {
+                drawn.append((CombatScreen.point(cx, cy).1, q))
+            }
         }
+        for fa in cs.fieldActors {
+            guard let (state, k) = fa.frame(at: now) else { continue }
+            let cx = fa.world.x / 16, cy = fa.world.y / 16
+            if let q = fieldActorQuads(cs, model: fa.model, state: state, facing: fa.facing, frame: k, at: (cx, cy), z: fa.world.z) {
+                drawn.append((CombatScreen.point(cx, cy).1, q))
+            }
+        }
+        for (_, q) in drawn.sorted(by: { $0.0 < $1.0 }) { out += q }
+        // the spell effect windows: children of the battlefield window, so over every unit (2.5)
+        out += effectWindowQuads(cs, b, now: now)
         out += floaterQuads(cs, now: now)
         out += combatPanelQuads(cs, b, now: now)
         out += combatInfoQuads()
@@ -358,7 +368,7 @@ extension Renderer {
     func unitUnder(_ b: Battle, x: Float, y: Float, side: Int? = nil) -> Battle.Unit? {
         let (wx, wy) = Battlefield.world(x / CombatScreen.sceneScale, y / CombatScreen.sceneScale)
         return b.units.first { u in
-            guard u.alive, side == nil || u.side == side else { return false }
+            guard u.alive, side == nil || u.side == side, combat?.hidden.contains(u.id) != true else { return false }
             if wx >= Float(u.x), wx < Float(u.x + u.size), wy >= Float(u.y), wy < Float(u.y + u.size) { return true }
             let (cx, cy) = CombatScreen.point(u.centre.0, u.centre.1)
             return abs(x - cx) < 18 && y < cy && y > cy - 70
@@ -389,9 +399,16 @@ extension Renderer {
 
     /// Which combat cursor fits the cell under the pointer.
     func combatCursor(x: Float, y: Float) -> String {
-        combatTarget = nil
+        combatTarget = nil; combatArea = nil
         guard let cs = combat, let b = cs.battle, cs.info == nil, prompt == nil, spellBook == nil, !cs.busy, cs.result == nil, !cs.autoCombat, let cur = b.current, cur.side == 0, x < 885 else { return "combat.normal" }
         if let spell = casting {
+            // an area spell aims at any cell: every stack in its radius is marked (0x717b40)
+            if Battle.areaRadius(spell) != nil {
+                let c = CombatScreen.cell(at: x, y)
+                guard Battlefield.onField(c.0, c.1) else { return "combat.no_cast" }
+                combatArea = Set(b.areaMembers(spell, by: cur, cell: c).map { $0.id })
+                return "combat.cast_spell"
+            }
             if let t = unitUnder(b, x: x, y: y), b.canTarget(spell, by: cur, t) { combatTarget = t.id; return "combat.cast_spell" }
             return "combat.no_cast"
         }

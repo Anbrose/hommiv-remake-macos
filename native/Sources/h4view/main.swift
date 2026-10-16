@@ -378,14 +378,14 @@ if let out = snapshot {
                 var guardN = 0
                 while b.finished == nil, guardN < 40, !(b.current?.side == 0 && b.current?.caster != nil) { b.autoAct(); guardN += 1 }
                 if let u = b.current, var c = u.caster { c.spells = Array(0..<RuleTables.spells.count).filter { RuleTables.spells[$0].has("Teach") }; c.spellPoints = 60; c.skills["chaos"] = 3; u.caster = c }
-                _ = b.takeEvents(); cs.queue = []; cs.playing = nil
+                _ = b.takeEvents(); cs.resetPlayback()
                 renderer.openCombatBook()
                 if let s = ProcessInfo.processInfo.environment["H4BOOK"], !s.isEmpty, s != "1" { renderer.spellBook?.tab = s.prefix(1).uppercased() + s.dropFirst() }
                 if ProcessInfo.processInfo.environment["H4BOOKDETAIL"] != nil { renderer.spellBook?.detail = 0 }
             }
             if let fx = ProcessInfo.processInfo.environment["H4FX"] {   // snapshot: an effect on every stack, 0.4 s in
-                cs.queue = []; cs.playing = nil
-                for u in b.units where u.alive { cs.effects.append((fx, u.id, Date().addingTimeInterval(-0.4))) }
+                cs.resetPlayback()
+                for u in b.units where u.alive { cs.showEffect(fx, on: u.id, at: Date().addingTimeInterval(-0.4)) }
             }
             if let n = ProcessInfo.processInfo.environment["H4INFO"].flatMap({ Int($0) }), b.units.indices.contains(n) { cs.info = b.units[n].id }
             if ProcessInfo.processInfo.environment["H4RETREAT"] != nil { renderer.askRetreat() } }   // snapshot: the retreat question   // snapshot: open a unit's creature window
@@ -401,7 +401,7 @@ if let out = snapshot {
         if let b = cs.battle {
             print("siege of \(game.towns[tn].name) level \(game.towns[tn].castleLevel): walls \(b.field.walls.count) gate \(b.field.gateCells.count) hp \(b.field.gateHP) towers \(b.field.towers.count) moat \(b.field.moat.count); units \(b.units.map { "\($0.side):\($0.stats.name)@\($0.x),\($0.y)" })")
             if ProcessInfo.processInfo.environment["H4SIEGEAUTO"] != nil { b.autoResolve(); print("resolved: attacker won \(b.finished ?? false) in \(b.round) rounds, gate \(b.field.gateHP)") }
-            _ = b.takeEvents(); cs.queue = []; cs.playing = nil
+            _ = b.takeEvents(); cs.resetPlayback()
         }
     }
     if ProcessInfo.processInfo.environment["H4HEROFIGHT"] != nil, let h = game.heroes.first, let e = game.enemyHeroes.first, let cs = combatScreen {   // snapshot: a battle with the first enemy army
@@ -528,26 +528,34 @@ if let out = snapshot {
         renderer.inspect(mapPoint: m, canvas: (canvas.x, canvas.y))
         print("inspect (\(target.0),\(target.1)): \(renderer.popup.map { "\($0.title) | " + $0.lines.joined(separator: " / ") } ?? renderer.creatureDialog.map { "dialog: \($0.count) \($0.creature.plural)" } ?? "nothing")")
     }
-    let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: w, height: h, mipmapped: false)
-    td.usage = [.renderTarget, .shaderRead]
-    let target = device.makeTexture(descriptor: td)!
-    let rpd = MTLRenderPassDescriptor()
-    rpd.colorAttachments[0].texture = target
-    rpd.colorAttachments[0].loadAction = .clear
-    rpd.colorAttachments[0].storeAction = .store
-    rpd.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
-    renderer.encode(rpd: rpd, present: nil, time: snapTime)
-    lap("frame rendered")
-    var pixels = [UInt8](repeating: 0, count: w * h * 4)
-    target.getBytes(&pixels, bytesPerRow: w * 4, from: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0)
-    let cs = CGColorSpaceCreateDeviceRGB()
-    let ctx = CGContext(data: &pixels, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: cs,
-                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-    let img = ctx.makeImage()!
-    let dest = CGImageDestinationCreateWithURL(URL(fileURLWithPath: out) as CFURL, "public.png" as CFString, 1, nil)!
-    CGImageDestinationAddImage(dest, img, nil)
-    CGImageDestinationFinalize(dest)
-    print("wrote \(out)")
+    func render(to out: String) {
+        let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: w, height: h, mipmapped: false)
+        td.usage = [.renderTarget, .shaderRead]
+        let target = device.makeTexture(descriptor: td)!
+        let rpd = MTLRenderPassDescriptor()
+        rpd.colorAttachments[0].texture = target
+        rpd.colorAttachments[0].loadAction = .clear
+        rpd.colorAttachments[0].storeAction = .store
+        rpd.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
+        renderer.encode(rpd: rpd, present: nil, time: snapTime)
+        lap("frame rendered")
+        var pixels = [UInt8](repeating: 0, count: w * h * 4)
+        target.getBytes(&pixels, bytesPerRow: w * 4, from: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0)
+        let cs = CGColorSpaceCreateDeviceRGB()
+        let ctx = CGContext(data: &pixels, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: cs,
+                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        let img = ctx.makeImage()!
+        let dest = CGImageDestinationCreateWithURL(URL(fileURLWithPath: out) as CFURL, "public.png" as CFString, 1, nil)!
+        CGImageDestinationAddImage(dest, img, nil)
+        CGImageDestinationFinalize(dest)
+        print("wrote \(out)")
+    }
+    if let spec = ProcessInfo.processInfo.environment["H4ANIM"], let cs = combatScreen, let hero = game.heroes.first {
+        // snapshot: a staged battle, the actions of H4ANIMACT played on a fixed clock, a frame at each time of H4ANIMT
+        runAnimationTest(spec, game: game, cs: cs, hero: hero, out: out) { render(to: $0) }
+        exit(0)
+    }
+    render(to: out)
     exit(0)
 }
 

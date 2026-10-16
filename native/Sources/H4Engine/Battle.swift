@@ -93,6 +93,16 @@ public final class Battle {
         case summon(unit: Int)
         /// The castle gate struck (and broken).
         case gateHit(unit: Int, damage: Int, broken: Bool)
+        /// The cell an area spell was aimed at (heroes4.exe keeps it at spell +0x38); right after its `.cast`.
+        case castAt(unit: Int, spell: Int, cell: (Int, Int))
+        /// A stack a spell moved: Teleport (fade out, move, fade in), Displacement (pushed, sliding).
+        case teleported(unit: Int, from: (Int, Int), to: (Int, Int))
+        case displaced(unit: Int, from: (Int, Int), to: (Int, Int))
+        /// Dead creatures brought back by `spell` (Resurrection, Rebirth, the raising spells): `rose` when
+        /// the stack had none alive (it gets up with its die animation played backwards).
+        case revived(unit: Int, spell: Int, count: Int, rose: Bool)
+        /// A phantom copy (`unit`) of the stack `of` (Phantom Image, Create Illusion).
+        case phantom(unit: Int, of: Int)
     }
 
     public internal(set) var units: [Unit] = []
@@ -318,7 +328,7 @@ public final class Battle {
             }
             guard u.disabled else { break }
             if u.frozen == 0 {
-                let lost = [11: "Blind", 154: "Stun", 180: "Terror", 21: "Confusion"].first { u.durations[$0.key] != nil }
+                let lost = [11: "Blind", 154: "Stun", 180: "Terror", 21: "Confusion", 174: "Summon Stinkbug"].first { u.durations[$0.key] != nil }
                 if let l = lost { events.append(.effect(unit: u.id, name: RuleTables.spells[l.key].keyword, damage: 0, killed: 0, left: u.stats.count)) }
             }
             u.acted = true
@@ -582,6 +592,7 @@ public final class Battle {
     func hit(_ a: Unit, _ b: Unit, ranged: Bool, secondary: Bool = false) -> Int {
         let before = b.stats.totalHealth
         var dmg = QuickCombat.damage(a.stats, b.stats, rng: &rng, ranged: ranged, moved: ranged ? 0 : Int(a.moved))
+        var stoned = false
         if ranged { dmg = max(1, dmg / rangeDivisor(a, b)) }
         // on a tower attack and defense double (0x5ee1d1 / 0x5f1ee7)
         if onTower(a) { dmg *= 2 }
@@ -595,7 +606,7 @@ public final class Battle {
         // attacking creature are turned to stone, once that makes half a creature
         if !secondary, a.stats.has("stone_gaze"), Battle.living(b), !b.stats.has("blind"), !b.stats.has("magic_immunity") {
             let per = [250, 100, 50, 20][min(3, max(0, b.stats.level - 1))]
-            if per * a.stats.count >= 500 { dmg += Int((Double(b.stats.hitPoints) * Double(per * a.stats.count) * 0.001).rounded()) }
+            if per * a.stats.count >= 500 { dmg += Int((Double(b.stats.hitPoints) * Double(per * a.stats.count) * 0.001).rounded()); stoned = true }
         }
         dmg = min(dmg, before)
         let killed = b.stats.take(dmg)
@@ -604,6 +615,8 @@ public final class Battle {
                              : .melee(unit: a.id, target: b.id, damage: dmg, killed: killed, left: b.stats.count))
         if b.blind > 0 { b.blind = 0 }   // Blind breaks when the target is hurt
         if !b.alive { events.append(.die(unit: b.id)); b.boundBy = nil }
+        // the Stone_Gaze window and the grey fade (t_stoning_animation, 0x553359)
+        if stoned { events.append(.effect(unit: b.id, name: "stone_gaze", damage: 0, killed: 0, left: b.stats.count)) }
         if !secondary { aftermath(a, b, ranged: ranged, damage: dmg, healthBefore: before) }
         return dmg
     }
@@ -632,7 +645,7 @@ public final class Battle {
                 let total = now + gain
                 a.stats.count = (total + a.stats.hitPoints - 1) / a.stats.hitPoints
                 a.stats.wounds = a.stats.count * a.stats.hitPoints - total
-                events.append(.effect(unit: a.id, name: "Vampiric Touch", damage: 0, killed: 0, left: a.stats.count))
+                events.append(.effect(unit: a.id, name: "vampirism", damage: 0, killed: 0, left: a.stats.count))
             }
         }
         guard b.alive else { return }
@@ -641,7 +654,7 @@ public final class Battle {
         // Poison: from now on the target takes the poisoner's damage every round
         if a.stats.has("poison"), Battle.living(b) {   // (a new dose keeps the larger, 0x5f0220)
             b.poison = max(b.poison, max(1, QuickCombat.rollBase(a.stats, rng: &rng)))   // a fresh roll of its base damage (0x575fe0 -> 0x5ee690)
-            effect(b, "poison attack")
+            effect(b, "poison")   // the Poison window (id 111), not "poison attack" (0x5ef95d)
         }
         // Stun (melee) / ranged stun: chance = damage as a percentage of the target's health, less 5
         if a.stats.has(ranged ? "ranged_stun" : "stunning"), Battle.living(b) {
@@ -653,20 +666,20 @@ public final class Battle {
         if a.stats.has("aging"), Battle.living(b), magic, !b.stats.aged { b.stats.aged = true; effect(b, "aging") }
         if a.stats.has("blinding"), !b.stats.has("blind"), Battle.living(b), magic, rng.next() % 100 < 30 { b.blind = 3; effect(b, "blind") }
         if a.stats.has("curse"), magic, !b.stats.cursed { b.stats.cursed = true; effect(b, "Curse") }
-        if a.stats.has("freeze"), !b.stats.has("cold_resistance"), magic, rng.next() % 100 < 30 { b.frozen = 2; effect(b, "cold_potion") }
+        if a.stats.has("freeze"), !b.stats.has("cold_resistance"), magic, rng.next() % 100 < 30 { b.frozen = 2; effect(b, "frozen") }   // no window: the icy tint ramp and sound.spell.frozen (0x5547bf)
         // Devouring: each attacker has a 1 in 10 chance to swallow a creature, at most a tenth of the attackers
         if a.stats.has("devouring") {
             var eaten = 0
             for _ in 0..<min(a.stats.count, 100) where rng.next() % 10 == 0 { eaten += 1 }
             if a.stats.count > 100 { eaten = eaten * a.stats.count / 100 }
             eaten = min(eaten, (a.stats.count + 9) / 10, b.stats.count)
-            if eaten > 0 { effect(b, "acid", damage: eaten * b.stats.hitPoints - (b.stats.count == eaten ? b.stats.wounds : 0)) }
+            if eaten > 0 { effect(b, "devour", damage: eaten * b.stats.hitPoints - (b.stats.count == eaten ? b.stats.wounds : 0)) }
         }
         guard b.alive else { return }
-        if a.stats.has("hypnotize"), Battle.living(b), magic, rng.next() % 10 < 3 { b.hypnotized = true; effect(b, "hypnotize_effect") }
-        if a.stats.has("binding"), !b.stats.has("insubstantial"), b.boundBy == nil { b.boundBy = a.id; b.stats.bound = true; effect(b, "binding_potion") }
+        if a.stats.has("hypnotize"), Battle.living(b), magic, rng.next() % 10 < 3 { b.hypnotized = true; effect(b, "short hypnotism") }
+        if a.stats.has("binding"), !b.stats.has("insubstantial"), b.boundBy == nil { b.boundBy = a.id; b.stats.bound = true; effect(b, "binding") }
         // Lightning: 30 damage per attacking creature right after the blow
-        if a.stats.has("lightning"), magic { effect(b, "Lightning", damage: 30 * a.stats.count) }
+        if a.stats.has("lightning"), magic { effect(b, "lightning", damage: 30 * a.stats.count) }
     }
 
     /// The other creatures a blow also strikes: Multiple Attack every adjacent enemy, 3-Headed
@@ -1005,6 +1018,8 @@ public final class Battle {
     }
 
     public func takeEvents() -> [Event] { let e = events; events.removeAll(); return e }
+    /// Tests and debugging: the stack acts next.
+    public func putFirst(_ id: Int) { order.removeAll { $0 == id }; order.insert(id, at: 0) }
 
     // MARK: sieges
 

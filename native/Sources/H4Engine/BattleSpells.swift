@@ -34,7 +34,7 @@ public struct Caster {
 extension Battle {
     static let powerSkill = ["life": "spirit", "order": "mind", "death": "demonology", "chaos": "pyromancy", "nature": "meditation"]
     /// Mass spell -> the single spell it casts on every valid target (0x98bf08).
-    static let massOf: [Int: Int] = [12: 13, 29: 58, 32: 61, 52: 47, 80: 10, 127: 109, 81: 15, 82: 23, 83: 27, 84: 35, 85: 45, 86: 48, 87: 104,
+    public static let massOf: [Int: Int] = [12: 13, 29: 58, 32: 61, 52: 47, 80: 10, 127: 109, 81: 15, 82: 23, 83: 27, 84: 35, 85: 45, 86: 48, 87: 104,
                                      88: 56, 89: 102, 90: 115, 91: 117, 92: 118, 93: 120, 94: 121, 95: 140, 96: 105, 97: 143, 98: 145, 99: 148, 100: 185]
 
     /// The spell's power for this caster: (base + increment x level) x pct / 100, pct = 100 + 20
@@ -108,9 +108,28 @@ extension Battle {
         return s.has("Mass") || s.kind == "summoning" && !s.has("Bodies") || [4, 32, 110].contains(spell)
     }
 
-    /// Cast by the current unit on a target stack (nil for untargeted spells). Ends the unit's turn.
+    /// The radius of an area spell in world units, 16 a cell (slot 18): Fireball, Kreegan Fire, Cloud
+    /// of Confusion, Despair and Choking Gas 64, Inferno 112 (0x718870); nil for the others.
+    public static func areaRadius(_ spell: Int) -> Int? {
+        [43: 64, 67: 64, 19: 64, 25: 64, 50: 64, 66: 112][spell]
+    }
+    /// The stacks an area spell aimed at a cell takes in (0x717030): the centre is the cell's middle
+    /// (cell x 16 + 8), a stack is in when round(distance to its footprint centre) - size x 8 < radius
+    /// and the spell can land on it; friend and foe alike, in the battle's list order.
+    public func areaMembers(_ spell: Int, by caster: Unit, cell: (Int, Int)) -> [Unit] {
+        guard let radius = Battle.areaRadius(spell) else { return [] }
+        let cx = cell.0 * 16 + 8, cy = cell.1 * 16 + 8
+        return units.filter { t in
+            guard t.alive, canTarget(spell, by: caster, t) else { return false }
+            let dx = Double(t.x * 16 + t.size * 8 - cx), dy = Double(t.y * 16 + t.size * 8 - cy)
+            return Int((dx * dx + dy * dy).squareRoot().rounded()) - t.size * 8 < radius
+        }
+    }
+
+    /// Cast by the current unit on a target stack (nil for untargeted spells), or for an area spell
+    /// at a cell (`at`: any cell, a stack on it or not). Ends the unit's turn.
     @discardableResult
-    public func cast(_ spell: Int, on targetId: Int?, tables: RuleTables? = nil) -> Bool {
+    public func cast(_ spell: Int, on targetId: Int?, at cell: (Int, Int)? = nil, tables: RuleTables? = nil) -> Bool {
         guard finished == nil, let u = current, var c = u.caster, castable(u).contains(spell) else { return false }
         let s = RuleTables.spells[spell]
         var targets: [Unit] = []
@@ -122,6 +141,8 @@ extension Battle {
             targets = units.filter { $0.alive && canTarget(spell, by: u, $0) }
         } else if s.kind == "summoning" && !s.has("Bodies") {
             targets = []
+        } else if let c = cell, Battle.areaRadius(spell) != nil {
+            targets = areaMembers(spell, by: u, cell: c)
         } else {
             guard let id = targetId, let t = units.first(where: { $0.id == id }), canTarget(spell, by: u, t) else { return false }
             targets = [t]
@@ -137,6 +158,9 @@ extension Battle {
         u.caster = c
         let p = power(spell, by: u, creatures: tables)
         events.append(.cast(unit: u.id, spell: spell, targets: targets.map { $0.id }))
+        if Battle.areaRadius(spell) != nil, let c = cell ?? targets.first.map({ ($0.x + $0.size / 2, $0.y + $0.size / 2) }) {
+            events.append(.castAt(unit: u.id, spell: spell, cell: c))
+        }
         let effectSpell = Battle.massOf[spell] ?? spell
         // Poison and Plague deal nothing now: their damage after resistance is kept and dealt at the
         // start of each of the target's turns (0x61b980 / 0x78e320); Regeneration heals each turn

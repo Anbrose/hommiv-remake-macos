@@ -6,30 +6,72 @@ import H4Engine
 let shaderSource = """
 #include <metal_stdlib>
 using namespace metal;
-struct V { float2 pos; float2 uv; };
-struct Out { float4 pos [[position]]; float2 uv; };
+struct V { float2 pos; float2 uv; float4 adj; float4 extra; };
+struct Out { float4 pos [[position]]; float2 uv; float4 adj [[flat]]; float alpha [[flat]]; };
 struct Camera { float2 view; float2 pan; float zoom; float pad; };
 vertex Out vmain(const device V* v [[buffer(0)]], constant Camera& cam [[buffer(1)]], uint id [[vertex_id]]) {
     Out o;
     float2 p = (v[id].pos - cam.pan) * cam.zoom;
     o.pos = float4(p.x / cam.view.x * 2.0 - 1.0, 1.0 - p.y / cam.view.y * 2.0, 0.0, 1.0);
     o.uv = v[id].uv;
+    o.adj = v[id].adj;
+    o.alpha = v[id].extra.x;
     return o;
+}
+// the combat object colour adjust (0x592f80): hue 0..768 toward a target by amount / 256 the short
+// way; saturation and value p < 256 -> x * p / 256, p > 256 -> 255 - (255 - x) * 256 / p
+float adjustLevel(float x, float p) { return p < 256.0 ? x * p / 256.0 : 255.0 - (255.0 - x) * 256.0 / p; }
+float3 adjustColour(float3 c, float4 a) {
+    float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b));
+    float v = mx * 255.0, d = mx - mn;
+    float s = mx > 0.0 ? d / mx * 255.0 : 0.0;
+    float h = 0.0;
+    if (d > 0.0) {
+        if (mx == c.r) h = fmod((c.g - c.b) / d + 6.0, 6.0);
+        else if (mx == c.g) h = (c.b - c.r) / d + 2.0;
+        else h = (c.r - c.g) / d + 4.0;
+    }
+    h *= 128.0;
+    if (a.y > 0.0) {
+        float dh = a.x - h;
+        if (dh > 384.0) dh -= 768.0;
+        if (dh < -384.0) dh += 768.0;
+        h = fmod(h + dh * a.y / 256.0 + 768.0, 768.0);
+    }
+    s = clamp(adjustLevel(s, a.z), 0.0, 255.0) / 255.0;
+    v = clamp(adjustLevel(v, a.w), 0.0, 255.0) / 255.0;
+    float hh = h / 128.0;
+    float cc = v * s, x = cc * (1.0 - fabs(fmod(hh, 2.0) - 1.0)), m = v - cc;
+    float3 rgb = hh < 1.0 ? float3(cc, x, 0) : hh < 2.0 ? float3(x, cc, 0) : hh < 3.0 ? float3(0, cc, x)
+               : hh < 4.0 ? float3(0, x, cc) : hh < 5.0 ? float3(x, 0, cc) : float3(cc, 0, x);
+    return rgb + m;
 }
 fragment float4 fmain(Out i [[stage_in]], texture2d<float> tex [[texture(0)]]) {
     constexpr sampler s(mag_filter::linear, min_filter::linear, mip_filter::linear);
     float4 c = tex.sample(s, i.uv);
-    return float4(c.rgb * c.a, c.a);
+    float3 rgb = c.rgb;
+    if (i.adj.y != 0.0 || i.adj.z != 256.0 || i.adj.w != 256.0) rgb = adjustColour(rgb, i.adj);
+    float a = c.a * i.alpha;
+    return float4(rgb * a, a);
 }
 """
 
-struct Vertex { var x: Float, y: Float, u: Float, v: Float }
+/// A vertex: position, texture coordinate, the colour adjust (hue target, hue amount, saturation,
+/// value; neutral 0, 0, 256, 256) and the alpha multiplier.
+struct Vertex {
+    var x: Float, y: Float, u: Float, v: Float
+    var adj: SIMD4<Float> = SIMD4(0, 0, 256, 256)
+    var extra: SIMD4<Float> = SIMD4(1, 0, 0, 0)
+}
 struct Camera { var vw: Float, vh: Float, px: Float, py: Float, zoom: Float, pad: Float }
 
 /// One textured quad on the map canvas.
 struct Quad {
     var texture: MTLTexture
     var x: Int, y: Int, w: Int, h: Int
+    /// Alpha multiplier (a fade's level / 15) and colour adjust (freeze, stone; nil neutral).
+    var alpha: Float = 1
+    var adjust: SIMD4<Float>? = nil
 }
 
 final class Renderer: NSObject, MTKViewDelegate {
@@ -125,6 +167,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     var cursorFrameIndex: Int?
     /// The creature the combat pointer is over (for its red target shadow).
     var combatTarget: Int?
+    /// The stacks an area spell aimed at the pointer's cell would take in (each gets its target shadow).
+    var combatArea: Set<Int>?
     var dayCache: (cell: Int, days: Int?)?
     var showReach = false      // the game's "Show Movement Shadow" option (off by default, as in the original)
     var inCombat: Bool { combat?.battle != nil }
@@ -1048,7 +1092,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             cs.start(game: g, hero: pb.hero, enemy: pb.enemy, terrain: cell?.type ?? 1, variant: cell?.variant ?? 0)
             g.pendingHeroBattle = nil
         }
-        let now = Date()
+        let now = combat?.clock ?? Date()
         combat?.update(now: now)
         let inTown = townOpen != nil && town != nil
         refreshShroud()
@@ -1068,8 +1112,9 @@ final class Renderer: NSObject, MTKViewDelegate {
         verts.reserveCapacity(list.count * 6)
         for q in list {
             let x0 = Float(q.x), y0 = Float(q.y), x1 = Float(q.x + q.w), y1 = Float(q.y + q.h)
-            verts += [Vertex(x: x0, y: y0, u: 0, v: 0), Vertex(x: x1, y: y0, u: 1, v: 0), Vertex(x: x0, y: y1, u: 0, v: 1),
-                      Vertex(x: x1, y: y0, u: 1, v: 0), Vertex(x: x1, y: y1, u: 1, v: 1), Vertex(x: x0, y: y1, u: 0, v: 1)]
+            let adj = q.adjust ?? SIMD4(0, 0, 256, 256), ex = SIMD4<Float>(q.alpha, 0, 0, 0)
+            verts += [Vertex(x: x0, y: y0, u: 0, v: 0, adj: adj, extra: ex), Vertex(x: x1, y: y0, u: 1, v: 0, adj: adj, extra: ex), Vertex(x: x0, y: y1, u: 0, v: 1, adj: adj, extra: ex),
+                      Vertex(x: x1, y: y0, u: 1, v: 0, adj: adj, extra: ex), Vertex(x: x1, y: y1, u: 1, v: 1, adj: adj, extra: ex), Vertex(x: x0, y: y1, u: 0, v: 1, adj: adj, extra: ex)]
         }
         let bytes = verts.count * MemoryLayout<Vertex>.stride
         if vertexBuffer.length < bytes { vertexBuffer = device.makeBuffer(length: bytes * 2, options: .storageModeShared)! }

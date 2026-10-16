@@ -1,0 +1,82 @@
+import Foundation
+import H4Engine
+
+/// Snapshot hook for the combat presentation (debugging): H4ANIM="orc:30,titan:2" stages the first
+/// hero's army (H4ARMY) against those stacks; H4ANIMACT is a ';' list of actions played in turn on a
+/// fixed clock -- "shoot:<attacker>:<target>", "melee:<attacker>:<target>", "cast:<spell>[:<target>|@x,y]",
+/// "tele:<unit>:x,y", "disp:<unit>:x,y", "revive:<unit>:n", "phantom:<unit>" (units by keyword, a
+/// target on the other side); H4ANIMT="0.3,0.6" the times (s) of the frames written next to the
+/// snapshot path as <name>_<t>.png; H4ANIMLOG prints the playback's timeline.
+func runAnimationTest(_ spec: String, game g: GameState, cs: CombatScreen, hero: Hero, out: String, render: (String) -> Void) {
+    let defenders: [(String, Int)] = spec.split(separator: ",").compactMap { p in
+        let q = p.split(separator: ":"); return q.count == 2 ? Int(q[1]).map { (String(q[0]), $0) } : nil }
+    cs.startTest(game: g, hero: hero, defenders: defenders)
+    guard let b = cs.battle else { print("no battle"); return }
+    let env = ProcessInfo.processInfo.environment
+    print("units: " + b.units.map { "\($0.id):\($0.keyword)x\($0.stats.count)@(\($0.x),\($0.y)) s\($0.side)" }.joined(separator: " "))
+    func unit(_ k: String, side: Int?) -> Battle.Unit? {
+        b.units.first { ($0.keyword == k || $0.actor.lowercased() == k.lowercased() || "\($0.id)" == k) && (side == nil || $0.side == side) && $0.alive }
+    }
+    let base = Date()
+    var now = base
+    cs.clock = now
+    _ = b.takeEvents()
+    func act(_ a: String) {
+        let p = a.split(separator: ":").map(String.init)
+        guard let kind = p.first else { return }
+        switch kind {
+        case "shoot", "melee":
+            guard p.count >= 3, let u = unit(p[1], side: nil), let t = b.units.first(where: { ($0.keyword == p[2] || "\($0.id)" == p[2]) && $0.side != u.side && $0.alive }) else { print("no such units: \(a)"); return }
+            b.putFirst(u.id)
+            print("\(kind) \(u.keyword) -> \(t.keyword): \(kind == "shoot" ? b.shoot(t.id) : b.attack(t.id))")
+        case "cast":
+            guard p.count >= 2, let spell = Int(p[1].split(separator: "@")[0]), let u = b.units.first(where: { $0.side == 0 && $0.caster != nil }) else { print("no caster"); return }
+            b.putFirst(u.id)
+            if var c = u.caster { c.spells = Array(0..<RuleTables.spells.count); c.spellPoints = 500; for k in ["chaos", "life", "order", "death", "nature"] { c.skills[k] = 5 }; u.caster = c }
+            var cell: (Int, Int)? = nil
+            if let at = p[1].split(separator: "@").dropFirst().first { let xy = at.split(separator: ",").compactMap { Int($0) }; if xy.count == 2 { cell = (xy[0], xy[1]) } }
+            let target = p.count >= 3 ? b.units.first { ($0.keyword == p[2] || "\($0.id)" == p[2]) && $0.alive } : nil
+            print("cast \(RuleTables.spells[spell].name): \(b.cast(spell, on: target?.id ?? (cell == nil && !Battle.untargeted(spell) ? b.units.first { $0.side == 1 && $0.alive }?.id : nil), at: cell, tables: g.tables))")
+        case "tele", "disp", "revive", "phantom":
+            // presentation only: the event as the battle would emit it
+            guard p.count >= 2, let u = unit(p[1], side: nil), let caster = b.units.first(where: { $0.side == 0 && $0.caster != nil }) else { return }
+            let xy = p.count >= 3 ? p[2].split(separator: ",").compactMap { Int($0) } : []
+            let spell = ["tele": 178, "disp": 28, "revive": 133, "phantom": 18][kind]!
+            var evs: [Battle.Event] = [.cast(unit: caster.id, spell: spell, targets: [u.id])]
+            switch kind {
+            case "tele": evs.append(.teleported(unit: u.id, from: (u.x, u.y), to: (xy.first ?? u.x, xy.last ?? u.y)))
+            case "disp": evs.append(.displaced(unit: u.id, from: (u.x, u.y), to: (xy.first ?? u.x, xy.last ?? u.y)))
+            case "revive": evs.append(.revived(unit: u.id, spell: spell, count: Int(p.count >= 3 ? p[2] : "5") ?? 5, rose: false))
+            default: evs.append(.phantom(unit: u.id, of: u.id))
+            }
+            cs.take(evs)
+            return
+        default: print("unknown action \(a)")
+        }
+    }
+    let actions = (env["H4ANIMACT"] ?? "").split(separator: ";").map(String.init)
+    let times = (env["H4ANIMT"] ?? "0.5").split(separator: ",").compactMap { Double($0) }.sorted()
+    var pending = actions
+    // the first action now, each next one when the playback is idle again
+    if !pending.isEmpty { act(pending.removeFirst()); let ev = b.takeEvents(); if env["H4ANIMLOG"] != nil { for e in ev { print("  \(e)") } }; cs.take(ev) }
+    let stem = (out as NSString).deletingPathExtension
+    var lastBusy = true
+    for t in times {
+        let end = base.addingTimeInterval(t)
+        while now < end {
+            now = min(end, now.addingTimeInterval(0.005))
+            cs.clock = now
+            cs.update(now: now)
+            let busy = cs.busy
+            if busy != lastBusy, env["H4ANIMLOG"] != nil { print(String(format: "  %.3f s: %@", now.timeIntervalSince(base), busy ? "busy" : "idle")) }
+            lastBusy = busy
+            if !busy, !pending.isEmpty { act(pending.removeFirst()); let ev = b.takeEvents(); if env["H4ANIMLOG"] != nil { for e in ev { print("  \(e)") } }; cs.take(ev) }
+        }
+        if env["H4ANIMLOG"] != nil {
+            for m in cs.missiles { print("  missile \(m.model) pos \(m.pos) delta \(m.delta) left \(m.remaining) facing \(m.facing)") }
+            print(String(format: "t=%.3f missiles %d windows %@ field %@ states %@", t, cs.missiles.count, cs.windows.map { "\($0.name)@\($0.unit)" }.joined(separator: ","),
+                         cs.fieldActors.map { $0.model }.joined(separator: ","), cs.unitState.map { "\($0.key):\($0.value.state)" }.joined(separator: ",")))
+        }
+        render(String(format: "%@_%.2f.png", stem, t))
+    }
+}

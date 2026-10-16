@@ -25,6 +25,8 @@ public struct SpriteImage {
 public struct Sprite {
     public let images: [SpriteImage]
     public let origin: (x: Int32, y: Int32)   // from the trailer, if present
+    /// Where the bytes after the image records start (an animation file's trailer: frame time, order, anchor).
+    public let trailerOffset: Int
     /// Footprint in map cells (adv_object headers: u16 w, u16 h at offset 5); (1, 1) when unknown.
     public let footprint: (w: Int, h: Int)
     /// Cells of the footprint the object occupies (first of the bit masks after the
@@ -148,6 +150,7 @@ public struct Sprite {
             list.append(SpriteImage(name: name, box: (L, T, R, B), bitmap: bm, speed: speed))
         }
         var ox: Int32 = 0, oy: Int32 = 0
+        trailerOffset = rd.pos
         if rd.remaining >= 8 { ox = rd.i32(); oy = rd.i32() }
         images = list
         origin = (ox, oy)

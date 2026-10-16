@@ -552,7 +552,7 @@ if let out = snapshot {
     }
     if let spec = ProcessInfo.processInfo.environment["H4ANIM"], let cs = combatScreen, let hero = game.heroes.first {
         // snapshot: a staged battle, the actions of H4ANIMACT played on a fixed clock, a frame at each time of H4ANIMT
-        runAnimationTest(spec, game: game, cs: cs, hero: hero, out: out) { render(to: $0) }
+        runAnimationTest(spec, game: game, cs: cs, hero: hero, out: out, renderer: renderer) { render(to: $0) }
         exit(0)
     }
     render(to: out)

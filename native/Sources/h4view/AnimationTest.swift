@@ -7,15 +7,15 @@ import H4Engine
 /// "fx:<unit>:<name>[:damage]", "tele:<unit>:x,y", "disp:<unit>:x,y", "revive:<unit>:n", "phantom:<unit>" (units by keyword, a
 /// target on the other side); H4ANIMT="0.3,0.6" the times (s) of the frames written next to the
 /// snapshot path as <name>_<t>.png; H4ANIMLOG prints the playback's timeline.
-func runAnimationTest(_ spec: String, game g: GameState, cs: CombatScreen, hero: Hero, out: String, render: (String) -> Void) {
+func runAnimationTest(_ spec: String, game g: GameState, cs: CombatScreen, hero: Hero, out: String, renderer: Renderer, render: (String) -> Void) {
     let defenders: [(String, Int)] = spec.split(separator: ",").compactMap { p in
         let q = p.split(separator: ":"); return q.count == 2 ? Int(q[1]).map { (String(q[0]), $0) } : nil }
     cs.startTest(game: g, hero: hero, defenders: defenders)
     guard let b = cs.battle else { print("no battle"); return }
     let env = ProcessInfo.processInfo.environment
     print("units: " + b.units.map { "\($0.id):\($0.keyword)x\($0.stats.count)@(\($0.x),\($0.y)) s\($0.side)" }.joined(separator: " "))
-    func unit(_ k: String, side: Int?) -> Battle.Unit? {
-        b.units.first { ($0.keyword == k || $0.actor.lowercased() == k.lowercased() || "\($0.id)" == k) && (side == nil || $0.side == side) && $0.alive }
+    func unit(_ k: String, side: Int?, dead: Bool = false) -> Battle.Unit? {
+        b.units.first { ($0.keyword == k || $0.actor.lowercased() == k.lowercased() || "\($0.id)" == k) && (side == nil || $0.side == side) && ($0.alive || dead) }
     }
     let base = Date()
     cs.traceStart = base
@@ -47,14 +47,14 @@ func runAnimationTest(_ spec: String, game g: GameState, cs: CombatScreen, hero:
             return
         case "tele", "disp", "revive", "phantom":
             // presentation only: the event as the battle would emit it
-            guard p.count >= 2, let u = unit(p[1], side: nil), let caster = b.units.first(where: { $0.side == 0 && $0.caster != nil }) else { return }
+            guard p.count >= 2, let u = unit(p[1], side: nil, dead: kind == "revive"), let caster = b.units.first(where: { $0.side == 0 && $0.caster != nil }) else { return }
             let xy = p.count >= 3 ? p[2].split(separator: ",").compactMap { Int($0) } : []
             let spell = ["tele": 178, "disp": 28, "revive": 133, "phantom": 18][kind]!
             var evs: [Battle.Event] = [.cast(unit: caster.id, spell: spell, targets: [u.id])]
             switch kind {
             case "tele": evs.append(.teleported(unit: u.id, from: (u.x, u.y), to: (xy.first ?? u.x, xy.last ?? u.y)))
             case "disp": evs.append(.displaced(unit: u.id, from: (u.x, u.y), to: (xy.first ?? u.x, xy.last ?? u.y)))
-            case "revive": evs.append(.revived(unit: u.id, spell: spell, count: Int(p.count >= 3 ? p[2] : "5") ?? 5, rose: false))
+            case "revive": evs.append(.revived(unit: u.id, spell: spell, count: Int(p.count >= 3 ? p[2] : "5") ?? 5, rose: p.count >= 4))
             default: evs.append(.phantom(unit: u.id, of: u.id))
             }
             cs.take(evs)
@@ -93,6 +93,12 @@ func runAnimationTest(_ spec: String, game g: GameState, cs: CombatScreen, hero:
             for m in cs.missiles { print("  missile \(m.model) pos \(m.pos) delta \(m.delta) left \(m.remaining) facing \(m.facing)") }
             print(String(format: "t=%.3f missiles %d windows %@ field %@ states %@", t, cs.missiles.count, cs.windows.map { "\($0.name)@\($0.unit)" }.joined(separator: ","),
                          cs.fieldActors.map { $0.model }.joined(separator: ","), cs.unitState.map { "\($0.key):\($0.value.state)" }.joined(separator: ",")))
+        }
+        // H4ANIMAIM="<spell>@x,y": the spell being aimed with the pointer at that canvas point
+        if let aim = env["H4ANIMAIM"], let sp = Int(aim.split(separator: "@")[0]), let xy = aim.split(separator: "@").last?.split(separator: ",").compactMap({ Float($0) }), xy.count == 2 {
+            if let u = b.current, u.side == 0, var c = u.caster { c.spells = Array(0..<RuleTables.spells.count); c.spellPoints = 500; for k in ["chaos", "life", "order", "death", "nature"] { c.skills[k] = 5 }; u.caster = c }
+            renderer.casting = sp
+            print("aim: \(renderer.combatCursor(x: xy[0], y: xy[1])) area \(renderer.combatArea.map { Array($0) } ?? [])")
         }
         render(String(format: "%@_%.2f.png", stem, t))
     }

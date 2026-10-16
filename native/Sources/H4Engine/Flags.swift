@@ -11,7 +11,7 @@ extension GameState {
         let z = level
         if let t = towns.first(where: { $0.z == z && $0.x == p.cellX && $0.y == p.cellY }) { return colour(t.owner) }
         if let m = mines.first(where: { $0.z == z && $0.x == p.cellX && $0.y == p.cellY }) { return colour(m.owner ?? (m.owned ? map.humanColour : nil)) }
-        if let d = dwellings.first(where: { $0.z == z && $0.x == p.cellX && $0.y == p.cellY }) { return d.owned ? colour(map.humanColour) : nil }
+        if let d = dwellings.first(where: { $0.z == z && $0.x == p.cellX && $0.y == p.cellY }) { return colour(d.owner ?? (d.owned ? map.humanColour : nil)) }
         if let s = objectStates[objectKey(p)] { return colour(s.isGarrison ? s.garrisonOwner : s.owner) }
         return nil
     }

@@ -592,7 +592,7 @@ final class CombatScreen {
         case .summon(let id):
             effects.append(("summon", id, now))
             playing = Anim(event: e, started: now, duration: 0.6)
-        case .bodiesGone, .area:
+        case .bodiesGone, .area, .luck:
             break
         case .revive(let id, _, _, let left):
             shownCount[id] = left

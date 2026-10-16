@@ -235,4 +235,47 @@ final class SpellLogicTests: XCTestCase {
         u.stats.effects = [104, 105]
         XCTAssertEqual(b.speed(u), 4); XCTAssertEqual(b.moveCells(u), 7)
     }
+
+    // MARK: morale and luck
+
+    /// Morale 0x5f0020: Sorrow / Mirth force -10 / +10 (even undead), Morale +5, Despair -10.
+    /// Luck 0x5eff50: Fortune / Misfortune force +10 / -10, Luck +5.
+    func testMoraleAndLuckSpells() {
+        let b = Battle(field: field, attackers: [fighter(creature("skeleton"), 1), fighter(creature("squire"), 1)], defenders: [fighter(creature("peasant", speed: 1), 1)], seed: 1)
+        let sk = b.units.first { $0.keyword == "skeleton" }!, sq = b.units.first { $0.keyword == "squire" }!
+        sk.stats.abilities = ["undead"]
+        sk.stats.effects = [148]; XCTAssertEqual(b.morale(sk), 10)
+        sk.stats.effects = [103]; XCTAssertEqual(b.morale(sk), 0)
+        sq.stats.morale = 2
+        sq.stats.effects = [103]; XCTAssertEqual(b.morale(sq), 7)
+        sq.stats.effects = [25]; XCTAssertEqual(b.morale(sq), -8)
+        sq.stats.effects = [145, 148]; XCTAssertEqual(b.morale(sq), -10)
+        sq.stats.luck = 3
+        sq.stats.effects = [70]; XCTAssertEqual(b.luck(sq), 8)
+        sq.stats.effects = [102]; XCTAssertEqual(b.luck(sq), -10)
+        sq.stats.effects = [48, 102]; XCTAssertEqual(b.luck(sq), 10)
+    }
+
+    /// Luck is the struck stack's (0x5f2c50): good luck leaves 2/3 of the damage, bad adds half.
+    func testLuckOfTheStruckStack() {
+        let b = Battle(field: field, attackers: [fighter(creature("squire"), 1)], defenders: [fighter(creature("peasant", speed: 1), 1)], seed: 1)
+        let t = b.units.first { $0.side == 1 }!
+        t.stats.effects = [48]
+        XCTAssertEqual(b.luckyDamage(t, 30), 20)
+        t.stats.effects = [102]
+        XCTAssertEqual(b.luckyDamage(t, 30), 45)
+    }
+
+    /// Casting Luck / Morale leaves Fortune / Mirth (remap 0x865580); Mirth and Sorrow take each other off.
+    func testLuckAndMoraleRemapAndOpposites() {
+        let b = Battle(field: field, attackers: [hero(spells: [70, 103, 145], sp: 100)], defenders: [fighter(creature("peasant", speed: 1), 1)], seed: 1)
+        let h = b.units.first { $0.side == 0 }!
+        var c = h.caster!; c.skills = ["nature": 1, "life": 1, "death": 2]; h.caster = c
+        XCTAssertTrue(b.cast(70, on: h.id))
+        XCTAssertTrue(h.stats.under(48))
+        b.apply(148, to: h, power: 0)
+        b.apply(145, to: h, power: 0)
+        XCTAssertFalse(h.stats.under(148))
+        XCTAssertTrue(h.stats.under(145))
+    }
 }

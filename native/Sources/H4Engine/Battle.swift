@@ -79,6 +79,8 @@ public final class Battle {
         case shoot(unit: Int, target: Int, damage: Int, killed: Int, left: Int)
         case die(unit: Int)
         case morale(unit: Int, good: Bool)
+        /// The luck of the stack about to be struck: good (it takes a third less) or bad (half more).
+        case luck(unit: Int, good: Bool)
         /// A creature ability or its spell took hold: `name` is the spell animation
         /// (animation.spell.<name>), with any damage it did.
         case effect(unit: Int, name: String, damage: Int, killed: Int, left: Int)
@@ -283,9 +285,33 @@ public final class Battle {
 
     /// Morale (heroes4.exe 0x5f0020): mechanical and undead creatures have none; otherwise the
     /// stack's morale from its army plus the side's loss penalty, clamped to -10...10.
+    /// Sorrow forces -10 and Mirth +10 first (they work on undead and mechanical stacks too); then
+    /// the Morale spell +5 and Despair -10, clamped.
     public func morale(_ u: Unit) -> Int {
+        if u.stats.under(145) { return -10 }
+        if u.stats.under(148) { return 10 }
         if u.stats.has("mechanical") || u.stats.has("undead") { return 0 }
-        return min(10, max(-10, u.stats.morale + lossPenalty[u.side]))
+        var m = u.stats.morale + lossPenalty[u.side]
+        if u.stats.under(103) { m += 5 }
+        if u.stats.under(25) { m -= 10 }
+        return min(10, max(-10, m))
+    }
+    /// Luck (heroes4.exe 0x5eff50): Fortune forces +10, Misfortune -10; otherwise the stack's luck
+    /// from its army and items, +5 under Luck, clamped. No creature is without luck.
+    public func luck(_ u: Unit) -> Int {
+        if u.stats.under(48) { return 10 }
+        if u.stats.under(102) { return -10 }
+        return min(10, max(-10, u.stats.luck + (u.stats.under(70) ? 5 : 0)))
+    }
+    /// The luck of the stack struck, rolled when a blow lands (0x5f2c50, battle stream tag 0x1b):
+    /// good luck (roll % 10 < luck) leaves two thirds of the damage, bad luck (roll < -luck) adds half.
+    func luckyDamage(_ t: Unit, _ dmg: Int) -> Int {
+        let l = luck(t)
+        guard l != 0 else { return dmg }
+        let roll = rng.next() % 10
+        if roll < l { events.append(.luck(unit: t.id, good: true)); return max(1, 2 * dmg / 3) }
+        if roll < -l { events.append(.luck(unit: t.id, good: false)); return dmg + dmg >> 1 }
+        return dmg
     }
 
     /// Alignments in the game's order (life, order, death, chaos, nature, might).
@@ -615,6 +641,7 @@ public final class Battle {
             let per = [250, 100, 50, 20][min(3, max(0, b.stats.level - 1))]
             if per * a.stats.count >= 500 { dmg += Int((Double(b.stats.hitPoints) * Double(per * a.stats.count) * 0.001).rounded()) }
         }
+        dmg = luckyDamage(b, dmg)
         dmg = min(dmg, before)
         let killed = wound(b, dmg, by: a)
         events.append(ranged ? .shoot(unit: a.id, target: b.id, damage: dmg, killed: killed, left: b.stats.count)

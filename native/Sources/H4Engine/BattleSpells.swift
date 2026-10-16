@@ -246,7 +246,9 @@ extension Battle {
         let p = power(spell, by: u, creatures: tables)
         events.append(.cast(unit: u.id, spell: spell, targets: targets.map { $0.id }))
         if let c = cell, Battle.aim(spell) == .cell || Battle.aim(spell) == .unitOrCell && targetId == nil { events.append(.area(unit: u.id, spell: spell, cell: c)) }
-        let effectSpell = Battle.massOf[spell] ?? (spell == 19 ? 21 : spell)   // Cloud of Confusion confuses each
+        // the effect it leaves: the mass spell's single one, Cloud of Confusion's Confusion, and the
+        // remap 0x865580 (Luck -> Fortune, Morale -> Mirth, Immortality -> Guardian Angel)
+        let effectSpell = Battle.massOf[spell] ?? [19: 21, 70: 48, 103: 148, 116: 53][spell] ?? spell
         // Poison and Plague deal nothing now: their damage after resistance is kept and dealt at the
         // start of each of the target's turns (0x61b980 / 0x78e320); Regeneration heals each turn
         let lasting: Set<Int> = [110, 111, 131, 112]
@@ -388,10 +390,12 @@ extension Battle {
 
     /// A lasting spell on a stack: the stat getters read `effects`; some set the older flags.
     func apply(_ spell: Int, to t: Unit, power p: Int) {
-        // opposites cancel: Bless / Curse, Haste / Slow, Fortune / Misfortune
-        let opposite: [Int: [Int]] = [10: [23], 23: [10], 55: [105, 141], 146: [105, 141], 104: [105, 141], 105: [55, 104, 146], 141: [55, 104, 146],
-                                      48: [102], 102: [48], 145: [103], 25: [103], 103: [145, 25], 6: [144], 21: [6], 154: [6], 144: [6]]
-        for o in opposite[spell] ?? [] { t.stats.effects.remove(o); t.durations[o] = nil; if o == 23 { t.stats.cursed = false } }
+        // what it takes off (add_spell 0x5f0220): Bless / Curse, Fortune / Misfortune, Haste and
+        // Speed / Slow and Fatigue, Despair and Sorrow take Mirth off, Mirth Sorrow, Berserk / Song
+        // of Peace, Necromancy Ward the raising spells
+        let opposite: [Int: [Int]] = [10: [23], 23: [10], 48: [102], 102: [48], 55: [105, 141], 104: [105, 141], 105: [55, 104], 141: [55, 104],
+                                      25: [148], 145: [148], 148: [145], 6: [144], 144: [6], 135: [2, 24, 124, 125, 126]]
+        for o in opposite[spell] ?? [] { remove(o, from: t) }
         // the fixed lengths (§1), a turn more when it lands on the stack whose turn it is
         let lengths: [Int: Int] = [21: 1, 154: 1, 144: 1, 122: 2, 180: 2, 186: 2, 11: 3, 22: 3, 62: 3, 137: 6]
         if let n = lengths[spell] { t.durations[spell] = n + (current?.id == t.id ? 1 : 0) }

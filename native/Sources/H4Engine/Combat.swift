@@ -16,6 +16,8 @@ public struct Combatant {
     public var defending = false        // Defend doubles the defense until the next turn
     /// Morale from the army's sources (heroes4.exe keeps two, +0xae8 and +0xaec on the combat creature).
     public var morale = 0
+    /// Luck from the army and its items (the slot's luck +0x10, artifact luck +0xacc).
+    public var luck = 0
     /// The game's ability keywords ("first_strike", "no_retaliation", ...), from heroes4.exe's
     /// per-creature table (RuleTables.creatureAbilities).
     public var abilities: Set<String> = []

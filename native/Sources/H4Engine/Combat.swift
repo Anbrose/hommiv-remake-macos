@@ -29,6 +29,8 @@ public struct Combatant {
     public var morale = 0
     /// Luck from the army and its items (the slot's luck +0x10, artifact luck +0xacc).
     public var luck = 0
+    /// Standing on quicksand: melee attack x 0.75 (flag +0xa4e, 0x5f1cc0 / 0x5ee170).
+    public var onQuicksand = false
     /// The game's ability keywords ("first_strike", "no_retaliation", ...), from heroes4.exe's
     /// per-creature table (RuleTables.creatureAbilities).
     public var abilities: Set<String> = []
@@ -178,6 +180,7 @@ public enum QuickCombat {
         // spells on the attacker (0x5ee170): Bloodlust +25% melee, Precision +25% ranged, Prayer
         // +25%; Weakness and Aging -25% (above), Unholy Song -20%, Choking Gas -15%
         if !ranged, a.under(13) { attack *= 1.25 }
+        if !ranged, a.onQuicksand { attack *= 0.75 }
         if ranged, a.under(115) { attack *= 1.25 }
         if a.under(114) { attack *= 1.25 }
         if a.under(185), !a.weakened { attack *= 0.75 }

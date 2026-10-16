@@ -455,4 +455,42 @@ final class SpellLogicTests: XCTestCase {
         XCTAssertEqual(t.stats.effects, [23])
         XCTAssertTrue(h.stats.under(58))
     }
+
+    // MARK: movement and ground spells
+
+    /// Displacement pushes up to 8 cells straight away from the pointer (0x860120); Teleport goes to any free reachable cell.
+    func testDisplacementAndTeleport() {
+        let b = Battle(field: field, attackers: [hero(skills: ["order": 3], spells: [28, 178])], defenders: [fighter(creature("peasant", speed: 1), 1)], seed: 1)
+        let h = b.units.first { $0.side == 0 }!, t = b.units.first { $0.side == 1 }!
+        h.x = 10; h.y = 10; t.x = 50; t.y = 50; t.stats.magicResistance = 0
+        XCTAssertEqual(b.displacement(t, pointer: (45, 51)).0, 58)           // pointer on the -x side: v = (9, 0), 8 cells
+        XCTAssertEqual(b.displacement(t, pointer: (45, 51)).1, 50)
+        XCTAssertTrue(b.teleportOK(t, to: (70, 70)))
+        XCTAssertFalse(b.teleportOK(t, to: (10, 10)))                       // the hero stands there
+    }
+
+    /// Quicksand (0x6257a0): a step touching it costs half the full move; Terrain Walk ignores it.
+    func testQuicksandCostsHalfTheMove() {
+        let b = Battle(field: field, attackers: [fighter(creature("squire", move: 10), 1)], defenders: [fighter(creature("peasant", speed: 1), 1)], seed: 1)
+        let u = b.units.first { $0.side == 0 }!
+        u.x = 50; u.y = 50
+        XCTAssertTrue(b.quicksandOK(53, 50))
+        b.quicksand.insert(Battle.key(53, 50))
+        XCTAssertEqual(b.reachable(u)[Battle.key(52, 50)], 6)              // 1, then 5 (the footprint touches 53)
+        u.stats.effects.insert(179); _ = b.takeEvents()
+        XCTAssertEqual(b.reachable(u)[Battle.key(52, 50)], 2)
+    }
+
+    /// Smoke halves shots through it like an obstacle (0x56ff60 -> 0x650dc0).
+    func testSmokeHalvesShotsThroughIt() {
+        var arch = creature("crossbowman"); arch = CreatureDef(keyword: "orc", name: "orc", plural: "orc", level: 1, alignment: "might", hitPoints: 10, damageLow: 2, damageHigh: 2,
+                                                                attack: 10, defense: 10, move: 10, speed: 5, growth: 1, gold: 1, experience: 1, shots: 10, spellPoints: 0, shortHelp: "", longHelp: "")
+        let b = Battle(field: field, attackers: [Battle.Fighter(stats: Combatant(creature: arch, count: 1), keyword: "orc", actor: "orc", size: 2, move: 10, shots: 10)],
+                       defenders: [fighter(creature("peasant", speed: 1), 1)], seed: 1)
+        let a = b.units.first { $0.side == 0 }!, t = b.units.first { $0.side == 1 }!
+        a.x = 50; a.y = 50; t.x = 50; t.y = 60
+        XCTAssertEqual(b.rangeDivisor(a, t), 1)
+        b.smoke.insert(Battle.key(51, 55))
+        XCTAssertEqual(b.rangeDivisor(a, t), 2)
+    }
 }

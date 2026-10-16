@@ -291,6 +291,14 @@ extension Battle {
         guard finished == nil, let u = current, var c = u.caster, castable(u).contains(spell) else { return false }
         let s = RuleTables.spells[spell]
         guard let targets = castTargets(spell, by: u, target: targetId, cell: cell) else { return false }
+        // where the field spells go must be good before anything is spent
+        switch spell {
+        case 178: guard let t = targets.first, let c = cell, teleportOK(t, to: c) else { return false }
+        case 134: guard let c = cell, rockOK(c, by: u) else { return false }
+        case 123: guard let c = cell, quicksandOK(c.0, c.1) else { return false }
+        case 142: guard let c = cell, Battlefield.onField(c.0, c.1) else { return false }
+        default: break
+        }
         if spell == 136 || spell == 79 {   // Sacrifice, Martyr: a second friendly stack
             guard let sid = second, sid != targetId, let t2 = units.first(where: { $0.id == sid }), canTarget(spell, by: u, t2) else { return false }
         }
@@ -420,6 +428,48 @@ extension Battle {
                     if spell == 150 { break }
                 }
             }
+        case _ where spell == 178 || spell == 28:
+            // Teleport (0x87e840 / 0x87f300): to the chosen cell; Displacement (0x8604e0 / 0x8602a0):
+            // pushed away from the pointer, a cell a step, as far as 8 cells while the way is free.
+            // An enemy resists first (Resisted if Enemy)
+            for t in targets {
+                if hostile(t, u) {
+                    let r = resistance(t, to: spell, by: u)
+                    if r >= 100 || rng.next() % 100 < r { events.append(.resisted(unit: t.id, spell: spell)); continue }
+                }
+                let from = (t.x, t.y)
+                let to = spell == 178 ? cell ?? from : displacement(t, pointer: cell ?? from)
+                guard to != from else { continue }
+                release(by: t); t.boundBy = nil
+                t.x = to.0; t.y = to.1
+                events.append(spell == 178 ? .teleported(unit: t.id, from: from, to: to) : .displaced(unit: t.id, from: from, to: to))
+            }
+        case _ where spell == 123:   // Quicksand: power cells painted from the chosen one (0x7f2dd0 / 0x7f27f0)
+            if let c = cell {
+                var painted: [Int] = []
+                var ring = [(c.0, c.1)], seen: Set<Int> = [Battlefield.key(c.0, c.1)]
+                while painted.count < p, !ring.isEmpty {
+                    ring.sort { ($0.0 - c.0) * ($0.0 - c.0) + ($0.1 - c.1) * ($0.1 - c.1) < ($1.0 - c.0) * ($1.0 - c.0) + ($1.1 - c.1) * ($1.1 - c.1) }
+                    let (x, y) = ring.removeFirst()
+                    if quicksandOK(x, y) { painted.append(Battlefield.key(x, y)); quicksand.insert(Battlefield.key(x, y)) }
+                    for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] where Battlefield.onField(x + dx, y + dy) && !seen.contains(Battlefield.key(x + dx, y + dy)) {
+                        seen.insert(Battlefield.key(x + dx, y + dy)); ring.append((x + dx, y + dy))
+                    }
+                }
+                events.append(.obstacle(spell: spell, cells: painted.map { ($0 / Battlefield.size, $0 % Battlefield.size) }))
+            }
+        case _ where spell == 142:   // Smoke (0x87b630): a 4 x 4 cloud from the cell - 1, halving shots through it
+            if let c = cell {
+                var cells: [(Int, Int)] = []
+                for i in -1...2 { for j in -1...2 where Battlefield.onField(c.0 + i, c.1 + j) { smoke.insert(Battlefield.key(c.0 + i, c.1 + j)); cells.append((c.0 + i, c.1 + j)) } }
+                events.append(.obstacle(spell: spell, cells: cells))
+            }
+        case _ where spell == 134:   // Rock Growth (0x87a770): a 3 x 3 rock from the cell - 1, blocking
+            if let c = cell {
+                var cells: [(Int, Int)] = []
+                for i in -1...1 { for j in -1...1 { field.blockCell(c.0 + i, c.1 + j); cells.append((c.0 + i, c.1 + j)) } }
+                events.append(.obstacle(spell: spell, cells: cells))
+            }
         case "resurrection":   // Resurrection (0x804020): back to the stack it was
             if let t = targets.first { resurrect(t, power: p, spell: spell) }
         case "summoning" where s.has("Bodies"):   // Raise Skeletons / Ghost / Vampires, Animate Dead, Death Call (0x8058f0)
@@ -505,6 +555,57 @@ extension Battle {
         if !t.alive { events.append(.die(unit: t.id)) }
         flushDeferred()
         return killed
+    }
+
+    /// Teleport's destination (0x87eef0): a free place for the stack it can get to over the field,
+    /// any distance, walls, obstacles and stacks in between being barriers.
+    func teleportOK(_ t: Unit, to c: (Int, Int)) -> Bool {
+        func free(_ x: Int, _ y: Int) -> Bool { field.fits(x, y, size: t.size) && !overlaps(x, y, t.size, except: t.id) }
+        guard free(c.0, c.1) else { return false }
+        var seen: Set<Int> = [Battle.key(t.x, t.y)], queue = [(t.x, t.y)]
+        while !queue.isEmpty {
+            let (x, y) = queue.removeLast()
+            if (x, y) == c { return true }
+            for st in Battle.steps {
+                let nx = x + st.dx, ny = y + st.dy, k = Battle.key(nx, ny)
+                guard nx >= 0, ny >= 0, nx < Battlefield.size, ny < Battlefield.size, !seen.contains(k), free(nx, ny) else { continue }
+                seen.insert(k); queue.append((nx, ny))
+            }
+        }
+        return false
+    }
+    /// Displacement's push (0x8609f0 / 0x860120): the vector from the pointer to the stack's
+    /// centre, 10 long (truncated); k = 1...8 steps of k x v / max(|vx|, |vy|) while within 8 cells
+    /// and free; it ends on the last free one.
+    func displacement(_ t: Unit, pointer: (Int, Int)) -> (Int, Int) {
+        let dx = Double(t.x * 16 + t.size * 8 - (pointer.0 * 16 + 8)), dy = Double(t.y * 16 + t.size * 8 - (pointer.1 * 16 + 8))
+        let len = (dx * dx + dy * dy).squareRoot()
+        guard len > 0 else { return (t.x, t.y) }
+        let vx = Int(10 * dx / len), vy = Int(10 * dy / len), m = max(abs(vx), abs(vy))
+        guard m > 0 else { return (t.x, t.y) }
+        var end = (t.x, t.y)
+        for k in 1...8 {
+            let ox = k * vx / m, oy = k * vy / m
+            if ox * ox + oy * oy > 64 { break }
+            let x = t.x + ox, y = t.y + oy
+            guard field.fits(x, y, size: t.size), !overlaps(x, y, t.size, except: t.id) else { break }
+            end = (x, y)
+        }
+        return end
+    }
+    /// A cell quicksand can go on (0x7f2210): on the field, passable, no living stack on it, not yet quicksand.
+    func quicksandOK(_ x: Int, _ y: Int) -> Bool {
+        field.isOpen(x, y) && !quicksand.contains(Battlefield.key(x, y)) && !overlaps(x, y, 1, except: -1)
+    }
+    /// Rock Growth's place (0x87a590): the 3 x 3 cells free and on the field, every enemy stack at
+    /// least 5 cells from its edge.
+    func rockOK(_ c: (Int, Int), by u: Unit) -> Bool {
+        for i in -1...1 { for j in -1...1 where !field.isOpen(c.0 + i, c.1 + j) || overlaps(c.0 + i, c.1 + j, 1, except: -1) { return false } }
+        for v in units where v.alive && hostile(v, u) {
+            let gx = max(0, max(v.x - (c.0 + 1), (c.0 - 1) - (v.x + v.size - 1))), gy = max(0, max(v.y - (c.1 + 1), (c.1 - 1) - (v.y + v.size - 1)))
+            if max(gx, gy) < 5 { return false }
+        }
+        return true
     }
 
     /// Spells a dispel takes off (kind 0 all, 1 the Bless and Summ ones, 2 the Curse ones), never
@@ -764,5 +865,13 @@ extension Battle {
             let (lo, hi) = damageRange(u, t, ranged: ranged)
             return min(t.stats.totalHealth, (lo + hi) / 2)
         }.max() ?? 0
+    }
+}
+
+extension Battlefield {
+    /// A cell made impassable during the battle (Rock Growth).
+    mutating func blockCell(_ x: Int, _ y: Int) {
+        guard Battlefield.onField(x, y) else { return }
+        blocked[x * Battlefield.size + y] = true
     }
 }

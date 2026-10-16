@@ -118,6 +118,8 @@ public final class Battle {
         case revived(unit: Int, spell: Int, count: Int, rose: Bool)
         /// A phantom copy (`unit`) of the stack `of` (Phantom Image, Create Illusion).
         case phantom(unit: Int, of: Int)
+        /// Spell-made ground: Quicksand's cells, Smoke's 4 x 4 cloud, Rock Growth's rock.
+        case obstacle(spell: Int, cells: [(Int, Int)])
     }
 
     public internal(set) var units: [Unit] = []
@@ -208,6 +210,24 @@ public final class Battle {
 
     /// The rule tables (summoned and raised creatures, the summon divisor).
     public var tables: RuleTables?
+    /// Spell-made ground: quicksand cells (bit 2 of the cell byte, 0x7f1920) and smoke cells (bit 0x20,
+    /// 0x877460), for the rest of the battle.
+    public internal(set) var quicksand: Set<Int> = [], smoke: Set<Int> = []
+    func onQuicksand(_ x: Int, _ y: Int, _ size: Int) -> Bool {
+        for i in 0..<size { for j in 0..<size where quicksand.contains(Battlefield.key(x + i, y + j)) { return true } }
+        return false
+    }
+    /// Does the straight line between two world points pass one of these cells?
+    func crosses(_ cells: Set<Int>, _ a: (Float, Float), _ b: (Float, Float)) -> Bool {
+        let d = max(abs(b.0 - a.0), abs(b.1 - a.1))
+        let steps = max(1, Int(d * 2))
+        for k in 1..<steps {
+            let t = Float(k) / Float(steps)
+            let x = Int((a.0 + (b.0 - a.0) * t).rounded(.down)), y = Int((a.1 + (b.1 - a.1) * t).rounded(.down))
+            if cells.contains(Battlefield.key(x, y)) { return true }
+        }
+        return false
+    }
     /// The schools whose grail each side's kingdom holds (battle +0x344[side], read by 0x410040);
     /// the caller fills it -- the exe's source object was not identified.
     public var grails: [Set<String>] = [[], []]
@@ -479,7 +499,11 @@ public final class Battle {
         var fits = [Bool](repeating: false, count: n * n)
         if !flies { for x in 0..<n { for y in 0..<n { fits[x * n + y] = standOK(x, y) } } }
         // the moat: a walker with more than 4 cells of move pays a quarter of it for each moat cell (0x6257a0)
-        let moatCost: Float? = !flies && !field.moat.isEmpty && moveCells(u) > 4 ? moveCells(u) / 4 : nil
+        // Terrain Walk: no moat or quicksand costs (0x6257a0 returns early)
+        let terrainWalk = u.stats.under(179)
+        let moatCost: Float? = !flies && !terrainWalk && !field.moat.isEmpty && moveCells(u) > 4 ? moveCells(u) / 4 : nil
+        // Quicksand (0x6257a0 / 0x60d1fc): a step whose footprint touches it costs half the full move, a cell at least
+        let sandCost: Float? = !flies && !terrainWalk && !quicksand.isEmpty ? max(1, moveCells(u) / 2) : nil
         var dist = [Float](repeating: .infinity, count: n * n)
         var parent = [Int](repeating: -1, count: n * n)
         dist[u.x * n + u.y] = 0
@@ -531,6 +555,7 @@ public final class Battle {
                 guard nx >= 0, ny >= 0, nx < n, ny < n else { continue }
                 var nc = c + s.cost
                 if let m = moatCost, field.moat.contains(Battlefield.key(nx, ny)) { nc = c + max(s.cost, m) }
+                if let q = sandCost, onQuicksand(nx, ny, u.size) { nc = c + max(s.cost, q) }
                 if let f = free, !f.contains(where: { $0 == (s.dx, s.dy) }) { nc += zocCost * s.cost }
                 let nk = nx * n + ny
                 guard nc <= limit + 0.001, !blocked[nk] else { continue }
@@ -620,7 +645,9 @@ public final class Battle {
         else if a.stats.has("short_range") { div = d >= 40 ? 4 : d >= 20 ? 2 : 1 }
         else { div = d >= 40 ? 2 : 1 }
         let walled = !onTower(a) && field.crossesWall(a.centre, b.centre)
-        if field.obstructed(a.centre, b.centre) || walled || onTower(b), !a.stats.has("siege_machine"), !onTower(a) { div *= 2 }
+        // Smoke counts as an obstacle in the way (cell bit 0x20 -> obstruction level 1, 0x56ff60)
+        let smoked = !smoke.isEmpty && crosses(smoke, a.centre, b.centre)
+        if field.obstructed(a.centre, b.centre) || smoked || walled || onTower(b), !a.stats.has("siege_machine"), !onTower(a) { div *= 2 }
         return div
     }
 
@@ -639,6 +666,7 @@ public final class Battle {
     @discardableResult
     func hit(_ a: Unit, _ b: Unit, ranged: Bool, secondary: Bool = false) -> Int {
         let before = b.stats.totalHealth
+        a.stats.onQuicksand = onQuicksand(a.x, a.y, a.size)
         var dmg = QuickCombat.damage(a.stats, b.stats, rng: &rng, ranged: ranged, moved: ranged ? 0 : Int(a.moved))
         var stoned = false
         if ranged { dmg = max(1, dmg / rangeDivisor(a, b)) }

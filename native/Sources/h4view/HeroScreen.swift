@@ -163,13 +163,13 @@ extension Renderer {
             out += paragraph(c.longHelp, in: UILayer(name: "", kind: 1, x: t.x + 5, y: t.y - 16, width: t.width - 10, height: t.height + 36, bitmap: Bitmap(width: 1, height: 1)), at: ox, oy, font: ui.font(18))
         }
         out += creatureModelQuads(st.creature, d, ox, oy)
-        let bonus = ArmyBonuses(heroes: [leader] + leader.companions)
+        let bonus = ArmyBonuses(heroes: leader.members)
         func tenths(_ v: Int, _ pct: Int) -> String {   // shown with a decimal when the bonus leaves one (ftol(v x 10 + 0.5))
             let t = Int((Double(v * (100 + pct)) / 10 + 0.5))
             return t % 10 == 0 ? "\(t / 10)" : String(format: "%.1f", Double(t) / 10)
         }
         let ranged = c.shots > 0
-        let army: [(alignment: String, undead: Bool)] = ([leader] + leader.companions).map { ($0.alignment, false) } + leader.army.compactMap { s in
+        let army: [(alignment: String, undead: Bool)] = leader.members.map { ($0.alignment, false) } + leader.army.compactMap { s in
             g.tables?.creature(s.creature).map { ($0.alignment, Combatant(creature: $0, count: 1).has("undead")) } }
         let noMorale = Combatant(creature: c, count: 1).has("undead") || Combatant(creature: c, count: 1).has("mechanical")
         let m = noMorale ? 0 : Battle.armyMorale(own: c.alignment, army: army) + bonus.morale
@@ -231,7 +231,7 @@ extension Renderer {
             out.append(Quad(texture: uiTexture("button|\(file)|\(state)", { b.bitmap }), x: ox + s.x + (s.width - b.width) / 2, y: oy + s.y + (s.height - b.height) / 2, w: b.width, h: b.height))
         }
         // morale and luck: their icons (icons.morale.34 "+1 Morale", "0 Luck") by the numbers
-        let army = [leader] + leader.companions
+        let army = leader.members
         let moraleArmy: [(alignment: String, undead: Bool)] = army.map { ($0.alignment, false) } + leader.army.compactMap { st in g.tables?.creature(st.creature).map { ($0.alignment, Combatant(creature: $0, count: 1).has("undead")) } }
         let m = Battle.armyMorale(own: leader.alignment, army: moraleArmy)
         let icons = iconSheet("morale.34")

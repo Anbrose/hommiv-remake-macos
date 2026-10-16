@@ -33,7 +33,7 @@ struct ShopState {
             rows = items.enumerated().map { ($0.element, "Item_\($0.offset + 1)") } + offer.potions.enumerated().map { ($0.element, "Potion_\($0.offset + 1)") }
         }
     }
-    var receivers: [Hero] { [offer.hero] + offer.hero.companions }
+    var receivers: [Hero] { offer.hero.members }
     var generic: Bool { rows.first.map { $0.slot.hasPrefix("Item_") || $0.slot.hasPrefix("Potion_") } ?? true }
 }
 

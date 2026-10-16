@@ -156,7 +156,7 @@ extension GameState {
                     guard let self = self else { return }
                     for st in self.towns[i].garrison {
                         if let k = h.army.firstIndex(where: { $0.creature == st.creature }) { h.army[k].count += st.count }
-                        else if h.army.count + 1 + h.companions.count < Hero.armySlots { h.army.append(st) } else { continue }
+                        else if h.army.count + h.members.count < Hero.armySlots { h.army.append(st) } else { continue }
                         self.towns[i].garrison.removeAll { $0.creature == st.creature }
                     }
                     self.refreshMovement(h)

@@ -18,7 +18,7 @@ extension GameState {
     /// Movement at sea (0x642740): the best of 15 per stack and the heroes' seamanship, +10 with a lighthouse.
     func seaMovement(_ h: Hero) -> Float {
         var best: Float = h.army.isEmpty && h.companions.isEmpty ? 0 : 15
-        for hh in [h] + h.companions {
+        for hh in h.members {
             let items = hh.artifactEffects.filter { $0.type == 0x00 && $0.sea }.reduce(0) { $0 + $1.amount }
             best = max(best, 0.15 * Float(GameState.seaTable[min(5, hh.skill("seamanship"))] + items))
         }
@@ -27,7 +27,7 @@ extension GameState {
         return best + (lighthouse ? 10 : 0)
     }
     /// The Seaman's Hat (effect 0x28): no movement lost boarding or landing.
-    func keepsMovementBoarding(_ h: Hero) -> Bool { ([h] + h.companions).contains { hh in hh.artifactEffects.contains { $0.type == 0x28 } } }
+    func keepsMovementBoarding(_ h: Hero) -> Bool { h.members.contains { hh in hh.artifactEffects.contains { $0.type == 0x28 } } }
 
     /// A water route (8 neighbours, x1.4 diagonally) over free water to `goal`.
     public func seaPath(from s: (Int, Int), to goal: (Int, Int), landingAt land: (Int, Int)? = nil) -> [(x: Int, y: Int)]? {

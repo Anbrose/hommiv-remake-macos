@@ -121,7 +121,7 @@ extension GameState {
     /// Daily income of the worn items (0x12), for every hero.
     public var artifactIncome: [String: Int] {
         var out: [String: Int] = [:]
-        for h in heroes.flatMap({ [$0] + $0.companions }) {
+        for h in heroes.flatMap({ $0.members }) {
             for e in h.artifactEffects where e.type == 0x12 {
                 for (m, n) in e.income.enumerated() where n > 0 && m < GameState.materialNames.count { out[GameState.materialNames[m], default: 0] += n }
             }

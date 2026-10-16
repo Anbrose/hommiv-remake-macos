@@ -233,7 +233,7 @@ extension GameState {
                 objectStates[k]?.countdown = 7
             } else { objectStates[k] = st }
         }
-        for h in heroes.flatMap({ [$0] + $0.companions }) {
+        for h in heroes.flatMap({ $0.members }) {
             h.manaRestoredToday = 0
             for (k, d) in h.timedEffects { h.timedEffects[k] = d > 1 ? d - 1 : nil }
             // spell points come back: 2, and 2 per level of the five magic secondaries (0x72da20)
@@ -273,7 +273,10 @@ extension GameState {
         scene.remove(p)
         for i in 0..<p.sprite.footprint.w { for j in 0..<p.sprite.footprint.h { passability.free(p.cellX + i, p.cellY + j) } }
     }
-    func armyHeroes(_ hero: Hero) -> [Hero] { [hero] + hero.companions }
+    func armyHeroes(_ hero: Hero) -> [Hero] { hero.members }
+    /// Object types whose no_heroes / need_hero texts refuse an army without a hero.
+    static let heroOnlyObjects: Set<String> = ["fountain", "mana_recharger", "school", "teacher", "academy", "arena", "mercenary_camp",
+                                               "sacred_grove", "sphinx", "training_grounds", "tree_of_knowledge"]
 
     /// Debugging: visit an object as `hero` would (no walking).
     public func debugVisit(hero: Hero, _ p: MapScene.Placed) -> Bool { visitObject(hero: hero, p) }
@@ -282,6 +285,12 @@ extension GameState {
     @discardableResult
     func visitObject(hero: Hero, _ p: MapScene.Placed) -> Bool {
         guard hasVisit(p) else { return false }
+        // objects that serve heroes only turn a heroless army away with their no_heroes text
+        // (table.Adventure Object; army_split_spec.md §6)
+        if hero.heroless, GameState.heroOnlyObjects.contains(p.type.hasPrefix("random_") ? String(p.type.dropFirst(7)) : p.type),
+           let t = objectText(p, "no_heroes") ?? objectText(p, "need_hero") ?? objectText(p, "university_no_heroes") {
+            scripts.messages.append(t); return true
+        }
         let key = objectKey(p)
         var st = objectStates[key] ?? ObjectState()
         defer { if objectStates[key] != nil { objectStates[key] = st } }

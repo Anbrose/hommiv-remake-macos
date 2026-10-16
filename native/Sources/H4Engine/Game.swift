@@ -213,7 +213,16 @@ public struct Passability {
 
 /// A hero on the adventure map.
 public final class Hero {
-    public let actor: String          // adv_actor name without prefix, e.g. "hero.life_might_male"
+    /// adv_actor name without prefix, e.g. "hero.life_might_male"; a heroless army's strongest creature ("Gold Golem").
+    public var actor: String
+    /// An army without a hero (heroes4.exe: a t_army whose creature array holds no hero, made by
+    /// splitting an army or leaving a town without one, army_split_spec.md): this object only carries
+    /// the army on the map; its own hero fields are unused.
+    public var heroless = false
+    /// The army's place in the player's army list (new armies go to the end).
+    public var listRank = 0
+    /// The army's heroes: the leader and its companions, none for a heroless army.
+    public var members: [Hero] { heroless ? [] : [self] + companions }
     public var name = "Hero"
     public var keyword = ""           // heroes table keyword, also the portrait layer name
     public var alignment = "life"
@@ -257,6 +266,8 @@ public final class Hero {
     public var boardTarget: (Int, Int)? = nil
     /// An enemy hero this hero is on its way to attack.
     public var attackTarget: Hero? = nil
+    /// A friendly army this army is on its way to meet (the trade, army_split_spec.md §0).
+    public var tradeTarget: Hero? = nil
     // What adventure objects gave the hero (heroes4.exe's bonus array at hero+0x10: attack,
     // defense, speed and spell points; the Dream Teachers visited at +0x7a0)
     public var attackBonus = 0, defenseBonus = 0, speedBonus = 0, spellPointBonus = 0
@@ -373,6 +384,8 @@ public final class GameState {
     public var pendingSiege: (hero: Hero, town: Int)?
     /// A battle with an enemy hero army waiting for the combat screen.
     public var pendingHeroBattle: (hero: Hero, enemy: Hero)?
+    /// Two of the player's armies met (the trade): the army screen of the two waits for the UI.
+    public var pendingTrade: (hero: Hero, other: Hero)?
     /// Each adventure object's rolled contents and state, by "level|x|y".
     public var objectStates: [String: ObjectState] = [:]
     /// Artifacts already handed out by the random picker (it avoids repeats).
@@ -584,12 +597,13 @@ public final class GameState {
     /// The movement an army gets per day: the slowest of the hero and its creatures.
     public func armyMovement(_ h: Hero) -> Float {
         if h.boat != nil { return seaMovement(h) }
-        var m = Hero.baseMovement
+        var m = h.heroless && !h.army.isEmpty ? Float.greatestFiniteMagnitude : Hero.baseMovement
         for s in h.army { if let c = tables?.creature(s.creature), c.move > 0 { m = min(m, Float(c.move)) } }
+        if m == .greatestFiniteMagnitude { m = Hero.baseMovement }
         // Master / Grandmaster Pathfinding: the whole army +25% / +50% on land (0x6426c0)
         // Master / Grandmaster Pathfinding (125 / 150) and Boots of Speed style items add up
         // (0x6426c0: max(1, 0.01 x (PATH[pathfinding] + items)), the best hero of the army)
-        let best = ([h] + h.companions).map { hh -> Int in
+        let best = h.members.map { hh -> Int in
             [100, 100, 100, 100, 125, 150][hh.skill("pathfinding")] + hh.artifactEffects.filter { $0.type == 0x00 && $0.land }.reduce(0) { $0 + $1.amount }
         }.max() ?? 100
         return m * max(1, Float(best) / 100)
@@ -598,7 +612,7 @@ public final class GameState {
     /// below the plain cost; heroes4.exe's table [0, 25, 50, 100, 100, 100] of 100 a cell).
     public static func terrainRelief(_ h: Hero) -> Float {
         if h.timedEffects["spell.pathfinding"] != nil { return 100 }   // the Pathfinding spell: no penalty at all
-        let pf = ([h] + h.companions).map { $0.skill("pathfinding") }.max() ?? 0
+        let pf = h.members.map { $0.skill("pathfinding") }.max() ?? 0
         return [0, 0.25, 0.5, 1, 1, 1][pf]
     }
     /// Recompute a hero's daily movement after its army changed (spent points stay spent).
@@ -614,7 +628,7 @@ public final class GameState {
         for m in mines where m.owned { out[m.resource, default: 0] += m.amount }
         for (r, n) in artifactIncome { out[r, default: 0] += n }   // bags of gold, carts of ore...
         // Estates: 100 gold a day per level of the skill, plus 10% per level of the hero (table.skills)
-        for h in heroes.flatMap({ [$0] + $0.companions }) where h.skill("estates") > 0 {
+        for h in heroes.flatMap({ $0.members }) where h.skill("estates") > 0 {
             out["Gold", default: 0] += 100 * h.skill("estates") * (10 + h.level) / 10
         }
         return out
@@ -831,7 +845,7 @@ public final class GameState {
 
     /// Experience for an army: each of its heroes gains it, learning a skill per level reached.
     public func giveExperience(_ n: Int, to hero: Hero) {
-        share(n, among: [hero] + hero.companions)   // by level + 2 (0x641310)
+        share(n, among: hero.members)   // by level + 2 (0x641310)
     }
 
     /// The player's heroes still to take levels: each level is a choice in the level-up dialog
@@ -873,7 +887,7 @@ public final class GameState {
 
     /// The hero's army as combatants, its heroes first.
     func combatants(of hero: Hero) -> [Combatant] {
-        var out = ([hero] + hero.companions).map { heroCombatant($0) }
+        var out = hero.members.map { heroCombatant($0) }
         for s in hero.army { if let c = tables?.creature(s.creature) { out.append(Combatant(creature: c, count: s.count)) } }
         return out
     }
@@ -939,6 +953,7 @@ public final class GameState {
             hero.x = hero.home.x; hero.y = hero.home.y; hero.movement = 0; hero.path = []; hero.plan = []
             log.append("Defeated by \(c.plural) after \(rounds) rounds; \(hero.name) limps home")
         }
+        if !won && hero.heroless { heroes.removeAll { $0 === hero } }   // a beaten army without a hero is gone
         hero.target = nil
         pendingBattle = nil
         runContinuous()
@@ -1282,7 +1297,7 @@ public final class GameState {
         guard let c = chestOffer else { return }
         if gold { resources["Gold", default: 0] += c.gold; floaters.append(("+\(c.gold) gold", c.hero.x, c.hero.y)) }
         else {   // shared equally by the army's heroes (0x641310 with the equal split)
-            let hs = [c.hero] + c.hero.companions
+            let hs = c.hero.members
             for h in hs { giveExperience(c.experience / hs.count, toOnly: h) }
         }
         chestOffer = nil
@@ -1313,7 +1328,8 @@ public final class GameState {
     public func click(hero: Hero, x: Int, y: Int) {
         passability.relief = GameState.terrainRelief(hero); passability.zones = seenZones(for: hero)
         if let e = enemyAt(x, y) { attack(e, with: hero); return }
-        hero.attackTarget = nil
+        if let f = heroes.first(where: { $0 !== hero && $0.z == level && standingCell($0) == (x, y) }), hero.boat == nil, f.boat == nil { meet(f, with: hero); return }
+        hero.attackTarget = nil; hero.tradeTarget = nil
         if hero.boat != nil {   // at sea: sail over water; a coast cell to land on
             let from = standingCell(hero)
             var route: [(x: Int, y: Int)]? = nil
@@ -1479,6 +1495,10 @@ public final class GameState {
                 if h.path.isEmpty, let bt = h.boardTarget {
                     h.boardTarget = nil
                     if let b = boat(at: bt.0, bt.1), GameState.adjacent((h.x, h.y), bt) { board(h, b); continue }
+                }
+                if h.path.isEmpty, let f = h.tradeTarget {
+                    h.tradeTarget = nil
+                    if GameState.adjacent((h.x, h.y), (f.x, f.y)), heroes.contains(where: { $0 === f }) { pendingTrade = (h, f); continue }
                 }
                 if h.path.isEmpty, let e = h.attackTarget, GameState.adjacent((h.x, h.y), (e.x, e.y)) {
                     h.attackTarget = nil

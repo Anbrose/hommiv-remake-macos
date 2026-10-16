@@ -102,10 +102,11 @@ extension Renderer {
         // the hero list: rows at (747, 344 + 77k), the portrait, the move bar filling from the bottom, the mana bar, the frame
         _ = ui.heroRing()
         if let rings = ui.armyRings, let list = ui.hotspot("Hero_List") {
-            for (k, h) in g.heroes.prefix(AdventureUI.heroSlots.count).enumerated() {
+            // (the list keeps its order; the selected army is heroes[0]; an army without a hero shows its strongest creature)
+            for (k, h) in g.armyList.prefix(AdventureUI.heroSlots.count).enumerated() {
                 let rx = list.x, ry = list.y + 77 * k
-                if let p = rings["portrait"], let pic = ui.portrait(keyword: h.keyword, alignment: h.alignment) {
-                    out.append(Quad(texture: uiTexture("portrait|\(h.alignment)|\(h.keyword)", { pic.bitmap }), x: rx + p.x, y: ry + p.y, w: pic.width, h: pic.height))
+                if let p = rings["portrait"], let pic = armyPortrait(h) {
+                    out.append(Quad(texture: uiTexture("icon|\(pic.name)", { pic.bitmap }), x: rx + p.x, y: ry + p.y, w: pic.width, h: pic.height))
                 }
                 if let bar = rings["Move_Bar"], h.maxMovement > 0 {
                     let filled = Int(Float(bar.height) * max(0, min(1, h.movement / h.maxMovement)))
@@ -114,19 +115,19 @@ extension Renderer {
                         out.append(Quad(texture: tex, x: rx + bar.x, y: ry + bar.y + bar.height - filled, w: bar.width, h: filled))
                     }
                 }
-                if let bar = rings["Mana_Bar"] {
+                if let bar = rings["Mana_Bar"], !h.heroless {
                     let top = max(1, g.maxSpellPoints(h))
                     let filled = Int(Float(bar.height) * max(0, min(1, Float(g.spellPoints(h)) / Float(top))))
                     if filled > 0 { out.append(Quad(texture: solid(40, 80, 232), x: rx + bar.x + 3, y: ry + bar.y + bar.height - filled, w: bar.width - 6, h: filled)) }
                 }
-                if let f = rings[k == 0 ? "Army_Frame_Highlight" : "Army_Frame"] ?? rings["Army_Frame"] {
+                if let f = rings[h === g.heroes.first ? "Army_Frame_Highlight" : "Army_Frame"] ?? rings["Army_Frame"] {
                     out.append(Quad(texture: uiTexture("armyring|\(f.name)", { f.bitmap }), x: rx + f.x, y: ry + f.y, w: f.width, h: f.height))
                 }
             }
         }
         // the selected army's rings (the first hero's army)
         if let h = g.heroes.first {
-            let heroes = [h] + h.companions
+            let heroes = h.members
             var items: [(UILayer?, String?)] = heroes.map { (ui.portrait(keyword: $0.keyword, alignment: $0.alignment), String?.none) }
             items += h.army.map { (ui.creatureIcon($0.creature), String($0.count)) }
             for (k, s) in Renderer.armyRingPieces.enumerated() {

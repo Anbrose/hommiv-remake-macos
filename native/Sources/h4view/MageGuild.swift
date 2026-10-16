@@ -47,7 +47,7 @@ extension Renderer {
     func guildHeroes(_ spell: Int) -> [Hero] {
         guard let g = game, let i = townOpen else { return [] }
         var hs = g.towns[i].garrisonHeroes
-        if let v = g.visitingArmy(town: i) { hs += [v] + v.companions }
+        if let v = g.visitingArmy(town: i) { hs += v.members }
         return hs.filter { $0.spells.contains(spell) }
     }
     /// A hero row's text (0x8652a0: the spell's Mage Guild / Spell Book hero text for that hero).

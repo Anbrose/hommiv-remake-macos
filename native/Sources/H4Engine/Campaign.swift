@@ -89,11 +89,11 @@ extension GameState {
     public func carryOut() -> Carryover {
         var c = Carryover()
         func rank(_ h: Hero) -> Int { h.skills.values.reduce(0) { $0 + $1 + 1 } }
-        var mine = heroes.flatMap { [$0] + $0.companions } + towns.filter(\.owned).flatMap { $0.garrisonHeroes } + sanctuaryGuests.values.flatMap { [$0] + $0.companions }
+        var mine = heroes.flatMap { $0.members } + towns.filter(\.owned).flatMap { $0.garrisonHeroes } + sanctuaryGuests.values.flatMap { $0.members }
         mine.sort { rank($0) > rank($1) }
         c.human = mine.map { SaveGame.state(of: $0) }
         var theirs: [Int: [Hero]] = [:]
-        for h in enemyHeroes { for m in [h] + h.companions { theirs[h.owner, default: []].append(m) } }
+        for h in enemyHeroes { for m in h.members { theirs[h.owner, default: []].append(m) } }
         for (col, hs) in theirs { c.byColour[col] = hs.sorted { rank($0) > rank($1) }.map { SaveGame.state(of: $0) } }
         return c
     }

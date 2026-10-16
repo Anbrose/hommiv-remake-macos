@@ -59,7 +59,7 @@ extension GameState {
     /// A hero's sight: 10 + Scouting level (-1..4) + worn bonuses (0x26); a creature stack 9.
     func sightRadius(of h: Hero) -> Int {
         var r = h.army.isEmpty ? 0 : 9
-        for m in [h] + h.companions where !m.actor.isEmpty {
+        for m in h.members where !m.actor.isEmpty {
             r = max(r, 10 + (m.skill("scouting") - 1) + m.artifactSum(0x26))
         }
         if h.boat != nil { r = max(r, 3) }
@@ -69,7 +69,7 @@ extension GameState {
     /// level L's L - 2.
     func visionLevel(of h: Hero) -> Int {
         var v = -1
-        for m in [h] + h.companions where !m.actor.isEmpty {
+        for m in h.members where !m.actor.isEmpty {
             var s = m.skill("scouting") - 1
             if m.timedEffects["spell.visions"] != nil { s = max(s, 3) }
             v = max(v, s)
@@ -80,7 +80,7 @@ extension GameState {
     /// The army's stealth: its least stealthy member (a hero's Stealth level, a creature -1).
     public func stealth(of h: Hero) -> Int {
         var s = h.army.isEmpty ? Int.max : -1
-        for m in [h] + h.companions { s = min(s, m.skill("stealth") - 1) }
+        for m in h.members { s = min(s, m.skill("stealth") - 1) }
         return s == Int.max ? -1 : s
     }
     /// Does the player see this enemy army?

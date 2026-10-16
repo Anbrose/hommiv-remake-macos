@@ -33,7 +33,7 @@ extension GameState {
     func heroPool(_ c: Int, female: Bool) -> [Int] {
         guard let t = tables else { return [] }
         let key = RuleTables.heroClasses[c].keyword
-        let used = Set((heroes + enemyHeroes).flatMap { [$0] + $0.companions }.map { $0.keyword.lowercased() })
+        let used = Set((heroes + enemyHeroes).flatMap { $0.members }.map { $0.keyword.lowercased() })
         let all = t.heroes.indices.filter { t.heroes[$0].heroClass == key && (t.heroes[$0].sex == "female") == female }
         let unused = all.filter { !used.contains(t.heroes[$0].keyword.lowercased()) }
         return unused.isEmpty ? all : unused

@@ -46,7 +46,7 @@ extension GameState {
     /// survivors, `value` the experience of the loser's casualties.
     public func finishHeroBattle(hero: Hero, enemy: Hero, won: Bool, army: [Hero.Stack], enemyArmy: [Hero.Stack], value: Int) {
         clearBattleEffects(hero)
-        let mine = [hero] + hero.companions, theirs = [enemy] + enemy.companions
+        let mine = hero.members, theirs = enemy.members
         if won {
             hero.army = army
             share(value + theirs.reduce(0) { $0 + ($1.level + 1) * 100 }, among: mine)
@@ -72,7 +72,7 @@ extension GameState {
         clearBattleEffects(hero)
         if won {
             hero.army = army
-            share(value, among: [hero] + hero.companions)
+            share(value, among: hero.members)
             towns[i].garrison = []
             let previous = towns[i].owner
             towns[i].owned = true; towns[i].owner = map.humanColour

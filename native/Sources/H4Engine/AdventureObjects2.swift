@@ -227,7 +227,7 @@ extension GameState {
         case "prison":
             // the prisoner joins the army if there is room (0x467b00)
             guard let mh = record(for: p)?.prisoner else { remove(p); return true }
-            let slots = 1 + hero.companions.count + hero.army.count
+            let slots = hero.members.count + hero.army.count
             let name = mh.name.isEmpty ? "the prisoner" : mh.name
             guard slots < Hero.armySlots else { say(p, "Denied", ["%hero_name": name]); return true }
             let freed = Hero.fromMap(mh, alignment: hero.alignment, x: hero.x, y: hero.y, tables: tables, random: &random)
@@ -247,7 +247,7 @@ extension GameState {
         case "tavern":
             dialogueSound(24)
             if st.used { say(p, "empty"); return true }
-            guard 1 + hero.companions.count + hero.army.count < Hero.armySlots else { say(p, "denied"); return true }
+            guard hero.members.count + hero.army.count < Hero.armySlots else { say(p, "denied"); return true }
             var o = hireOffer(town: nil); o.tavernKey = key
             if isHumanActing { hireOpen = o }
         case "seers_hut", "quest_gate", "quest_guard":

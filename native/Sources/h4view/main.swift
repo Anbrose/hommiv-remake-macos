@@ -411,8 +411,26 @@ if let out = snapshot {
             b.autoResolve(); print("resolved: attacker won \(b.finished ?? false) in \(b.round) rounds")
         }
     }
-    if openHeroScreen { renderer.adventureDialog = .hero(0); renderer.heroShown = ProcessInfo.processInfo.environment["H4SLOT"].flatMap { Int($0) } ?? 0 }
-    if let k = ProcessInfo.processInfo.environment["H4SPLIT"].flatMap({ Int($0) }), let h = game.heroes.first, k < h.army.count { renderer.openSplit(h, stack: k, at: (560, 560)) }   // snapshot: the split dialog
+    if openHeroScreen, let h = game.heroes.first { renderer.openArmyScreen(h, item: ProcessInfo.processInfo.environment["H4SLOT"].flatMap { Int($0) } ?? 0) }
+    if let k = ProcessInfo.processInfo.environment["H4SPLIT"].flatMap({ Int($0) }), let h = game.heroes.first, k < h.army.count {   // snapshot: the split dialog
+        renderer.openSplit(creature: h.army[k].creature, source: h.army[k].count, destination: 0, at: (560, 560)) { _ in }
+    }
+    // snapshot: the army screen with stack k moved into the new army's row (H4ARMYSPLIT=k[:n] moves n of
+    // it; H4ARMYSPLITDONE closes the screen, the new army then stands next to the hero)
+    if let spec = ProcessInfo.processInfo.environment["H4ARMYSPLIT"], let h = game.heroes.first {
+        let p = spec.split(separator: ":").compactMap { Int($0) }
+        renderer.openArmyScreen(h, item: h.members.count + (p.first ?? 0))
+        if let s = armySession, let from = s.selected as (row: Int, k: Int)?, let to = s.x.rows[1].firstIndex(where: { $0 == nil }), !s.x.isSingle {
+            let r = s.x.move(from: from, to: (1, to), split: p.count > 1 ? p[1] : nil)
+            s.selected = (1, to)
+            print("army split: \(r.map { "\($0)" } ?? "moved") into \(s.x.newCell.map { "\($0)" } ?? "-"), costs \(s.x.entry), rows \(s.x.rows.map { $0.map { $0?.stack.map { "\($0.creature)x\($0.count)" } ?? ($0?.hero?.name ?? "-") } })")
+        } else { print("army split: one row (\(game.canSplit(h)))") }
+        if ProcessInfo.processInfo.environment["H4ARMYSPLITDONE"] != nil {
+            renderer.closeArmyScreen()
+            print("armies: \(game.armyList.map { "\($0.heroless ? "(heroless) " + $0.actor : $0.name)@\($0.x),\($0.y) move \($0.movement)/\($0.maxMovement)" })")
+            if let a = game.heroes.first { aim(renderer, at: (a.x, a.y)) }
+        }
+    }
     if let n = ProcessInfo.processInfo.environment["H4LEVELUP"].flatMap({ Int($0) }), let h = game.heroes.first {   // snapshot: the level-up dialog
         game.giveExperience(n, to: h); renderer.levelUpChoice = 0
     }
@@ -463,6 +481,10 @@ if let out = snapshot {
         if let i = renderer.townOpen, let h = game.heroes.first { game.townVisitor = (i, h) }   // the hero by the gate walked in
         renderer.townHover = ProcessInfo.processInfo.environment["H4HOVER"]   // --town snapshot: pretend the pointer is over this building
         if openBuildList { renderer.townDialog = .buildList }
+        // snapshot: a double click on a town row's place "row,k" (the army screen of the town's rows)
+        if let p = ProcessInfo.processInfo.environment["H4TOWNARMY"]?.split(separator: ",").compactMap({ Int($0) }), p.count == 2, let i = renderer.townOpen {
+            renderer.openTownArmyScreen(i, selected: (p[0], p[1]))
+        }
         if ProcessInfo.processInfo.environment["H4GUILD"] != nil { renderer.townDialog = .mageGuild(page: 0) }
         if ProcessInfo.processInfo.environment["H4CASTLE"] != nil { renderer.townDialog = .castle }   // snapshot: the creature screen
         if let b = ProcessInfo.processInfo.environment["H4BALLOON"]?.split(separator: ",").compactMap({ Float($0) }), b.count == 2 { renderer.townBalloon = ((b[0], b[1]), .distantPast) }   // snapshot: the help balloon there
@@ -690,6 +712,7 @@ final class MapView: MTKView {
         let p = convert(e.locationInWindow, from: nil)
         let scale = Float(window?.backingScaleFactor ?? 1)
         renderer.pressSound(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale)
+        if armySession != nil { renderer.armyScreenPress(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale); return }
         if renderer.townOpen != nil { renderer.townPress(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale) }
     }
     override func mouseDragged(with e: NSEvent) {
@@ -697,6 +720,13 @@ final class MapView: MTKView {
         if splitDialog != nil {   // the split dialog's scrollbar follows the pointer
             let p = convert(e.locationInWindow, from: nil), sc = Float(window?.backingScaleFactor ?? 1)
             renderer.splitClick(x: Float(p.x) * sc / renderer.uiScale, y: Float(bounds.height - p.y) * sc / renderer.uiScale, drag: true)
+            return
+        }
+        if armySession != nil {   // a stack lifted in the army screen
+            if dragged >= 4 {
+                let p = convert(e.locationInWindow, from: nil), sc = Float(window?.backingScaleFactor ?? 1)
+                renderer.armyScreenDragged(x: Float(p.x) * sc / renderer.uiScale, y: Float(bounds.height - p.y) * sc / renderer.uiScale, shift: e.modifierFlags.contains(.shift))
+            }
             return
         }
         if renderer.townOpen != nil {
@@ -710,6 +740,8 @@ final class MapView: MTKView {
     }
     override func mouseUp(with e: NSEvent) {
         let p0 = convert(e.locationInWindow, from: nil), sc = Float(window?.backingScaleFactor ?? 1)
+        renderer.clickCount = e.clickCount
+        if armySession != nil, splitDialog == nil, renderer.armyScreenRelease(x: Float(p0.x) * sc / renderer.uiScale, y: Float(bounds.height - p0.y) * sc / renderer.uiScale, shift: e.modifierFlags.contains(.shift)) { return }
         if renderer.townOpen != nil, renderer.townDrag != nil {   // a drop in the town's army rows
             let x = Float(p0.x) * sc / renderer.uiScale, y = Float(bounds.height - p0.y) * sc / renderer.uiScale
             if dragged >= 4 { renderer.townDrop(x: x, y: y, split: e.modifierFlags.contains(.shift) || renderer.townDragSplit); return }
@@ -760,6 +792,7 @@ final class MapView: MTKView {
         }
         if let ui = renderer.ui {   // the panel: only its buttons react
             let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale
+            if renderer.townOpen != nil, armySession != nil { renderer.armyScreenClick(x: cx, y: cy); return }   // the town's army screen
             if renderer.townOpen != nil { renderer.townScreenClick(x: cx, y: cy); return }
             if cx >= Float(AdventureUI.mapViewportWidth) {
                 if ui.hit("end_turn", x: cx, y: cy) { renderer.endTurnFlip = Date(); g.endTurn() }
@@ -791,14 +824,16 @@ final class MapView: MTKView {
                     }
                 }
                 else if e.clickCount >= 2, let k = AdventureUI.armySlots.firstIndex(where: { abs(cx - Float($0.0)) < 28 && abs(cy - Float($0.1)) < 28 }),
-                        let a = g.heroes.first, k < 1 + a.companions.count + a.army.count {
+                        let a = g.heroes.first, k < a.members.count + a.army.count {
                     // a stack of the selected army: the army screen on it (0x4af170)
-                    renderer.adventureDialog = .hero(0); renderer.heroShown = k
+                    renderer.openArmyScreen(a, item: k)
                 }
-                else if ui.hit("Hero_List", x: cx, y: cy) {   // a portrait: one click centres the map on the hero, a double click opens the hero screen
-                    for (i, (hx, hy)) in AdventureUI.heroSlots.enumerated() where i < g.heroes.count && abs(cx - Float(hx)) < 30 && abs(cy - Float(hy)) < 30 {
-                        if e.clickCount >= 2 { renderer.adventureDialog = .hero(i) }
-                        else { g.level = g.heroes[i].z; renderer.centre(onCell: (Int(g.heroes[i].position.x.rounded()), Int(g.heroes[i].position.y.rounded()))) }
+                else if ui.hit("Hero_List", x: cx, y: cy) {   // a portrait: one click selects the army and centres the map on it, a double click opens the army screen
+                    let armies = g.armyList
+                    for (i, (hx, hy)) in AdventureUI.heroSlots.enumerated() where i < armies.count && abs(cx - Float(hx)) < 30 && abs(cy - Float(hy)) < 30 {
+                        let a = armies[i]
+                        if e.clickCount >= 2 { renderer.openArmyScreen(a) }
+                        else { g.select(a); renderer.centre(onCell: (Int(a.position.x.rounded()), Int(a.position.y.rounded()))) }
                     }
                 }
                 return
@@ -830,8 +865,9 @@ final class MapView: MTKView {
             renderer.popup = nil; renderer.creatureDialog = nil
             // a hero in the list: the army's right-click window
             if let g = renderer.game, renderer.adventureDialog == nil {
-                for (i, (hx, hy)) in AdventureUI.heroSlots.enumerated() where i < g.heroes.count && abs(cx - Float(hx)) < 30 && abs(cy - Float(hy)) < 30 {
-                    renderer.armyPopup = ArmyPopup(hero: i)
+                let armies = g.armyList
+                for (i, (hx, hy)) in AdventureUI.heroSlots.enumerated() where i < armies.count && abs(cx - Float(hx)) < 30 && abs(cy - Float(hy)) < 30 {
+                    if let k = g.heroes.firstIndex(where: { $0 === armies[i] }) { renderer.armyPopup = ArmyPopup(hero: k) }
                 }
             }
             return
@@ -860,6 +896,7 @@ final class MapView: MTKView {
     }
     override func keyDown(with e: NSEvent) {
         if renderer.saveDialogKey(e) { return }
+        if renderer.armyScreenKey(e.keyCode, chars: e.charactersIgnoringModifiers ?? "") { return }   // the army screen: S split, Enter / Esc done
         if renderer.dialogKey(e.keyCode) { return }   // the spell book's and the object dialogs' hot keys
         if renderer.townKey(e.charactersIgnoringModifiers ?? "") { return }   // the town screen's hot keys (M marketplace)
         let step: Float = 64 / renderer.zoom
@@ -889,7 +926,7 @@ final class MapView: MTKView {
         case 53:   // Escape closes a dialog, then leaves the town
             if renderer.townDialog != nil { renderer.townDialog = nil }
             else if renderer.townOpen != nil { renderer.closeTown() }
-            else if case .hero? = renderer.adventureDialog { renderer.adventureDialog = nil }
+            else if case .hero? = renderer.adventureDialog { renderer.closeArmyScreen() }
         default: break
         }
     }

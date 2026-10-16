@@ -335,7 +335,7 @@ extension Renderer {
             castAdventure(spell); return
         }
         if Battle.untargeted(spell) { b.cast(spell, on: nil, tables: game?.tables); cs.pump() }
-        else { casting = spell }
+        else { casting = spell; castFirst = nil }
     }
     /// Adventure-map casting (heroes' map spells).
     func castAdventure(_ spell: Int) {

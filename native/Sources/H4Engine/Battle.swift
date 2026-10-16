@@ -42,6 +42,10 @@ public final class Battle {
         /// Summoned (or raised) by a spell: gone when the battle ends; the spell that brought it.
         public var summoned = false
         public var summonedBy: Int? = nil
+        /// Creatures whose bodies are gone (raised, destroyed by Acid, sacrificed: +0x20); they
+        /// cannot be brought back. Whether the death of the stack has been handled (0x5f53c0).
+        public var permanentlyLost = 0
+        var deathHandled = false
         /// Its turn is lost: Blind, Stun, Terror, Confusion, Frozen.
         public var disabled: Bool { stunned > 0 || frozen > 0 || blind > 0 || durations[180] != nil || durations[21] != nil }
         public var alive: Bool { stats.alive }
@@ -92,6 +96,8 @@ public final class Battle {
         case resisted(unit: Int, spell: Int)
         /// A stack a spell brought onto the field.
         case summon(unit: Int)
+        /// The bodies of a dead stack are gone (raised from, eaten by Acid, sacrificed): its corpse fades.
+        case bodiesGone(unit: Int)
         /// Creatures a spell added to a stack on the field (a repeated summon, raised or resurrected
         /// creatures): `amount` more, `left` now.
         case revive(unit: Int, spell: Int, amount: Int, left: Int)
@@ -747,7 +753,24 @@ public final class Battle {
         if finished == nil, order.isEmpty { startRound() } else { checkMorale() }
     }
 
+    /// A stack wiped out (0x5f53c0): its spells go but the summon ones, Guardian Angel and
+    /// Necromancy Ward; then a Phoenix's Rebirth (gate 0x5ebed0: not a phantom, losses, the
+    /// spell points for it) brings back power = 55 x its starting count hit points of it.
+    func handleDeaths() {
+        for u in units where !u.alive && !u.deathHandled {
+            u.deathHandled = true
+            for e in u.stats.effects where !(e < RuleTables.spells.count && RuleTables.spells[e].has("Summ") || e == 53 || e == 135) { remove(e, from: u) }
+            u.durations = [:]; u.poison = 0; u.plague = 0; u.regeneration = 0; u.hypnotized = false; u.boundBy = nil
+            guard !u.stats.under(18), !u.stats.under(64), deadCount(u) > 0 else { continue }
+            if u.stats.has("rebirth"), var c = u.caster, c.spells.contains(129), c.spellPoints >= c.cost(129) {
+                c.spellPoints -= c.cost(129); u.caster = c
+                resurrect(u, power: power(129, by: u), spell: 129)
+            }
+        }
+    }
+
     func checkEnd() {
+        handleDeaths()
         let a = units.contains { $0.side == 0 && $0.alive }, d = units.contains { $0.side == 1 && $0.alive }
         if !(a && d) || round > 60 { finished = a; events.append(.finished(attackerWon: a)) }
     }

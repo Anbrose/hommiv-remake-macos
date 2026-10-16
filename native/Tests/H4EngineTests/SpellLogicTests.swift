@@ -96,4 +96,73 @@ final class SpellLogicTests: XCTestCase {
         XCTAssertEqual(ph.stats.count, 4)
         XCTAssertEqual(ph.keyword, "troll")
     }
+
+    // MARK: raising and resurrection
+
+    /// Raise Skeletons (0x8067b0): min(power / Experience, the dead, ceil(dead x HP / skeleton HP));
+    /// the bodies used are gone and the skeletons join the caster.
+    func testRaiseSkeletonsCapsByHitPoints() {
+        let skel = creature("skeleton", hp: 8, exp: 6), imp = creature("imp", hp: 4)
+        let b = Battle(field: field, attackers: [hero(level: 10, skills: ["death": 1], spells: [125])], defenders: [fighter(imp, 20), fighter(creature("peasant", speed: 1), 5)],
+                       seed: 1, tables: tables([skel, imp]))
+        let h = b.units.first { $0.side == 0 }!, corpse = b.units.first { $0.keyword == "imp" }!
+        corpse.stats.count = 0; corpse.deathHandled = true
+        XCTAssertEqual(b.power(125, by: h), 13)               // (40 + 4 x 10) / 6
+        XCTAssertTrue(b.canTarget(125, by: h, corpse))
+        XCTAssertTrue(b.cast(125, on: corpse.id))
+        let raised = b.units.first { $0.keyword == "skeleton" }!
+        XCTAssertEqual(raised.side, 0)
+        XCTAssertEqual(raised.stats.count, 10)                // ceil(20 x 4 / 8)
+        XCTAssertEqual(b.deadCount(corpse), 0)                // all 20 bodies used
+        XCTAssertFalse(b.canTarget(125, by: h, corpse))
+    }
+
+    /// Resurrection (0x804020): power 92 x pct, capped by the wounds plus the dead it can have back.
+    func testResurrectionCap() {
+        let squire = creature("squire", alignment: "life", hp: 10)
+        let b = Battle(field: field, attackers: [hero(level: 10, skills: ["life": 5], spells: [133]), fighter(squire, 10)], defenders: [fighter(creature("peasant", speed: 1), 5)],
+                       seed: 1, tables: tables([squire]))
+        let h = b.units.first { $0.stats.isHero }!, sq = b.units.first { $0.keyword == "squire" }!
+        sq.stats.count = 7; sq.stats.wounds = 4
+        XCTAssertEqual(b.power(133, by: h), 92)
+        XCTAssertTrue(b.cast(133, on: sq.id))
+        XCTAssertEqual(sq.stats.count, 10)
+        XCTAssertEqual(sq.stats.wounds, 0)
+    }
+
+    /// Archangels resurrect Spell Power x count: 92 x 100 x 2 / 100 per cast for two of them.
+    func testArchangelResurrectionPower() {
+        let angel = creature("archangel", level: 4, hp: 230, speed: 9, sp: 20, power: 100)
+        let b = Battle(field: field, attackers: [fighter(angel, 2)], defenders: [fighter(creature("peasant", speed: 1), 5)], seed: 1)
+        XCTAssertEqual(b.power(133, by: b.units.first { $0.side == 0 }!), 184)
+    }
+
+    /// Rebirth (0x5f53c0 / 0x5ebed0): a wiped Phoenix stack gets 55 x its starting count hit
+    /// points back once (it costs all 12 of its spell points).
+    func testPhoenixRebirth() {
+        let phoenix = creature("phoenix", level: 4, hp: 275, speed: 1, sp: 12)
+        let b = Battle(field: field, attackers: [fighter(creature("peasant", speed: 9), 5)], defenders: [fighter(phoenix, 5)], seed: 1)
+        let ph = b.units.first { $0.side == 1 }!
+        ph.stats.count = 0
+        b.checkEnd()
+        XCTAssertEqual(ph.stats.count, 1)                     // 275 hit points = one phoenix
+        XCTAssertEqual(ph.caster?.spellPoints, 0)
+        ph.stats.count = 0
+        b.checkEnd()
+        XCTAssertEqual(ph.stats.count, 0)                     // no spell points left
+    }
+
+    /// Animate Dead raises the corpse's own undead creature, power in hit points.
+    func testAnimateDeadUndeadOnly() {
+        let skel = creature("skeleton", hp: 8), peasant = creature("peasant", speed: 1)
+        let b = Battle(field: field, attackers: [hero(level: 10, skills: ["death": 2], spells: [2])], defenders: [fighter(skel, 20), fighter(peasant, 5)],
+                       seed: 1, tables: tables([skel, peasant]))
+        let h = b.units.first { $0.side == 0 }!
+        let sk = b.units.first { $0.keyword == "skeleton" }!, pe = b.units.first { $0.keyword == "peasant" }!
+        sk.stats.count = 0; sk.deathHandled = true; pe.stats.count = 0; pe.deathHandled = true
+        XCTAssertFalse(b.canTarget(2, by: h, pe))
+        XCTAssertTrue(b.canTarget(2, by: h, sk))
+        XCTAssertTrue(b.cast(2, on: sk.id))                    // 100 hit points: 13 skeletons
+        XCTAssertEqual(b.units.first { $0.keyword == "skeleton" && $0.side == 0 }?.stats.count, 13)
+    }
 }

@@ -108,7 +108,7 @@ extension Renderer {
             sound?.play("miscellaneous.button")
             switch bt.key {
             case "auto": cs.autoCombat.toggle(); cs.pump()
-            case "cancel_spell": casting = nil
+            case "cancel_spell": casting = nil; castFirst = nil
             case "cast_spell": openCombatBook()
             case "defend": b.defend(); cs.pump()
             case "wait": b.wait(); cs.pump()
@@ -127,9 +127,30 @@ extension Renderer {
             return
         }
         guard !cs.busy, cs.result == nil, !cs.autoCombat, let cur = b.current, cur.side == 0 else { return }
-        if let spell = casting {   // aiming a spell: a stack it can land on, anything else cancels
-            casting = nil
-            if x < 885, let t = unitUnder(b, x: x, y: y), b.canTarget(spell, by: cur, t) { b.cast(spell, on: t.id, tables: g.tables); cs.pump() }
+        if let spell = casting {   // aiming a spell: what it can land on (Battle.aim), anything else cancels
+            let first = castFirst
+            casting = nil; castFirst = nil
+            guard x < 885 else { return }
+            let (wx, wy) = Battlefield.world(x / CombatScreen.sceneScale, y / CombatScreen.sceneScale)
+            let cell = (Int(wx.rounded(.down)), Int(wy.rounded(.down)))
+            let bodies = RuleTables.spells[spell].has("Bodies")
+            let t = unitUnder(b, x: x, y: y).flatMap { b.canTarget(spell, by: cur, $0) ? $0 : nil }
+                ?? (bodies ? b.corpse(at: cell.0, cell.1).flatMap { b.canTarget(spell, by: cur, $0) ? $0 : nil } : nil)
+            var done = false
+            switch Battle.aim(spell) {
+            case .none: done = b.cast(spell, on: nil, tables: g.tables)
+            case .unit: if let t { done = b.cast(spell, on: t.id, tables: g.tables) }
+            case .cell: done = b.cast(spell, on: nil, cell: cell, tables: g.tables)
+            case .unitOrCell: done = b.cast(spell, on: t?.id, cell: t == nil ? cell : nil, tables: g.tables)
+            case .unitAndPoint: if let t { done = b.cast(spell, on: t.id, cell: cell, tables: g.tables) }
+            case .twoUnits:
+                if let f = first, let t { done = b.cast(spell, on: f, second: t.id, tables: g.tables) }
+                else if let t { casting = spell; castFirst = t.id }
+            case .unitThenCell:
+                if let f = first { done = b.cast(spell, on: f, cell: cell, tables: g.tables) }
+                else if let t { casting = spell; castFirst = t.id }
+            }
+            if done { cs.pump() }
             return
         }
         guard x < Float(cs.hotspot("battle_scene")?.width ?? 885) else { return }

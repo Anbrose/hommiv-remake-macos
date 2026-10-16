@@ -60,7 +60,7 @@ extension Battle {
         if c.creature {
             level = 0
             if s.has("Dmg") || s.has("Summ") || spell == 133 { pct = c.spellPower * pct * u.stats.count / 100 }
-            else if spell == 129 { pct *= u.stats.count }
+            else if spell == 129 { pct *= u.initialCount }   // Rebirth: x the starting count
         } else {
             pct += 20 * c.skill(Battle.powerSkill[s.school] ?? "") + (c.powerBonus[spell] ?? 0)
             if s.has("Dmg") { pct += 20 * c.skill("sorcery") }
@@ -89,8 +89,20 @@ extension Battle {
 
     /// Can this spell land on that stack (its side, and the kinds the spell allows)?
     public func canTarget(_ spell: Int, by u: Unit, _ t: Unit) -> Bool {
-        guard spell < RuleTables.spells.count, t.alive || RuleTables.spells[spell].has("Bodies") else { return false }
+        guard spell < RuleTables.spells.count else { return false }
         let s = RuleTables.spells[spell]
+        if !t.alive {
+            // the dead: Bodies spells on bodies still on the field; Divine Intervention brings back heroes
+            guard s.has("Bodies"), deadCount(t) > 0 else { return false }
+            if spell == 30, !t.stats.isHero { return false }
+        }
+        switch spell {
+        case 124, 125, 126, 2, 24:   // raising needs dead creatures and no Necromancy Ward (0x5f054c)
+            if deadCount(t) == 0 || t.stats.under(135) { return false }
+            if spell == 2, !t.stats.has("undead") { return false }   // Animate Dead: undead only
+        case 133, 129: if deadCount(t) == 0 && t.stats.wounds == 0 { return false }
+        default: break
+        }
         let enemy = side(of: t) != side(of: u)
         if enemy ? !s.has("Enemy") : !s.has("Friend") { return false }
         if t.stats.has("magic_immunity") && enemy { return false }
@@ -113,8 +125,27 @@ extension Battle {
             guard sp < RuleTables.spells.count else { return false }
             let s = RuleTables.spells[sp]
             let skillOK = c.creature || c.free.contains(sp) || (s.schoolSkill >= 0 && (c.skills[RuleTables.skillIds[s.schoolSkill]] ?? 0) >= s.level)
-            return s.has("Cmb") && !Battle.noFactory.contains(sp) && c.cost(sp) <= c.spellPoints && skillOK
+            return s.has("Cmb") && !Battle.noFactory.contains(sp) && sp != 129 && c.cost(sp) <= c.spellPoints && skillOK
         }
+    }
+    /// How a spell is aimed (its factory's click handler): nothing, a stack (a body for the Bodies
+    /// spells), a cell (Fireball 0x717dd0, the clouds, Smoke, Quicksand, Rock Growth), a stack or
+    /// a cell (Fire Ring), a stack and the pointer's cell (Sparks, Displacement), two stacks
+    /// (Sacrifice, Martyr), a stack then a destination cell (Teleport 0x87eef0).
+    public enum Aim { case none, unit, cell, unitOrCell, unitAndPoint, twoUnits, unitThenCell }
+    public static func aim(_ spell: Int) -> Aim {
+        switch spell {
+        case 43, 66, 67, 19, 25, 50, 142, 123, 134: return .cell
+        case 41: return .unitOrCell
+        case 14, 28: return .unitAndPoint
+        case 136, 79: return .twoUnits
+        case 178: return .unitThenCell
+        default: return untargeted(spell) ? .none : .unit
+        }
+    }
+    /// The dead stack whose bodies lie on a cell.
+    public func corpse(at x: Int, _ y: Int) -> Unit? {
+        units.last { !$0.alive && deadCount($0) > 0 && x >= $0.x && x < $0.x + $0.size && y >= $0.y && y < $0.y + $0.size }
     }
     /// A spell that needs no target (mass spells, Armageddon, summons...).
     public static func untargeted(_ spell: Int) -> Bool {
@@ -123,32 +154,38 @@ extension Battle {
         return s.has("Mass") || s.kind == "summoning" && !s.has("Bodies") && spell != 18 && spell != 64 || [4, 32, 110].contains(spell)
     }
 
-    /// Cast by the current unit on a target stack (nil for untargeted spells). Ends the unit's turn.
+    /// The stacks a cast at this target touches, or nil when the target is not a valid one.
+    func castTargets(_ spell: Int, by u: Unit, target targetId: Int?, cell: (Int, Int)?) -> [Unit]? {
+        let s = RuleTables.spells[spell]
+        if let m = Battle.massOf[spell] { return units.filter { $0.alive && canTarget(m, by: u, $0) } }
+        if spell == 4 { return units.filter { $0.alive } }   // Armageddon: every stack
+        if spell == 32 || spell == 110 { return units.filter { $0.alive && canTarget(spell, by: u, $0) } }
+        if spell == 30 { return units.filter { canTarget(spell, by: u, $0) } }   // Divine Intervention: friends, dead heroes too
+        if Battle.untargeted(spell) { return [] }
+        guard let id = targetId, let t = units.first(where: { $0.id == id }), canTarget(spell, by: u, t) else { return nil }
+        // area spells: Fireball 3x3, Inferno 5x5, Fire Ring around the cell, the others single
+        let radius = spell == 43 ? 1 : spell == 66 ? 2 : spell == 41 ? 1 : 0
+        if radius > 0 {
+            let cx = t.x + t.size / 2, cy = t.y + t.size / 2
+            var targets = units.filter { v in v.alive && v.x - radius <= cx && cx <= v.x + v.size - 1 + radius && v.y - radius <= cy && cy <= v.y + v.size - 1 + radius }
+            if spell == 41 { targets.removeAll { $0.id == t.id } }
+            return targets
+        }
+        _ = s
+        return [t]
+    }
+
+    /// Cast by the current unit on a target stack (nil for untargeted spells), a cell (area
+    /// spells), a second stack (Sacrifice). Ends the unit's turn.
     @discardableResult
-    public func cast(_ spell: Int, on targetId: Int?, cell: (Int, Int)? = nil, tables: RuleTables? = nil) -> Bool {
+    public func cast(_ spell: Int, on targetId: Int?, cell: (Int, Int)? = nil, second: Int? = nil, tables: RuleTables? = nil) -> Bool {
         if let t = tables { self.tables = t }
         let tables = self.tables
         guard finished == nil, let u = current, var c = u.caster, castable(u).contains(spell) else { return false }
         let s = RuleTables.spells[spell]
-        var targets: [Unit] = []
-        if let m = Battle.massOf[spell] {
-            targets = units.filter { $0.alive && canTarget(m, by: u, $0) }
-        } else if spell == 4 {   // Armageddon: every stack
-            targets = units.filter { $0.alive }
-        } else if spell == 32 || spell == 110 {
-            targets = units.filter { $0.alive && canTarget(spell, by: u, $0) }
-        } else if Battle.untargeted(spell) {
-            targets = []
-        } else {
-            guard let id = targetId, let t = units.first(where: { $0.id == id }), canTarget(spell, by: u, t) else { return false }
-            targets = [t]
-            // area spells: Fireball 3x3, Inferno 5x5, Fire Ring around the cell, the others single
-            let radius = spell == 43 ? 1 : spell == 66 ? 2 : spell == 41 ? 1 : 0
-            if radius > 0 {
-                let cx = t.x + t.size / 2, cy = t.y + t.size / 2
-                targets = units.filter { v in v.alive && v.x - radius <= cx && cx <= v.x + v.size - 1 + radius && v.y - radius <= cy && cy <= v.y + v.size - 1 + radius }
-                if spell == 41 { targets.removeAll { $0.id == t.id } }
-            }
+        guard let targets = castTargets(spell, by: u, target: targetId, cell: cell) else { return false }
+        if spell == 136 {   // Sacrifice: a second friendly stack to restore
+            guard let sid = second, sid != targetId, let t2 = units.first(where: { $0.id == sid }), canTarget(spell, by: u, t2) else { return false }
         }
         c.spellPoints -= c.cost(spell)
         u.caster = c
@@ -199,6 +236,26 @@ extension Battle {
                     hitIds.insert(next.id); from = next; pw /= 2
                 }
             }
+        case _ where spell == 30:   // Divine Intervention (0x78d5d0): curses off, the top creature healed, dead heroes back
+            for t in targets {
+                for e in t.stats.effects where RuleTables.spells.indices.contains(e) && RuleTables.spells[e].has("Curse") { remove(e, from: t) }
+                let healed = t.alive ? min(p, t.stats.wounds) : restore(t, p)
+                if t.alive { t.stats.wounds -= healed }
+                events.append(.spellHit(unit: t.id, spell: spell, damage: -healed, killed: 0, left: t.stats.count))
+            }
+        case "resurrection":   // Resurrection (0x804020): back to the stack it was
+            if let t = targets.first { resurrect(t, power: p, spell: spell) }
+        case "summoning" where s.has("Bodies"):   // Raise Skeletons / Ghost / Vampires, Animate Dead, Death Call (0x8058f0)
+            if let t = targets.first { raise(spell, power: p, by: u, from: t) }
+        case "sacrifice":   // Sacrifice (0x808130): the first friend destroyed, the second restored by twice its hit points
+            if let t = targets.first, let sid = second, let t2 = units.first(where: { $0.id == sid }) {
+                let hp = t.stats.totalHealth
+                let killed = t.stats.count
+                t.stats.count = 0; t.stats.wounds = 0; t.permanentlyLost = t.initialCount
+                events.append(.spellHit(unit: t.id, spell: spell, damage: hp, killed: killed, left: 0))
+                events.append(.die(unit: t.id)); events.append(.bodiesGone(unit: t.id))
+                resurrect(t2, power: 2 * hp, spell: spell)
+            }
         case "healing":
             for t in targets {
                 // Heal restores the top creature's wounds (never the dead) and cures Poison and Plague
@@ -221,6 +278,11 @@ extension Battle {
                     let r = resistance(t, to: spell)
                     if r >= 100 || rng.next() % 100 < r { events.append(.resisted(unit: t.id, spell: spell)); continue }
                 }
+                if spell == 0, !t.alive {   // Acid on a dead stack destroys the bodies (0x806c80)
+                    t.permanentlyLost = t.initialCount
+                    events.append(.spellHit(unit: t.id, spell: spell, damage: 0, killed: 0, left: 0)); events.append(.bodiesGone(unit: t.id))
+                    continue
+                }
                 apply(effectSpell, to: t, power: p)
                 events.append(.spellHit(unit: t.id, spell: effectSpell, damage: 0, killed: 0, left: t.stats.count))
             }
@@ -228,6 +290,22 @@ extension Battle {
         checkEnd()
         endAction(u)
         return true
+    }
+
+    /// A spell taken off a stack (0x5f23d0), with what it set.
+    func remove(_ spell: Int, from t: Unit) {
+        t.stats.effects.remove(spell); t.durations[spell] = nil
+        switch spell {
+        case 23: t.stats.cursed = false
+        case 185: t.stats.weakened = false
+        case 1: t.stats.aged = false
+        case 9: t.stats.bound = false
+        case 62, 138: t.hypnotized = false
+        case 111: t.poison = 0
+        case 110: t.plague = 0
+        case 131: t.regeneration = 0
+        default: break
+        }
     }
 
     /// A lasting spell on a stack: the stat getters read `effects`; some set the older flags.
@@ -260,6 +338,59 @@ extension Battle {
         default: break
         }
         t.stats.effects.insert(spell)
+    }
+
+    /// Creatures of a stack that died and could come back (original - permanently lost - living).
+    public func deadCount(_ t: Unit) -> Int { max(0, t.initialCount - t.permanentlyLost - t.stats.count) }
+    /// Hit points back to a stack (0x5f38f0 with resurrection): the top creature's wounds first,
+    /// then dead creatures back, never more than it started with. Returns the hit points restored.
+    @discardableResult
+    func restore(_ t: Unit, _ hp: Int) -> Int {
+        let h = max(1, t.stats.hitPoints)
+        let amt = max(0, min(hp, t.stats.wounds + h * deadCount(t)))
+        guard amt > 0 else { return 0 }
+        let wasDead = !t.alive
+        let total = t.stats.totalHealth + amt
+        t.stats.count = (total + h - 1) / h
+        t.stats.wounds = t.stats.count * h - total
+        if wasDead { t.deathHandled = false }
+        return amt
+    }
+    /// Resurrection / Rebirth / Sacrifice's second stack (0x804020): power in hit points, the cap
+    /// is its wounds plus the dead it can have back; a wiped stack rises where it fell.
+    func resurrect(_ t: Unit, power p: Int, spell: Int) {
+        let before = t.stats.count
+        let amt = restore(t, p)
+        events.append(.revive(unit: t.id, spell: spell, amount: t.stats.count - before, left: t.stats.count))
+        if amt > 0 && before == t.stats.count { events.append(.spellHit(unit: t.id, spell: spell, damage: -amt, killed: 0, left: t.stats.count)) }
+    }
+    /// Raising (0x8058f0 / 0x8067b0): Raise Skeletons / Ghost / Vampires make min(power, the dead,
+    /// ceil(dead x their hit points / the raised one's)) of their creature (power is already divided
+    /// by its Experience); Animate Dead and Death Call raise the corpse's own creature, power in hit
+    /// points. They join the caster's side as a summoned stack (merging with an earlier one of the
+    /// same spell and creature); the bodies used are gone for good.
+    func raise(_ spell: Int, power p: Int, by u: Unit, from t: Unit) {
+        let dead = deadCount(t)
+        let hpDead = max(1, t.stats.hitPoints)
+        let made: Int, used: Int, cr: CreatureDef
+        if spell == 2 || spell == 24 {
+            guard let own = tables?.creature(t.keyword) else { return }
+            cr = own
+            let amt = min(p, dead * hpDead)
+            made = (amt + hpDead - 1) / hpDead
+            used = made
+        } else {
+            guard let r = tables?.creature(RuleTables.spells[spell].creature) else { return }
+            cr = r
+            let hpRaised = max(1, r.hitPoints)
+            made = min(p, dead, (dead * hpDead + hpRaised - 1) / hpRaised)
+            used = min(dead, (made * hpRaised + hpDead - 1) / hpDead)
+        }
+        guard made > 0 else { return }
+        t.permanentlyLost += used
+        let corpse = !t.alive && deadCount(t) == 0 ? t : nil
+        if corpse != nil { events.append(.bodiesGone(unit: t.id)) }
+        summon(cr, count: made, spell: spell, by: u, at: t)
     }
 
     /// A summoned or raised stack of `creature` on the caster's side (0x87bdd0): a second cast adds
@@ -348,6 +479,9 @@ extension Battle {
                 if effect == 54 { d = d * t.stats.hitPoints }
                 d = min(d, t.stats.totalHealth)
                 v += enemy ? d : -2 * d
+            } else if s.has("Summ"), s.has("Bodies") {   // raising works on either side's dead
+                if let r = tables?.creature(s.creature) { v += min(p, deadCount(t)) * r.hitPoints }
+                else { v += min(p, deadCount(t) * t.stats.hitPoints) }
             } else if s.kind == "healing" || s.kind == "resurrection" || s.has("Bodies") {
                 let lost = max(0, t.initialCount - t.stats.count) * t.stats.hitPoints + t.stats.wounds
                 v += enemy ? 0 : min(p, lost)

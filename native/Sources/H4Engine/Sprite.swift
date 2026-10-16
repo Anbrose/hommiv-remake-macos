@@ -39,6 +39,8 @@ public struct Sprite {
     /// has-flag byte +0x24 is), from the same point as `origin` (the anchor cell's top vertex);
     /// nil when the model has no flag. See `advObjectFlagPoint`.
     public let flagPoint: (x: Int, y: Int)?
+    /// adv_object only: the edges a hero steps across into the object (Pathing.swift).
+    public let entryEdges: EntryEdges?
     public var frames: [SpriteImage] { images.filter { !$0.name.hasPrefix("shadow") && $0.name != "base_frame" } }
     /// Unfinished assets in the game data are a 613x513 "DELETE ME NOW!!!" box (some artifacts,
     /// exhausted mines, stagecoaches, ...); nothing that size is a real adventure object.
@@ -184,6 +186,7 @@ public struct Sprite {
         origin = (ox, oy)
         footprint = fp
         flagPoint = start >= 9 ? Sprite.advObjectFlagPoint(r, end: start) : nil
+        entryEdges = start >= 9 ? Sprite.advObjectEntryEdges(r, end: start) : nil
         blocked = occupied
         visitable = visit
     }

@@ -33,23 +33,26 @@ extension GameState {
     public func seaPath(from s: (Int, Int), to goal: (Int, Int), landingAt land: (Int, Int)? = nil) -> [(x: Int, y: Int)]? {
         let n = map.size
         guard passability.isFreeWater(goal.0, goal.1) || boat(at: goal.0, goal.1) != nil && goal == s else { return nil }
-        var dist = [Float](repeating: .infinity, count: n * n), prev = [Int](repeating: -1, count: n * n)
+        // the planner at sea (0x4ff180 with the army afloat): 100 a step, a diagonal 150, the exe's
+        // direction order and heap; no diagonal past a corner of land or the map's edge (0x4fea80)
+        var dist = [Int32](repeating: .max, count: n * n), prev = [Int](repeating: -1, count: n * n)
         dist[s.0 * n + s.1] = 0
-        var open: [(Float, Int)] = [(0, s.0 * n + s.1)]
+        var open = RouteHeap()
+        open.push(0, s.0 * n + s.1)
         while !open.isEmpty {
-            open.sort { $0.0 > $1.0 }
-            let (c, k) = open.removeLast()
+            let (c, kk) = open.pop(); let k = Int(kk)
             if c > dist[k] { continue }
             let x = k / n, y = k % n
             if (x, y) == goal { break }
-            for dx in -1...1 { for dy in -1...1 where dx != 0 || dy != 0 {
-                let nx = x + dx, ny = y + dy
+            for d in Passability.directions {
+                let nx = x + d.dx, ny = y + d.dy
                 guard passability.isFreeWater(nx, ny) else { continue }
-                let nc = c + (dx != 0 && dy != 0 ? 1.4 : 1)
-                if nc < dist[nx * n + ny] { dist[nx * n + ny] = nc; prev[nx * n + ny] = k; open.append((nc, nx * n + ny)) }
-            } }
+                if d.dx != 0, d.dy != 0, !passability.isWater(nx, y) || !passability.isWater(x, ny) { continue }
+                let nc = c + (d.dx != 0 && d.dy != 0 ? 150 : 100)
+                if nc < dist[nx * n + ny] { dist[nx * n + ny] = nc; prev[nx * n + ny] = k; open.push(nc, nx * n + ny) }
+            }
         }
-        guard dist[goal.0 * n + goal.1] < .infinity else { return nil }
+        guard dist[goal.0 * n + goal.1] < .max else { return nil }
         var out: [(x: Int, y: Int)] = []
         var k = goal.0 * n + goal.1
         while k != s.0 * n + s.1 { out.append((k / n, k % n)); k = prev[k] }

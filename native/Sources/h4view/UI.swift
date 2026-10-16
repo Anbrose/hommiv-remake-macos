@@ -329,13 +329,6 @@ final class AdventureUI {
         return tinyCards[alignment]
     }
 
-    /// The waving owner flags (animation.Flags.<colour>: 10 frames of 32x14).
-    var flags: [String: Sprite] = [:]
-    func flag(_ colour: String) -> Sprite? {
-        if flags[colour] == nil, let d = try? archive.payload("animation.Flags.\(colour).h4d") { flags[colour] = try? Sprite(data: d) }
-        return flags[colour]
-    }
-
     /// The name of a terrain cell as the game's status line gives it ("Grass, Dry").
     func terrainName(_ c: Cell, tables: RuleTables?) -> String {
         tables?.terrainText(type: c.type, variant: c.variant)?.name ?? "Terrain"

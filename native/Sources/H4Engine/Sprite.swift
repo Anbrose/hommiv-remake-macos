@@ -35,6 +35,12 @@ public struct Sprite {
     /// Cells a hero may step onto to use the object (second mask; set for pickups such as
     /// resource piles and chests, empty for trees, mines and towns).
     public let visitable: [(x: Int, y: Int)]
+    /// adv_object only: where the owner's flag stands (model +0x14 / +0x18, set when the model's
+    /// has-flag byte +0x24 is), from the same point as `origin` (the anchor cell's top vertex);
+    /// nil when the model has no flag. See `advObjectFlagPoint`.
+    public let flagPoint: (x: Int, y: Int)?
+    /// adv_object only: the edges a hero steps across into the object (Pathing.swift).
+    public let entryEdges: EntryEdges?
     public var frames: [SpriteImage] { images.filter { !$0.name.hasPrefix("shadow") && $0.name != "base_frame" } }
     /// Unfinished assets in the game data are a 613x513 "DELETE ME NOW!!!" box (some artifacts,
     /// exhausted mines, stagecoaches, ...); nothing that size is a real adventure object.
@@ -68,6 +74,30 @@ public struct Sprite {
             out.append((f, shadows[n]))
         }
         return out
+    }
+
+    /// The adv_object model header (heroes4.exe 0x44ca30, file version = the first u16):
+    /// u16 version, u8, (v >= 3) u16 k, u16 w, u16 h, then bit masks of ceil(n / 8) bytes
+    /// (0x44d6c0): the w*h footprint, (k >= 1) a (h+1)*w and a (w+1)*h edge mask, (v >= 6) a 2*(h+1)*w and a
+    /// 2*(w+1)*h edge mask and (h+1)*(w+1) raw bytes; (v >= 2) the type triple (0x465e50:
+    /// u16 0, 3 x (u16 id, string16)); (v >= 4) u8; (v >= 5) u8 has-flag and, when set, the flag
+    /// point i32 x, y. 147 models have one: towns, mines, dwellings, garrisons, generators.
+    static func advObjectFlagPoint(_ r: ByteReader, end: Int) -> (x: Int, y: Int)? {
+        let v = Int(r.peekU16(at: 0))
+        guard v >= 5, v <= 6, end > 9 else { return nil }
+        let k = Int(r.peekU16(at: 3)), w = Int(r.peekU16(at: 5)), h = Int(r.peekU16(at: 7))
+        func bytes(_ n: Int) -> Int { (n + 7) / 8 }
+        var p = 9 + bytes(w * h) + (k >= 1 ? bytes((h + 1) * w) + bytes((w + 1) * h) : 0)
+        if v >= 6 { p += bytes(2 * (h + 1) * w) + bytes(2 * (w + 1) * h) + (h + 1) * (w + 1) }
+        guard p + 2 <= end, r.peekU16(at: p) == 0 else { return nil }
+        p += 2
+        for _ in 0..<3 {
+            guard p + 4 <= end else { return nil }
+            p += 4 + Int(r.peekU16(at: p + 2))
+        }
+        guard p + 2 <= end, r.byte(at: p + 1) == 1, p + 10 <= end else { return nil }
+        func i32(_ q: Int) -> Int { Int(Int32(bitPattern: UInt32(r.peekU16(at: q)) | UInt32(r.peekU16(at: q + 2)) << 16)) }
+        return (i32(p + 2), i32(p + 6))
     }
 
     public init(data d: Data) throws {
@@ -155,6 +185,8 @@ public struct Sprite {
         images = list
         origin = (ox, oy)
         footprint = fp
+        flagPoint = start >= 9 ? Sprite.advObjectFlagPoint(r, end: start) : nil
+        entryEdges = start >= 9 ? Sprite.advObjectEntryEdges(r, end: start) : nil
         blocked = occupied
         visitable = visit
     }

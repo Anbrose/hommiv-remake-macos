@@ -53,7 +53,7 @@ extension Renderer {
         guard let g = game else { return }
         for f in g.floaters { floaters.append((f.text, f.x, f.y, now)) }
         g.floaters.removeAll()
-        floaters.removeAll { now.timeIntervalSince($0.since) > 2 }
+        floaters.removeAll { now.timeIntervalSince($0.since) > 3 }
         if let t = g.pendingTrade, adventureDialog == nil { g.pendingTrade = nil; if g.heroes.contains(where: { $0 === t.other }) { openTrade(t.hero, t.other) } }
         if g.chestOffer != nil, adventureDialog == nil { adventureDialog = .chest; chestChoice = true }   // gold is on at opening (0x5a2c00(0))
         // an object's yes/no question (a vein, the Tree of Knowledge) in the message box
@@ -66,16 +66,19 @@ extension Renderer {
         if let c = g.puzzleOpen, g.scripts.messages.isEmpty { puzzle = c; g.puzzleOpen = nil }
         if g.jumped, let h = g.heroes.first { g.jumped = false; centre(onCell: (h.x, h.y)) }
     }
+    /// The floating "+N wood" of a picked-up pile (t_timed_window 0x88c930): font(25) white with the
+    /// black halo, its top-left at the tile's top corner, 1 px left and 1 px up every 100 ms, gone
+    /// after 3 s without fading (re/pickups_spec.md).
     func floaterQuads() -> [Quad] {
-        guard let ui = ui else { return [] }
+        guard let f = dFont(25) else { return [] }
         let now = Date()
         var out: [Quad] = []
-        for f in floaters {
-            let age = Float(now.timeIntervalSince(f.since))
-            let (sx, sy) = screen(Float(f.x), Float(f.y))
-            let canvasX = (sx - pan.x) * zoom / uiScale, canvasY = (sy - 40 - age * 18 - pan.y) * zoom / uiScale
-            let w = ui.dateFont.measure(f.text)
-            out.append(Quad(texture: uiTexture("date|\(f.text)|white", { ui.dateFont.render(f.text, colour: (255, 255, 255)) }), x: Int(canvasX) - w / 2, y: Int(canvasY), w: w, h: ui.dateFont.size))
+        for fl in floaters {
+            let steps = Float(Int(now.timeIntervalSince(fl.since) * 10))
+            let (sx, sy) = screen(Float(fl.x), Float(fl.y))
+            let canvasX = (sx - pan.x) * zoom / uiScale - steps, canvasY = (sy - 16 - pan.y) * zoom / uiScale - steps
+            let w = f.measure(fl.text)
+            out.append(Quad(texture: uiTexture("float25|\(fl.text)", { f.render(fl.text, colour: (255, 255, 255), halo: (0, 0, 0)) }), x: Int(canvasX), y: Int(canvasY), w: w, h: f.size))
         }
         return out
     }
@@ -149,8 +152,9 @@ extension Renderer {
         let decor = prompt != nil && promptDecor?.text == text ? promptDecor : nil
         let title = prompt == nil ? g.messageTitles[text] : decor?.title, artifact = prompt == nil ? g.messageArtifacts[text] : nil
         var items: [(picture: UILayer?, caption: String)] = decor?.items ?? []
-        if let a = artifact { items.append((artifactIcon(a), g.artifactName(a))) }
-        if prompt == nil { items += (g.messagePictures[text] ?? []).map(messagePicture) }
+        let pictures = prompt == nil ? g.messagePictures[text] ?? [] : []
+        if let a = artifact, pictures.isEmpty { items.append((artifactIcon(a), g.artifactName(a))) }
+        items += pictures.map(messagePicture)
         guard let d = basicDialog(text: text, title: title, items: items, buttons: prompt?.cancel == true ? ["cancel", "ok"] : ["ok"]) else { return nil }
         let x = max(0, (AdventureUI.width - d.W) / 2), y = max(0, (AdventureUI.height - d.H) / 2)
         return MessageBox(x: x, y: y, w: d.W, h: d.H, d: d, title: title, artifact: artifact)
@@ -181,6 +185,17 @@ extension Renderer {
             if let hi = dLayer(sel, "hero_icon"), let pt = ui?.portrait(keyword: h.keyword, alignment: h.alignment, size: 52) { parts.append((pt, hi.x, hi.y)) }
             parts.append((ring, ring.x, ring.y))
             return (compose("msghero.\(h.keyword)", parts), h.name)
+        case .material(let m, let n):
+            let name = GameState.materialNames[m]
+            return (materialIcon(name, size: 32), String(format: "%+d %@", n, name.lowercased()))
+        case .artifact(let a, let framed):
+            guard let icon = artifactIcon(a) else { return (nil, game?.artifactName(a) ?? "") }
+            guard framed else { return (icon, game?.artifactName(a) ?? "") }
+            let f = dFile("Button.Frame_52") ?? dFile("button.frame_52")
+            let box = dRect(f, "icon") ?? DRect(0, 0, icon.width, icon.height)
+            var parts = [(icon, box.x + (box.w - icon.width) / 2, box.y + (box.h - icon.height) / 2)]
+            if let fr = dLayer(f, "Released") ?? f?.layers.first(where: { $0.isImage }) { parts.append((fr, fr.x, fr.y)) }
+            return (compose("msgart.\(a)", parts), game?.artifactName(a) ?? "")
         }
     }
     func messageButton(_ name: String) -> (x: Int, y: Int, w: Int, h: Int)? {

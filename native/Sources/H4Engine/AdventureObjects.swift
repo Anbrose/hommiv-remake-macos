@@ -48,7 +48,7 @@ public struct ObjectState: Codable {
 }
 
 extension GameState {
-    static let materialNames = ["Gold", "Wood", "Ore", "Crystal", "Sulfur", "Mercury", "Gems"]
+    public static let materialNames = ["Gold", "Wood", "Ore", "Crystal", "Sulfur", "Mercury", "Gems"]
     /// The value of a unit of each material in gold (0x98c3a0), for the marketplace and banks.
     public static let materialValue = [1, 125, 125, 250, 250, 250, 250]
 
@@ -73,10 +73,11 @@ extension GameState {
         let parts = items.filter { $0.1 > 0 }.map { "\($0.1) \(GameState.materialNames[$0.0].lowercased())" }
         return parts.count <= 1 ? parts.first ?? "" : parts.dropLast().joined(separator: ", ") + " and " + parts.last!
     }
+    /// Gain a material. Only a picked-up pile floats its "+N wood" over the map (0x7914d0, the one
+    /// object that does: re/pickups_spec.md); the others show it in their message's pictures.
     func gain(_ material: Int, _ n: Int, at hero: Hero) {
         guard n > 0 else { return }
         resources[GameState.materialNames[material], default: 0] += n
-        floaters.append(("+\(n) \(GameState.materialNames[material].lowercased())", hero.x, hero.y))
     }
     /// The dialogue sounds by the exe's id (0x5022a0; the ids objects pass, quirks kept).
     static let dialogueSounds = ["abandoned_mine", "artifact", "creature_bank", "experience", "kingdom_overview", "level_up", "luck", "magi", "mana",
@@ -122,8 +123,7 @@ extension GameState {
     }
     /// An artifact joins the army: the hero's backpack (the leader's).
     func give(artifact id: Int, to hero: Hero) {
-        hero.backpack.append(id)
-        floaters.append((artifactName(id), hero.x, hero.y))
+        hero.backpack.append(id)   // (no floating name: the messages show the artifact)
     }
 
     // MARK: game start
@@ -299,21 +299,27 @@ extension GameState {
         case "material_pile", "random_material_pile":
             // floating text only, and one of the six pick-up sounds (an RNG draw on each pickup)
             gain(st.material, st.amount, at: hero)
+            if st.amount > 0 { floaters.append(("+\(st.amount) \(GameState.materialNames[st.material].lowercased())", p.cellX, p.cellY)) }   // over the pile's tile
             sounds.append("miscellaneous.pick_up.0\(1 + rng(6))")
             remove(p)
         case "campfire":
+            // titled, the gold then the other material as pictures (0x5aeda0)
             gain(0, st.gold, at: hero); gain(st.material, st.amount, at: hero)
-            say(p, "initial", ["%material_list": materialList([(0, st.gold), (st.material, st.amount)])])
+            sayWith(p, "initial", ["%material_list": materialList([(0, st.gold), (st.material, st.amount)])], pictures: materialPictures([(0, st.gold), (st.material, st.amount)]))
             dialogueSound(27); remove(p)
         case "flotsam":
-            gain(0, st.gold, at: hero); gain(1, st.amount, at: hero)
-            say(p, "initial", ["%material_list": materialList([(0, st.gold), (1, st.amount)])])
+            gain(0, st.gold, at: hero); gain(1, st.amount, at: hero)   // (0x71b1e0)
+            sayWith(p, "initial", ["%material_list": materialList([(0, st.gold), (1, st.amount)])], pictures: materialPictures([(0, st.gold), (1, st.amount)]))
             dialogueSound(27); remove(p)
         case "treasure" where p.subtype == "treasure_chest":
-            if let a = st.artifacts.first {
+            if let a = st.artifacts.first {   // titled, the bare icon, the chest's sound (0x474a70)
                 give(artifact: a, to: hero)
-                say(p, "artifact", ["%an_artifact": artifactName(a, article: true), "%artifact_name": artifactName(a)])
-                dialogueSound(27)
+                sayWith(p, "artifact", ["%an_artifact": artifactName(a, article: true), "%artifact_name": artifactName(a)], pictures: [.artifact(a, framed: false)])
+                dialogueSound(28)
+            } else if heroes.isEmpty {   // no hero to take the experience: the gold, with its picture (0x475070)
+                gain(0, st.gold, at: hero)
+                sayWith(p, "creature_gold", ["%material": materialList([(0, st.gold)])], pictures: materialPictures([(0, st.gold)]))
+                dialogueSound(28)
             } else {
                 // keep the gold, or give it away for gold - 500 experience shared by the heroes
                 chestOffer = (hero, st.gold, st.gold - 500)
@@ -321,20 +327,23 @@ extension GameState {
             }
             remove(p)
         case "treasure" where p.subtype == "sea_chest":
-            if let a = st.artifacts.first { give(artifact: a, to: hero); say(p, "artifact", ["%an_artifact": artifactName(a, article: true)]) }
-            else { gain(0, st.gold, at: hero); say(p, "gold", ["%material": materialList([(0, st.gold)])]) }
+            // the artifact titled with its bare icon; the gold untitled with its picture (0x468d90)
+            if let a = st.artifacts.first { give(artifact: a, to: hero); sayWith(p, "artifact", ["%an_artifact": artifactName(a, article: true)], pictures: [.artifact(a, framed: false)]) }
+            else { gain(0, st.gold, at: hero); sayWith(p, "gold", ["%material": materialList([(0, st.gold)])], titled: false, pictures: materialPictures([(0, st.gold)])) }
             dialogueSound(27); remove(p)
         case "treasure", "corpse", "shipwreck_survivor":
-            if let a = st.artifacts.first {
-                give(artifact: a, to: hero)
-                say(p, "Initial", ["%an_artifact": artifactName(a, article: true), "%artifact_name": artifactName(a)])
-            } else { say(p, "empty") }
+            // always Initial, titled, the bare icon with its name (0x443e20)
+            if let a = st.artifacts.first { give(artifact: a, to: hero) }
+            sayWith(p, "Initial", ["%an_artifact": st.artifacts.first.map { artifactName($0, article: true) } ?? "", "%artifact_name": st.artifacts.first.map { artifactName($0) } ?? ""],
+                    pictures: st.artifacts.prefix(1).map { .artifact($0, framed: false) })
             dialogueSound(27); remove(p)
         case "artifact", "random_artifact", "random_potion":
             if let a = st.artifacts.first {
                 give(artifact: a, to: hero)
                 if let t = tables?.artifacts[RuleTables.artifactIds[RuleTables.artifactBase(a)]]?.pickUp, !t.isEmpty {
-                    scripts.messages.append(t); messageTitles[t] = artifactName(a); messageArtifacts[t] = a
+                    // the object's name as the title, the icon in button.frame_52 (0x430070)
+                    scripts.messages.append(t); messageTitles[t] = objectText(p, "name") ?? artifactName(a); messageArtifacts[t] = a
+                    messagePictures[t] = [.artifact(a, framed: true)]
                 }
             }
             dialogueSound(27); remove(p)
@@ -349,10 +358,11 @@ extension GameState {
         case "windmill", "weekly_material_generator", "random_weekly_material_generator":
             st.owner = actingColour
             if st.countdown == 0 {
-                gain(st.material, st.amount, at: hero)
-                say(p, "initial", ["%material": materialList([(st.material, st.amount)]), "%material_name": GameState.materialNames[st.material].lowercased()])
+                gain(st.material, st.amount, at: hero)   // titled, "+N" picture (0x477f70, 0x8cc130); empty: no picture
+                sayWith(p, "initial", ["%material": materialList([(st.material, st.amount)]), "%material_name": GameState.materialNames[st.material].lowercased()],
+                        pictures: materialPictures([(st.material, st.amount)]))
                 st.countdown = 7
-            } else { say(p, "empty", ["%material": materialList([(st.material, st.amount)]), "%material_name": GameState.materialNames[st.material].lowercased()]) }
+            } else { sayWith(p, "empty", ["%material": materialList([(st.material, st.amount)]), "%material_name": GameState.materialNames[st.material].lowercased()], pictures: []) }
             if p.type == "windmill" { dialogueSound(27) }
         case "vein":
             visitVein(hero, p)

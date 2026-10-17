@@ -1356,7 +1356,7 @@ public final class GameState {
     public var chestOffer: (hero: Hero, gold: Int, experience: Int)?
     public func resolveChest(gold: Bool) {
         guard let c = chestOffer else { return }
-        if gold { resources["Gold", default: 0] += c.gold; floaters.append(("+\(c.gold) gold", c.hero.x, c.hero.y)) }
+        if gold { resources["Gold", default: 0] += c.gold }   // (no floating text: 0x8c7260)
         else {   // shared equally by the army's heroes (0x641310 with the equal split)
             let hs = c.hero.members
             for h in hs { giveExperience(c.experience / hs.count, toOnly: h) }

@@ -24,6 +24,27 @@ public enum MessagePicture {
     case skill(Int, level: Int)
     /// A hero's portrait in its ring, captioned with the name (0x64ddb0).
     case hero(Hero)
+    /// A material gained: layers.icons.materials.32 captioned "+300 gold" (0x55a040, "%+i %s").
+    case material(Int, amount: Int)
+    /// An artifact: its icon captioned with its name, bare or in button.frame_52 (0x55c300).
+    case artifact(Int, framed: Bool)
+}
+
+extension GameState {
+    /// The material pictures of a reward: one per material gained, gold, wood, ore, crystal,
+    /// sulfur, mercury, gems in that order (0x55a3e0).
+    func materialPictures(_ items: [(Int, Int)]) -> [MessagePicture] {
+        var n = [Int](repeating: 0, count: 7)
+        for (m, k) in items where m >= 0 && m < 7 { n[m] += k }
+        return (0..<7).filter { n[$0] != 0 }.map { .material($0, amount: n[$0]) }
+    }
+    /// An object's message with its pictures, and its name as the title when `titled` (t_basic_dialog).
+    func sayWith(_ p: MapScene.Placed, _ key: String, _ subs: [String: String] = [:], titled: Bool = true, pictures: [MessagePicture]) {
+        guard let t = objectText(p, key, subs) else { return }
+        scripts.messages.append(t)
+        if titled, let name = objectText(p, "name") { messageTitles[t] = name }
+        if !pictures.isEmpty { messagePictures[t] = pictures }
+    }
 }
 
 extension GameState {

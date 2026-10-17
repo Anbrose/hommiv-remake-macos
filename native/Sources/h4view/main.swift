@@ -166,6 +166,7 @@ func faction(of name: String) -> String { alignments.first { name.lowercased().c
 game.registerObjects(townFactions: Dictionary(scenes.flatMap { $0.placed }.filter { $0.category == "castle" }.map { ($0.name, faction(of: $0.name)) }, uniquingKeysWith: { a, _ in a }))
 game.setupGuilds()    // each town's mage guild spells
 game.setupObjects()   // chests, piles, generators: their contents are rolled as the game starts
+game.setupMonths()    // next month's creature is drawn as the game starts (0x4d1db2)
 let ownedByFirst = map.objects.first { ($0.type == "town" || $0.type == "random_town") && $0.owner == map.humanColour && $0.level == scene.level }
 if let town = scene.placed.first(where: { p in ownedByFirst.map { p.category == "castle" && p.cellX == $0.x && p.cellY == $0.y } ?? false })
     ?? scene.placed.filter({ $0.category == "castle" }).min(by: { ($0.cellY - $0.cellX) < ($1.cellY - $1.cellX) }) {

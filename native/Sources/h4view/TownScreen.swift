@@ -234,14 +234,10 @@ extension Renderer {
         }
         return out
     }
-    /// Weekly growth with the town's bonuses (0x898310 / 700): +50% breeding pit, +100% the grail of a might town.
+    /// Weekly growth with the town's bonuses (0x898310 / 700: governor's Nobility, breeding pit, grails).
     func townGrowth(_ i: Int, _ creature: String) -> Int {
         guard let g = game, let c = g.tables?.creature(creature) else { return 0 }
-        let t = g.towns[i]
-        var bonus = 0
-        if g.isBuiltPublic(t, 40) { bonus += 50 }
-        if t.alignment == "might", g.isBuiltPublic(t, 11) { bonus += 100 }
-        return max(1, (c.growth * 700 * (100 + bonus) / 100 + 350) / 700)
+        return max(1, (g.townWeek700(i, c) + 350) / 700)
     }
     /// The player's towns (the town list's contents).
     var townListTowns: [Int] { game.map { g in g.towns.indices.filter { g.towns[$0].owned } } ?? [] }

@@ -449,6 +449,8 @@ public final class GameState {
         /// Buildings the map allows (the editor's town settings); nil = all.
         public var allowed: Set<String>? = nil
         public var available: [String: Int] = [:]      // creature keyword -> recruits waiting
+        /// The part of a recruit not grown yet, in 700ths (the exe keeps the population x 700, town +0x130).
+        public var growthRemainder: [String: Int] = [:]
         public var builtToday = false
         public var terrain: UInt8 = 1
         public var z = 0                                // map level
@@ -493,6 +495,9 @@ public final class GameState {
         /// The lower-level stack spending what is left of the monster's value (heroes4.exe 0x7f32b0).
         /// The army's other stacks: a random monster's escort, or a placed army's further stacks.
         public var extra: [(creature: String, count: Int)] = []
+        /// What a month-spawned stack carries over from its spawn record (t_army +0xec..+0xf8,
+        /// +0xb4, +0xb8); nil for every other stack (the exe's -1s, re/month_events_spec.md).
+        public var origin: MonthOrigin? = nil
         public init(x: Int, y: Int, name: String, creature: String, count: Int, extra: [(creature: String, count: Int)] = []) {
             self.x = x; self.y = y; self.name = name; self.creature = creature; self.count = count; self.extra = extra
         }
@@ -780,7 +785,7 @@ public final class GameState {
         for (r, v) in b.cost { resources[r, default: 0] -= v }
         towns[i].buildings.insert(b.keyword)
         towns[i].builtToday = true
-        if let c = b.creature, let def = tables?.creature(c) { towns[i].available[c, default: 0] += def.growth }
+        if let c = b.creature, let def = tables?.creature(c) { dwellingBuilt(i, c, def) }
         sounds.append("miscellaneous.town_build")
         log.append("built \(b.name) in \(towns[i].name)")
     }
@@ -798,6 +803,10 @@ public final class GameState {
 
     /// The game's random numbers for rules ported from the exe.
     public var random = H4Random()
+    /// This month's creature (game +0x650), next month's (+0x3a0, drawn a month ahead) and the
+    /// places stacks may come back to (+0x678) (Months.swift, re/month_events_spec.md).
+    public var monthCreature = "peasant", nextMonthCreature = "peasant"
+    public var monthSpawns: [MonthSpawnRecord] = []
     /// A hero as a fighter: its level and skills, what objects gave it (attack, defense, speed:
     /// the bonus array, shown 1:1), and until the next battle the fountains' +20% damage (effect
     /// 0x99), +2 speed (0x92) and more hit points (0x39).
@@ -943,6 +952,7 @@ public final class GameState {
             monsters.remove(at: i)
         } else if won {
             giveExperience(experience, to: hero)
+            rememberMonthSpawn(monsters[i])   // a beaten neutral stack's place (0x522f3a)
             scene.remove(p)
             passability.free(p.cellX, p.cellY)
             monsters.remove(at: i)
@@ -1540,17 +1550,12 @@ public final class GameState {
         day += 1
         for h in heroes { h.maxMovement = armyMovement(h); h.movement = h.maxMovement; h.path = []; h.plan = [] }
         for (res, amount) in income { resources[res, default: 0] += amount }
+        monthsNewDay()   // 0x4d8910: the month changes before the objects' day
         objectsNewDay()
         sanctuariesNewDay()
         dwellingsNewDay()
+        townsNewDay()    // town dwellings grow a seventh of their week every day (0x899960)
         for i in towns.indices { towns[i].builtToday = false; if towns[i].tavernDays > 0 { towns[i].tavernDays -= 1 } }
-        if dayOfWeek == 1, let t = tables {   // a new week: dwellings restock, in towns too
-            for i in towns.indices {
-                for b in t.buildings(for: towns[i].alignment) where towns[i].buildings.contains(b.keyword) {
-                    if let c = b.creature, let def = t.creature(c) { towns[i].available[c, default: 0] += def.growth }
-                }
-            }
-        }
     }
 
     public var dateText: String { "Month \(month), Week \(week), Day \(dayOfWeek)" }

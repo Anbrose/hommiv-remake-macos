@@ -124,19 +124,26 @@ extension Passability {
     /// (0x4cbc10); a cell with a forced exit (the zone of a stack the player sees, 0x4ff856) is
     /// left only in that direction. Returns the cost and predecessor of every cell.
     public func search(from start: (Int, Int), goals: Set<Int> = []) -> (cost: [Int32], prev: [Int32]) {
+        search(fromAll: [start], goals: goals)
+    }
+    /// The same search started from several cells at once (each at cost 0); cells in `avoid`
+    /// are never entered (a caravan's safe route, Caravans.swift).
+    public func search(fromAll starts: [(Int, Int)], goals: Set<Int> = [], avoid: Set<Int> = []) -> (cost: [Int32], prev: [Int32]) {
         let n = size * size
         var g = [Int32](repeating: .max, count: n)
         var prev = [Int32](repeating: -1, count: n)
         var heap = RouteHeap()
         var pending = goals
-        let s = start.0 * size + start.1
-        guard start.0 >= 0, start.1 >= 0, start.0 < size, start.1 < size else { return (g, prev) }
-        g[s] = 0; heap.push(0, s)
+        var sources = Set<Int>()
+        for start in starts where start.0 >= 0 && start.1 >= 0 && start.0 < size && start.1 < size {
+            let s = start.0 * size + start.1
+            if sources.insert(s).inserted { g[s] = 0; heap.push(0, s) }
+        }
         while !heap.isEmpty {
             let (c, ii) = heap.pop(); let i = Int(ii)
             if c > g[i] { continue }   // a stale record
             if !goals.isEmpty { pending.remove(i); if pending.isEmpty { break } }
-            if i != s, blocked[i] { continue }   // entered, not left
+            if !sources.contains(i), blocked[i] { continue }   // entered, not left
             let x = i / size, y = i % size
             let forced = forcedExit[i]
             for (k, d) in Passability.directions.enumerated() {
@@ -145,10 +152,11 @@ extension Passability {
                 guard nx >= 0, ny >= 0, nx < size, ny < size else { continue }
                 guard canStep(from: x, y, to: nx, ny) || enters(from: x, y, to: nx, ny) else { continue }
                 let j = nx * size + ny
+                if !avoid.isEmpty, avoid.contains(j) { continue }
                 let ng = c + Int32(stepCost100(from: x, y, to: nx, ny))
                 if ng < g[j] { g[j] = ng; prev[j] = Int32(i); heap.push(ng, j) }
             }
-            for j in forced == nil ? jumps[i] ?? [] : [] where !blocked[j] {
+            for j in forced == nil ? jumps[i] ?? [] : [] where !blocked[j] && !avoid.contains(j) {
                 let ng = c + 100
                 if ng < g[j] { g[j] = ng; prev[j] = Int32(i); heap.push(ng, j) }
             }

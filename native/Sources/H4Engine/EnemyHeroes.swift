@@ -81,6 +81,7 @@ extension GameState {
             towns[i].garrison = []
             let previous = towns[i].owner
             towns[i].owned = true; towns[i].owner = map.humanColour
+            caravansAtCapture(town: i, newOwner: map.humanColour)
             log.append(text("town_captured_town.misc", "You have captured %town_name.").replacingOccurrences(of: "%town_name", with: towns[i].name))
             runTownEvent(i, slot: 1, previousOwner: previous, hero: hero)
         } else {

@@ -35,6 +35,19 @@ public struct SaveGame: Codable {
     public var sanctuaryGuests: [String: HeroState]? = nil, sanctuaryPaid: [String]? = nil
     /// The shroud per level (one byte a cell, base64).
     public var fog: [String]? = nil
+    /// Caravans (heroes4.exe map block 0x4e5300: the seven places, arrival day, owner, destination
+    /// town, origin name, id) and the next id.
+    public var caravans: [CaravanState]? = nil
+    public var nextCaravanId: Int? = nil
+
+    public struct SlotState: Codable { public var stack: Stack?; public var hero: HeroState? }
+    public struct CaravanState: Codable {
+        public var id, owner: Int
+        public var town: Cell
+        public var origin: String
+        public var arrivalDay: Int
+        public var slots: [SlotState?]
+    }
 
     public struct Stack: Codable { public var creature: String; public var count: Int }
     public struct Cell: Codable { public var x: Int, y: Int }
@@ -73,6 +86,7 @@ public struct SaveGame: Codable {
         public var guildSpells: [[Int]]? = nil
         public var garrison: [Stack]? = nil
         public var garrisonHeroes: [HeroState]? = nil
+        public var prisoners: [HeroState]? = nil
     }
     public struct CellFlag: Codable { public var x, y: Int; public var on: Bool }
     public struct CellCount: Codable { public var x, y: Int; public var count: Int; public var owned: Bool? = nil; public var fourteenths: Int? = nil
@@ -110,7 +124,8 @@ extension GameState {
             let g: [SaveGame.Stack] = t.garrison.map { SaveGame.Stack(creature: $0.creature, count: $0.count) }
             townStates.append(SaveGame.TownState(x: t.x, y: t.y, name: t.name, owned: t.owned, owner: t.owner, buildings: Array(t.buildings).sorted(),
                                                  available: t.available, builtToday: t.builtToday, guildSpells: t.guildSpells, garrison: g,
-                                                 garrisonHeroes: t.garrisonHeroes.map { SaveGame.state(of: $0) }))
+                                                 garrisonHeroes: t.garrisonHeroes.map { SaveGame.state(of: $0) },
+                                                 prisoners: t.prisoners.isEmpty ? nil : t.prisoners.map { SaveGame.state(of: $0) }))
         }
         let mineFlags: [SaveGame.CellFlag] = mines.map { SaveGame.CellFlag(x: $0.x, y: $0.y, on: $0.owned) }
         let dwellingCounts: [SaveGame.CellCount] = dwellings.map { SaveGame.CellCount(x: $0.x, y: $0.y, count: $0.available, owned: $0.owned, fourteenths: $0.fourteenths, owner: $0.owner, guards: $0.guards, guardFraction: $0.guardFraction, visited: $0.visited.sorted()) }
@@ -135,6 +150,12 @@ extension GameState {
         s.obeliskVisits = obeliskVisits; s.digSites = digSites; s.dug = Array(dug).sorted()
         s.sanctuaryGuests = sanctuaryGuests.mapValues { SaveGame.state(of: $0) }; s.sanctuaryPaid = Array(sanctuaryPaid).sorted()
         s.fog = fog.map { Data($0).base64EncodedString() }
+        s.caravans = caravans.map { c in
+            SaveGame.CaravanState(id: c.id, owner: c.owner, town: .init(x: towns[c.destination].x, y: towns[c.destination].y), origin: c.origin,
+                                  arrivalDay: c.arrivalDay, slots: c.slots.map { sl in
+                                      sl.map { SaveGame.SlotState(stack: $0.stack.map { .init(creature: $0.creature, count: $0.count) }, hero: $0.hero.map { SaveGame.state(of: $0) }) } })
+        }
+        s.nextCaravanId = nextCaravanId
         return s
     }
 
@@ -165,6 +186,7 @@ extension GameState {
             if let gs = t.guildSpells { towns[i].guildSpells = gs }
             if let g = t.garrison { towns[i].garrison = g.map { Hero.Stack(creature: $0.creature, count: $0.count) } }
             towns[i].garrisonHeroes = (t.garrisonHeroes ?? []).map { SaveGame.hero(from: $0) }
+            towns[i].prisoners = (t.prisoners ?? []).map { SaveGame.hero(from: $0) }
         }
         for m in s.mines { if let i = mines.firstIndex(where: { $0.x == m.x && $0.y == m.y }) { mines[i].owned = m.on } }
         for d in s.dwellings { if let i = dwellings.firstIndex(where: { $0.x == d.x && $0.y == d.y }) { dwellings[i].available = d.count; dwellings[i].owned = d.owned ?? false; dwellings[i].fourteenths = d.fourteenths ?? 0
@@ -203,6 +225,16 @@ extension GameState {
         reapplyGarrisons()
         if let f = s.fog { fog = f.compactMap { Data(base64Encoded: $0).map { [UInt8]($0) } }; fogLevel = []; updateVision() }
         if let bs = s.boats { boats = bs; for b in bs where b.z < passabilities.count { passabilities[b.z].block(b.x, b.y) } }
+        caravans = (s.caravans ?? []).compactMap { c in
+            guard let t = towns.firstIndex(where: { $0.x == c.town.x && $0.y == c.town.y }) else { return nil }
+            let slots: [ArmySlot?] = c.slots.map { sl in
+                if let h = sl?.hero { return .hero(SaveGame.hero(from: h)) }
+                if let st = sl?.stack { return .stack(Hero.Stack(creature: st.creature, count: st.count)) }
+                return nil
+            }
+            return Caravan(id: c.id, owner: c.owner, destination: t, origin: c.origin, arrivalDay: c.arrivalDay, slots: slots)
+        }
+        nextCaravanId = s.nextCaravanId ?? ((caravans.map(\.id).max() ?? 0) + 1)
         if let mo = s.mineOwners { for (i, o) in mo.enumerated() where i < mines.count { mines[i].owner = o } }
     }
 }

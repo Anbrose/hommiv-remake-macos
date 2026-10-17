@@ -464,6 +464,8 @@ public final class GameState {
         public var garrisonHeroes: [Hero] = []
         /// Where each garrison stack and hero stands in the row's seven places (TownArmies).
         public var rowKeys: [String?] = []
+        /// Heroes held in the town's prison (town+0x158): caught camping outside when it fell.
+        public var prisoners: [Hero] = []
         /// 0 no walls, 1 fort, 2 citadel, 3 castle (the siege layout).
         public var castleLevel: Int { buildings.contains("castle") ? 3 : buildings.contains("citadel") ? 2 : buildings.contains("fort") ? 1 : 0 }
     }
@@ -553,6 +555,10 @@ public final class GameState {
         return (count, (p.keyword, left / p.experience))
     }
     public var towns: [Town] = []
+    /// Every player's caravans on their way or camped outside their town (Caravans.swift).
+    public var caravans: [Caravan] = []
+    /// The next caravan's id (map+0x39c).
+    public var nextCaravanId = 1
     public var mines: [Mine] = []
     public var dwellings: [Dwelling] = []
     public var monsters: [Monster] = [] { didSet { dangerCache = nil; zoneCache = [:]; monsterRevision &+= 1 } }
@@ -1162,6 +1168,7 @@ public final class GameState {
                 let previous = towns[i].owner
                 towns[i].owner = actingColour; towns[i].owned = actingColour == map.humanColour
                 if towns[i].owned { log.append("\(towns[i].name) is yours") }
+                caravansAtCapture(town: i, newOwner: actingColour)
                 runTownEvent(i, slot: 1, previousOwner: previous, hero: hero)   // "captured"
                 checkScenario(newDay: false)
             } else {
@@ -1544,6 +1551,7 @@ public final class GameState {
         sanctuariesNewDay()
         dwellingsNewDay()
         for i in towns.indices { towns[i].builtToday = false; if towns[i].tavernDays > 0 { towns[i].tavernDays -= 1 } }
+        defer { caravanArrivals(for: map.humanColour) }   // the human's turn starts (0x4b3710 -> 0x4b1010)
         if dayOfWeek == 1, let t = tables {   // a new week: dwellings restock, in towns too
             for i in towns.indices {
                 for b in t.buildings(for: towns[i].alignment) where towns[i].buildings.contains(b.keyword) {

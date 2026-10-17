@@ -486,6 +486,13 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// A question or notice of the game's own (retreat, surrender): the text, whether it has
     /// Cancel beside OK, and what OK does.
     var prompt: (text: String, cancel: Bool, ok: (() -> Void)?)?
+    /// A title banner and pictures for the prompt with this text (a building's description, the treasury).
+    var promptDecor: (text: String, title: String?, items: [(picture: UILayer?, caption: String)])?
+    /// Show a notice with OK, a title and pictures (a t_basic_dialog of the game's own).
+    func showPrompt(_ text: String, title: String?, items: [(picture: UILayer?, caption: String)] = []) {
+        prompt = (text, false, nil)
+        promptDecor = (text, title, items)
+    }
     var outcomeShown = false
     var modelFigures: [String: (state: String, since: Date, until: Date)] = [:]
     /// 15000 -> "15,000"

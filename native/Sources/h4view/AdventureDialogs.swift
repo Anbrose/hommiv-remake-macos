@@ -146,8 +146,9 @@ extension Renderer {
     /// the buttons in creation order (a question: Cancel, then OK); centred on the screen.
     func messageBox() -> MessageBox? {
         guard let g = game, let text = prompt?.text ?? g.scripts.messages.first else { return nil }
-        let title = prompt == nil ? g.messageTitles[text] : nil, artifact = prompt == nil ? g.messageArtifacts[text] : nil
-        var items: [(picture: UILayer?, caption: String)] = []
+        let decor = prompt != nil && promptDecor?.text == text ? promptDecor : nil
+        let title = prompt == nil ? g.messageTitles[text] : decor?.title, artifact = prompt == nil ? g.messageArtifacts[text] : nil
+        var items: [(picture: UILayer?, caption: String)] = decor?.items ?? []
         if let a = artifact { items.append((artifactIcon(a), g.artifactName(a))) }
         guard let d = basicDialog(text: text, title: title, items: items, buttons: prompt?.cancel == true ? ["cancel", "ok"] : ["ok"]) else { return nil }
         let x = max(0, (AdventureUI.width - d.W) / 2), y = max(0, (AdventureUI.height - d.H) / 2)
@@ -201,7 +202,7 @@ extension Renderer {
             return x >= Float(r.x) && x < Float(r.x + r.w) && y >= Float(r.y) && y < Float(r.y + r.h)
         }
         if let p = prompt {   // the game's own box comes first; it stays until OK or Cancel
-            if on(okRect()) { prompt = nil; p.ok?() } else if on(cancelRect()) { prompt = nil }
+            if on(okRect()) { prompt = nil; promptDecor = nil; p.ok?() } else if on(cancelRect()) { prompt = nil; promptDecor = nil }
             return true
         }
         guard let g = game, !g.scripts.messages.isEmpty else { return false }

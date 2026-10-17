@@ -172,7 +172,7 @@ extension Renderer {
         cs.info = nil
     }
 
-    /// The name and help of what is under the pointer in the creature window (ability or spell icon).
+    /// The name of what is under the pointer in the creature window (ability or spell icon).
     func combatInfoTip(x: Float, y: Float) -> String? {
         guard let cs = combat, let id = cs.info, let b = cs.battle, let d = ui?.dialog("combat.creature") else { return nil }
         let u = b.unit(id)
@@ -181,13 +181,8 @@ extension Renderer {
             guard let l = layer(d, slot) else { return false }
             return x >= Float(ox + l.x) && x < Float(ox + l.x + l.width) && y >= Float(oy + l.y) && y < Float(oy + l.y + l.height)
         }
-        if !u.stats.isHero {
-            let list = RuleTables.creatureAbilities[u.keyword.lowercased()] ?? Array(u.stats.abilities).sorted()
-            for (k, a) in list.prefix(5).enumerated() where on("skill_\(k + 1)") {
-                guard let info = game?.tables?.abilityInfo[a.lowercased()] else { return a }
-                return "\(info.name): \(info.help)"
-            }
-        }
+        // (a creature's ability: its name, abilityAt; a hero's skills have no balloon here)
+        if !u.stats.isHero, let a = abilityAt(x: x, y: y) { return abilityName(a.keyword) }
         let spells = unitSpells(u)
         for (k, s) in spells.curses.dropFirst(cs.infoPages.0 * 4).prefix(4).enumerated() where on("curse_spell_\(k + 1)") { return RuleTables.spells[s].name }
         for (k, s) in spells.blessings.dropFirst(cs.infoPages.1 * 4).prefix(4).enumerated() where on("blessing_spell_\(k + 1)") { return RuleTables.spells[s].name }

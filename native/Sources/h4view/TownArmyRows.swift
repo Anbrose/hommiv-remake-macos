@@ -156,6 +156,7 @@ extension Renderer {
 /// second on the town screen, the text of what is under it.
 extension Renderer {
     func townBalloonText(x: Float, y: Float) -> String? {
+        if townOpen != nil, abilityPopup == nil, let a = abilityAt(x: x, y: y) { return abilityName(a.keyword) }   // a castle / recruit ability icon
         guard let ts = town, let g = game, let i = townOpen, townDialog == nil, menu == nil else { return nil }
         func b(_ key: String) -> String? { g.tables?.interfaceTexts[key]?.balloon }
         if townButtonHit("ok", x: Renderer.townOK.0, y: Renderer.townOK.1, x, y) { return b("town_screen.ok") }

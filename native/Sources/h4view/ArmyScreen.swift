@@ -267,14 +267,21 @@ extension Renderer {
 
     // MARK: drawing
 
+    /// The rows on show, the selected place and what is in it.
+    func armyScreenShown(_ s: ArmySession) -> (rows: [[ArmySlot?]], sel: (row: Int, k: Int), item: ArmySlot?) {
+        let rows = sessionRows(s)
+        let shownRows = s.double ? rows : [rows[0]]
+        let sel: (row: Int, k: Int) = s.selected.row < shownRows.count ? s.selected : (0, 0)
+        return (shownRows, sel, sel.k < shownRows[sel.row].count ? shownRows[sel.row][sel.k] : nil)
+    }
+    /// The creature's ability places (52x52, top-lefts relative to the screen).
+    static let armyScreenAbilityColumns = [30, 90, 147, 204], armyScreenAbilityTop = 167
+
     func armyScreenQuads() -> [Quad] {
         guard let g = game, let ui = ui, let s = armySession, let d = ui.dialog("army.layout") else { return [] }
         let leader = s.leader
         let (ox, oy) = armyOrigin
-        let rows = sessionRows(s)
-        let shownRows = s.double ? rows : [rows[0]]
-        let sel: (row: Int, k: Int) = s.selected.row < shownRows.count ? s.selected : (0, 0)
-        let item = sel.k < shownRows[sel.row].count ? shownRows[sel.row][sel.k] : nil
+        let (shownRows, sel, item) = armyScreenShown(s)
         let hero = item?.hero, stack = item?.stack
         // the army the shown one belongs to (its morale and bonuses)
         let owner: Hero = s.town != nil ? leader : sel.row == 1 ? (s.x.other ?? leader) : leader
@@ -350,9 +357,9 @@ extension Renderer {
         if hero == nil { out += layoutImage(d, "Abilities_Frame", ox, oy) } else { out += layoutImage(d, "Skill_Frame", ox, oy) }
         if let c = creature {
             let skills = iconSheet("skills.creature.52")
-            let cols = [30, 90, 147, 204]
-            for (k, ab) in (RuleTables.creatureAbilities[c.keyword.lowercased()] ?? []).prefix(4).enumerated() {
-                if let l = skills[ab.lowercased()] { out.append(Quad(texture: uiTexture("skill|\(ab)", { l.bitmap }), x: ox + cols[k] + (52 - l.width) / 2, y: oy + 167 + (52 - l.height) / 2, w: l.width, h: l.height)) }
+            let cols = Renderer.armyScreenAbilityColumns, top = Renderer.armyScreenAbilityTop
+            for (k, ab) in abilityKeywords(c.keyword).prefix(4).enumerated() {
+                if let l = skills[ab.lowercased()] { out.append(Quad(texture: uiTexture("skill|\(ab)", { l.bitmap }), x: ox + cols[k] + (52 - l.width) / 2, y: oy + top + (52 - l.height) / 2, w: l.width, h: l.height)) }
             }
         }
         // texts

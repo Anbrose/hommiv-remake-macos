@@ -35,6 +35,10 @@ public struct SaveGame: Codable {
     public var sanctuaryGuests: [String: HeroState]? = nil, sanctuaryPaid: [String]? = nil
     /// The shroud per level (one byte a cell, base64).
     public var fog: [String]? = nil
+    /// The month's creature, the next one, the remembered spawn places, the stacks months added (per level).
+    public var monthCreature: String? = nil, nextMonthCreature: String? = nil
+    public var monthSpawns: [MonthSpawnRecord]? = nil
+    public var addedByLevel: [[MapScene.AddedCreature]]? = nil
 
     public struct Stack: Codable { public var creature: String; public var count: Int }
     public struct Cell: Codable { public var x: Int, y: Int }
@@ -73,6 +77,7 @@ public struct SaveGame: Codable {
         public var guildSpells: [[Int]]? = nil
         public var garrison: [Stack]? = nil
         public var garrisonHeroes: [HeroState]? = nil
+        public var growthRemainder: [String: Int]? = nil
     }
     public struct CellFlag: Codable { public var x, y: Int; public var on: Bool }
     public struct CellCount: Codable { public var x, y: Int; public var count: Int; public var owned: Bool? = nil; public var fourteenths: Int? = nil
@@ -83,6 +88,7 @@ public struct SaveGame: Codable {
         public var count: Int
         public var extra: [Stack]
         public var z: Int? = nil
+        public var origin: MonthOrigin? = nil
     }
     public struct ScriptSave: Codable {
         public var numbers: [String: Int], flags: [String: Bool], messages: [String]
@@ -110,14 +116,14 @@ extension GameState {
             let g: [SaveGame.Stack] = t.garrison.map { SaveGame.Stack(creature: $0.creature, count: $0.count) }
             townStates.append(SaveGame.TownState(x: t.x, y: t.y, name: t.name, owned: t.owned, owner: t.owner, buildings: Array(t.buildings).sorted(),
                                                  available: t.available, builtToday: t.builtToday, guildSpells: t.guildSpells, garrison: g,
-                                                 garrisonHeroes: t.garrisonHeroes.map { SaveGame.state(of: $0) }))
+                                                 garrisonHeroes: t.garrisonHeroes.map { SaveGame.state(of: $0) }, growthRemainder: t.growthRemainder))
         }
         let mineFlags: [SaveGame.CellFlag] = mines.map { SaveGame.CellFlag(x: $0.x, y: $0.y, on: $0.owned) }
         let dwellingCounts: [SaveGame.CellCount] = dwellings.map { SaveGame.CellCount(x: $0.x, y: $0.y, count: $0.available, owned: $0.owned, fourteenths: $0.fourteenths, owner: $0.owner, guards: $0.guards, guardFraction: $0.guardFraction, visited: $0.visited.sorted()) }
         var monsterStates: [SaveGame.MonsterState] = []
         for m in monsters {
             let extra: [SaveGame.Stack] = m.extra.map { SaveGame.Stack(creature: $0.creature, count: $0.count) }
-            monsterStates.append(SaveGame.MonsterState(x: m.x, y: m.y, name: m.name, creature: m.creature, count: m.count, extra: extra, z: m.z))
+            monsterStates.append(SaveGame.MonsterState(x: m.x, y: m.y, name: m.name, creature: m.creature, count: m.count, extra: extra, z: m.z, origin: m.origin))
         }
         var townEv: [String: [Bool]] = [:]
         for (k, v) in scripts.townEvents { townEv["\(k)"] = v.map { $0.enabled } }
@@ -135,6 +141,8 @@ extension GameState {
         s.obeliskVisits = obeliskVisits; s.digSites = digSites; s.dug = Array(dug).sorted()
         s.sanctuaryGuests = sanctuaryGuests.mapValues { SaveGame.state(of: $0) }; s.sanctuaryPaid = Array(sanctuaryPaid).sorted()
         s.fog = fog.map { Data($0).base64EncodedString() }
+        s.monthCreature = monthCreature; s.nextMonthCreature = nextMonthCreature; s.monthSpawns = monthSpawns
+        s.addedByLevel = scenes.map { $0.added }
         return s
     }
 
@@ -153,6 +161,10 @@ extension GameState {
                     scene.relocate(p, toX: m.toX, y: m.toY)
                 }
             }
+            // stacks the months added go back first: `removed` may take some off again
+            for a in (s.addedByLevel.map { l < $0.count ? $0[l] : [] } ?? []) where scene.addCreature(a.creature, x: a.x, y: a.y, facing: a.facing) != nil {
+                passability.block(a.x, a.y); passability.openTrigger(a.x, a.y, object: Int.max)
+            }
             scene.removeAll(removed)
             for o in removed { passability.free(o.x, o.y) }
         }
@@ -165,6 +177,7 @@ extension GameState {
             if let gs = t.guildSpells { towns[i].guildSpells = gs }
             if let g = t.garrison { towns[i].garrison = g.map { Hero.Stack(creature: $0.creature, count: $0.count) } }
             towns[i].garrisonHeroes = (t.garrisonHeroes ?? []).map { SaveGame.hero(from: $0) }
+            towns[i].growthRemainder = t.growthRemainder ?? [:]
         }
         for m in s.mines { if let i = mines.firstIndex(where: { $0.x == m.x && $0.y == m.y }) { mines[i].owned = m.on } }
         for d in s.dwellings { if let i = dwellings.firstIndex(where: { $0.x == d.x && $0.y == d.y }) { dwellings[i].available = d.count; dwellings[i].owned = d.owned ?? false; dwellings[i].fourteenths = d.fourteenths ?? 0
@@ -173,7 +186,7 @@ extension GameState {
         // the monsters as saved: the beaten ones are gone (their objects are in `removed`), the rest keep their size
         monsters = s.monsters.map { st in
             var m = Monster(x: st.x, y: st.y, name: st.name, creature: st.creature, count: st.count, extra: st.extra.map { ($0.creature, $0.count) })
-            m.z = st.z ?? 0
+            m.z = st.z ?? 0; m.origin = st.origin
             return m
         }
         scripts.numbers = s.scripts.numbers; scripts.flags = s.scripts.flags; scripts.messages = s.scripts.messages
@@ -186,6 +199,9 @@ extension GameState {
             scripts.townEvents[t] = evs
         }
         outcome = s.outcome; victoryDays = s.victoryDays
+        if let c = s.monthCreature { monthCreature = c }
+        if let c = s.nextMonthCreature { nextMonthCreature = c }
+        if let r = s.monthSpawns { monthSpawns = r }
         if let o = s.objectStates { objectStates = o }
         if let u = s.usedArtifacts { usedArtifacts = Set(u) }
         if let e = s.enemyHeroes {

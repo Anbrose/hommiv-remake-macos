@@ -96,9 +96,13 @@ public final class MapScene {
         let n = map.size
         width = 2 * n * 32 + 64
         height = n * 32 + 96
+        self.archive = archive
         try buildTerrain(archive: archive, masks: masks)
         try placeObjects(archive: archive)
     }
+    /// The sprites' archive, kept for objects the game adds later (a month's wandering stacks).
+    private var archive: H4Archive?
+    private lazy var creatureNames: RandomResolver? = archive.map { RandomResolver(archive: $0) }
 
     /// Cell (x, y) -> screen centre. x runs down-left, y runs down-right (checked against the
     /// game on "Beyond the lake": the two towns mirror each other across the river).
@@ -245,6 +249,28 @@ public final class MapScene {
     }
     public struct MovedObject: Codable { public let fromX: Int, fromY: Int, name: String, toX: Int, toY: Int }
     public private(set) var moved: [MovedObject] = []
+
+    /// Put a creature's standing sprite on a cell (a stack the game spawns: the month's creatures,
+    /// re/month_events_spec.md), placed as the map's objects are; nil when the sprite is missing.
+    @discardableResult
+    public func addCreature(_ creature: String, x: Int, y: Int, facing: String = "s") -> Placed? {
+        guard let archive = archive, let entry = creatureNames?.creatureEntry(creature, facing: facing) else { return nil }
+        if spriteCache[entry] == nil, let d = try? archive.payload(entry), let s = try? Sprite(data: d) { spriteCache[entry] = s }
+        guard let s = spriteCache[entry], !s.isPlaceholder, let img = s.baseFrame ?? s.frames.first else { return nil }
+        let (sx, sy0) = screen(x: x, y: y)
+        let sy = sy0 - 16
+        let depth = (x + y + s.footprint.w + s.footprint.h - 2) * 1000 + (y - x) + 500
+        let q = Placed(name: entry, sprite: s, image: img, shadow: s.shadow(for: img),
+                       x: sx + Int(s.origin.x) + img.box.left, y: sy + Int(s.origin.y) + img.box.top,
+                       anchorX: sx, anchorY: sy, cellX: x, cellY: y, category: "Random creatures", depth: depth, type: "army", subtype: "")
+        let i = placed.firstIndex { $0.depth > depth } ?? placed.count
+        placed.insert(q, at: i)
+        added.append(AddedCreature(x: x, y: y, creature: creature, facing: facing))
+        return q
+    }
+    public struct AddedCreature: Codable { public let x: Int, y: Int, creature: String, facing: String }
+    /// Creatures the game put on the map, for saved games (re-added when loading, before `removed`).
+    public private(set) var added: [AddedCreature] = []
 
     /// Take an object off the map (a pickup that was collected).
     public func remove(_ p: Placed) {

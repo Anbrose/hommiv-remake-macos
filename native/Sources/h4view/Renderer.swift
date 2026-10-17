@@ -199,6 +199,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     var shop: ShopState? = nil             // a blacksmith's or conservatory's shop
     var sanctuary: SanctuaryOffer? = nil   // a sanctuary's dialog
     var puzzle: String? = nil              // the puzzle map shown (an obelisk colour)
+    var thievesGuildOpen = false           // the Thieves Guild window (Game Menu, hot key G)
     var heroShown = 0                     // which of the army's heroes the hero screen shows
     var floaters: [(text: String, x: Int, y: Int, since: Date)] = []
     var buildPage = 0
@@ -612,6 +613,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         out += hireQuads()
         out += mapRecruitQuads()
         out += puzzleQuads()
+        out += thievesGuildQuads()
         out += shopQuads()
         out += sanctuaryQuads()
         out += levelUpQuads()

@@ -116,6 +116,10 @@ extension Renderer {
     func dialogKey(_ code: UInt16) -> Bool {
         if splitDialog != nil { return splitKey(code) }
         if spellBook != nil { return spellBookKey(code) }
+        if thievesGuildOpen {   // the ok button's hot key is Enter (0x7d2970(0xd)); Escape closes it as well
+            if code == 36 || code == 76 || code == 53 { thievesGuildOpen = false }
+            return true
+        }
         if game?.levelUp != nil, !inCombat, code == 36 || code == 76 { confirmLevelUp(); return true }
         return false
     }
@@ -162,6 +166,7 @@ extension Renderer {
     func dialogTip(x: Float, y: Float) -> String? {
         if shop != nil { return shopTip(x: x, y: y) }
         if puzzle != nil { return puzzleTip(x: x, y: y) }
+        if thievesGuildOpen { return thievesGuildTip(x: x, y: y) }
         return nil
     }
     var dialogOrigin800: (Int, Int) { ((AdventureUI.width - 800) / 2, (AdventureUI.height - 600) / 2) }

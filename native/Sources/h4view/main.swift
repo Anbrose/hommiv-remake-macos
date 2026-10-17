@@ -471,6 +471,12 @@ if let out = snapshot {
         print("puzzle \(first.subtype): \(game.obeliskVisits[first.subtype] ?? 0)/\(game.obelisksRequired(first.subtype)) site \(game.digSites[first.subtype] ?? [])")
     }
     if ProcessInfo.processInfo.environment["H4OPTIONS"] != nil { renderer.optionsOpen = renderer.settings }   // snapshot: the options
+    if ProcessInfo.processInfo.environment["H4THIEVES"] != nil {   // snapshot: the Thieves Guild
+        renderer.thievesGuildOpen = true
+        let tg = game.thievesGuild()
+        print("thieves guild: players \(tg.towns.colours) towns \(tg.towns.values)/\(tg.towns.max) armies \(tg.armies.values)/\(tg.armies.max) income \(tg.income.values)/\(tg.income.max)")
+        if ProcessInfo.processInfo.environment["H4DEBUG"] != nil { print("armies: human \(game.heroes.map { "\($0.members.map { $0.level }) \($0.army.map { "\($0.count) \($0.creature)" })" }) enemy \(game.enemyHeroes.map { "\($0.owner): \($0.army.count)" }) garrisons \(game.towns.map { "\(String(describing: game.townColour($0))): \($0.garrison.count)" })") }
+    }
     if let m = ProcessInfo.processInfo.environment["H4OVERVIEW"] { renderer.overview = KingdomOverview(snapshot: m) }   // snapshot: the kingdom overview (towns, heroes, armies)
     if ProcessInfo.processInfo.environment["H4TELEPORT"] != nil, let h = game.heroes.first {   // snapshot: the teleporter dialog with four made-up exits
         let dests = [(0, h.x, h.y), (0, h.x + 10, h.y - 8), (0, h.x - 6, h.y + 12), (0, h.x + 20, h.y)].map { "\($0.0)|\($0.1)|\($0.2)" }
@@ -783,6 +789,7 @@ final class MapView: MTKView {
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
         if splitDialog != nil { renderer.splitClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.puzzle != nil { renderer.puzzleClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
+        if renderer.thievesGuildOpen { renderer.thievesGuildClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.shop != nil { renderer.shopClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.sanctuary != nil { renderer.sanctuaryClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.hire != nil { renderer.hireClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
@@ -948,6 +955,7 @@ final class MapView: MTKView {
                 return
             }
             if e.keyCode == 37 { renderer.openSaveDialog(.load); return }
+            if e.keyCode == 5 { renderer.thievesGuildOpen = true; return }   // G: the Thieves Guild (thieves_guild.hot_keys, 0x4bedc5)
         }
         switch e.keyCode {
         case 123, 124:   // arrows pan the map, or page the build list

@@ -536,7 +536,12 @@ if let out = snapshot {
             game.click(hero: hero, x: target.0, y: target.1)
         }
         var frames = 0
-        while frames < 600, game.heroes.first?.isWalking == true || game.charge != nil || frames < 90 { game.update(dt: 1.0 / 60); frames += 1 }   // walk until arrival (at least 1.5 s)
+        let stopAt = ProcessInfo.processInfo.environment["H4WALKDIST"].flatMap { Float($0) }   // debugging: stop mid-walk after that many cells
+        func going() -> Bool {
+            if let d = stopAt, let h = game.heroes.first { return h.isWalking && h.distance < d }
+            return game.heroes.first?.isWalking == true || game.charge != nil || frames < 90
+        }
+        while frames < 600, going() { game.update(dt: 1.0 / 60); frames += 1 }   // walk until arrival (at least 1.5 s)
         snapTime = Double(frames) / 60
         for line in game.log { print(line) }
         game.log.removeAll()

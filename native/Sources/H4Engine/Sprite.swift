@@ -41,6 +41,31 @@ public struct Sprite {
     public let flagPoint: (x: Int, y: Int)?
     /// adv_object only: the edges a hero steps across into the object (Pathing.swift).
     public let entryEdges: EntryEdges?
+    /// The file is an adv_object model (version 5 or 6), so it sorts by its own column
+    /// depths; actor sequences (heroes, wandering stacks) sort as actors (re/adventure_draw_order_spec.md).
+    public let isAdvObject: Bool
+    /// adv_object only: the image class byte after the model header (0x44cab0): an underlay
+    /// (t_underlay_adv_object_image: moss, tufts, cracks, lily pads ...) is drawn under every
+    /// other object, in map order; it has no column depths.
+    public let underlay: Bool
+    /// adv_object only: the overlay image's sort depth per 32-pixel screen column (reader 0x7cc590:
+    /// u32 n, n x i16 after the trailer's origin), from column `columnStart` (floor of the
+    /// non-shadow images' left edge / 32, measured from the anchor cell's top vertex) on.
+    public let columnDepths: [Int]
+    public let columnStart: Int
+    /// The sort depth of screen column c (0x7d01b0: the list clamped at its ends; -1 without a list).
+    public func columnDepth(_ c: Int) -> Int {
+        guard !columnDepths.isEmpty else { return -1 }
+        return columnDepths[min(max(c - columnStart, 0), columnDepths.count - 1)]
+    }
+    /// The union of the non-shadow images' boxes from the anchor's top vertex (left, top, right, bottom).
+    public var imageBounds: (left: Int, top: Int, right: Int, bottom: Int) {
+        let ims = images.filter { !$0.name.hasPrefix("shadow") && !$0.name.hasPrefix("base_shadow") && $0.box.right > $0.box.left }
+        guard !ims.isEmpty else { return (0, 0, 0, 0) }
+        let ox = Int(origin.x), oy = Int(origin.y)
+        return (ims.map { $0.box.left }.min()! + ox, ims.map { $0.box.top }.min()! + oy,
+                ims.map { $0.box.right }.max()! + ox, ims.map { $0.box.bottom }.max()! + oy)
+    }
     public var frames: [SpriteImage] { images.filter { !$0.name.hasPrefix("shadow") && $0.name != "base_frame" } }
     /// Unfinished assets in the game data are a 613x513 "DELETE ME NOW!!!" box (some artifacts,
     /// exhausted mines, stagecoaches, ...); nothing that size is a real adventure object.
@@ -98,6 +123,27 @@ public struct Sprite {
         guard p + 2 <= end, r.byte(at: p + 1) == 1, p + 10 <= end else { return nil }
         func i32(_ q: Int) -> Int { Int(Int32(bitPattern: UInt32(r.peekU16(at: q)) | UInt32(r.peekU16(at: q + 2)) << 16)) }
         return (i32(p + 2), i32(p + 6))
+    }
+
+    /// The image class byte (0x44cab0) after the model header and, when has_flag is set, its flag
+    /// point: 1 = underlay. Found at the same place as `advObjectFlagPoint` looks (v5, v6 models).
+    static func advObjectUnderlay(_ r: ByteReader, end: Int) -> Bool {
+        let v = Int(r.peekU16(at: 0))
+        guard v >= 5, v <= 6, end > 9 else { return false }
+        let k = Int(r.peekU16(at: 3)), w = Int(r.peekU16(at: 5)), h = Int(r.peekU16(at: 7))
+        func bytes(_ n: Int) -> Int { (n + 7) / 8 }
+        var p = 9 + bytes(w * h) + (k >= 1 ? bytes((h + 1) * w) + bytes((w + 1) * h) : 0)
+        if v >= 6 { p += bytes(2 * (h + 1) * w) + bytes(2 * (w + 1) * h) + (h + 1) * (w + 1) }
+        guard p + 2 <= end, r.peekU16(at: p) == 0 else { return false }
+        p += 2
+        for _ in 0..<3 {
+            guard p + 4 <= end else { return false }
+            p += 4 + Int(r.peekU16(at: p + 2))
+        }
+        // p: the u8 at model +0x1c, then has_flag (+ i32 x, y), then the image class
+        guard p + 2 <= end else { return false }
+        let q = p + 2 + (r.byte(at: p + 1) != 0 ? 8 : 0)
+        return q < end && r.byte(at: q) == 1
     }
 
     public init(data d: Data) throws {
@@ -185,6 +231,17 @@ public struct Sprite {
         images = list
         origin = (ox, oy)
         footprint = fp
+        let model = start >= 9 && (5...6).contains(r.byte(at: 0)) && r.byte(at: 1) == 0
+        isAdvObject = model
+        underlay = model ? Sprite.advObjectUnderlay(r, end: start) : false
+        var depths: [Int] = []
+        if model, !underlay, rd.remaining >= 4 {
+            let n = Int(rd.u32())
+            if n <= 256, rd.remaining >= 2 * n { for _ in 0..<n { depths.append(Int(Int16(bitPattern: rd.u16()))) } }
+        }
+        columnDepths = depths
+        let left = list.filter { !$0.name.hasPrefix("shadow") && !$0.name.hasPrefix("base_shadow") && $0.box.right > $0.box.left }.map { $0.box.left }.min() ?? 0
+        columnStart = Int((Double(left + Int(ox)) / 32).rounded(.down))
         flagPoint = start >= 9 ? Sprite.advObjectFlagPoint(r, end: start) : nil
         entryEdges = start >= 9 ? Sprite.advObjectEntryEdges(r, end: start) : nil
         blocked = occupied

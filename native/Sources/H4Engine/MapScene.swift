@@ -20,6 +20,9 @@ public final class MapScene {
         public let category: String             // first component of the adv_object name
         public let depth: Int
         public let type: String, subtype: String   // the map record's kind ("mine"/"gold_mine", "random_monster"/"level_2")
+        /// The object's place in the map's object list: heroes4.exe adds map objects in record order
+        /// and breaks draw-order ties by that (object table +4, re/adventure_draw_order_spec.md).
+        public var seq: Int = 0
     }
 
     public static let chunkSize = 512
@@ -176,12 +179,14 @@ public final class MapScene {
     private func placeObjects(archive: H4Archive) throws {
         let n = map.size
         var out: [Placed] = []
-        let objs = map.objects.filter { $0.level == level && $0.x >= -2 && $0.x < n + 2 && $0.y >= -2 && $0.y < n + 2 }
+        var objs: [(seq: Int, o: MapObject)] = []
+        for (i, o) in map.objects.enumerated() where o.level == level && o.x >= -2 && o.x < n + 2 && o.y >= -2 && o.y < n + 2 { objs.append((i, o)) }
         let resolver = RandomResolver(archive: archive)
         let debug = ProcessInfo.processInfo.environment["H4DEBUG"] != nil
         // random towns get factions in order: the first player's town first (Haven), then left to right on screen
-        let townOrder = objs.filter { $0.type == "random_town" }.sorted { (($0.owner ?? 99), $0.y - $0.x, $0.x + $0.y) < (($1.owner ?? 99), $1.y - $1.x, $1.x + $1.y) }
-        for o in objs {
+        let records: [MapObject] = objs.map { $0.o }
+        let townOrder = records.filter { $0.type == "random_town" }.sorted { (($0.owner ?? 99), $0.y - $0.x, $0.x + $0.y) < (($1.owner ?? 99), $1.y - $1.x, $1.x + $1.y) }
+        for (seq, o) in objs {
             var key = "adv_object.\(o.name).h4d"
             let ordinal = townOrder.firstIndex { $0.x == o.x && $0.y == o.y && $0.level == o.level } ?? 0
             let candidates = resolver.resolve(o, townOrdinal: ordinal)
@@ -218,7 +223,7 @@ public final class MapScene {
                               x: sx + Int(s.origin.x) + img.box.left, y: sy + Int(s.origin.y) + img.box.top,
                               anchorX: sx, anchorY: sy, cellX: o.x, cellY: o.y,
                               category: String(o.name.split(separator: ".").first ?? ""), depth: depth,
-                              type: o.type, subtype: o.subtype))
+                              type: o.type, subtype: o.subtype, seq: seq))
         }
         placed = out.sorted { $0.depth < $1.depth }
     }
@@ -231,7 +236,7 @@ public final class MapScene {
         let depth = (x + y + p.sprite.footprint.w + p.sprite.footprint.h - 2) * 1000 + (y - x) + 500
         let q = Placed(name: p.name, sprite: p.sprite, image: p.image, shadow: p.shadow,
                        x: sx + Int(p.sprite.origin.x) + p.image.box.left, y: sy + Int(p.sprite.origin.y) + p.image.box.top,
-                       anchorX: sx, anchorY: sy, cellX: x, cellY: y, category: p.category, depth: depth, type: p.type, subtype: p.subtype)
+                       anchorX: sx, anchorY: sy, cellX: x, cellY: y, category: p.category, depth: depth, type: p.type, subtype: p.subtype, seq: p.seq)
         placed.removeAll { $0.cellX == p.cellX && $0.cellY == p.cellY && $0.name == p.name && $0.depth == p.depth }
         let i = placed.firstIndex { $0.depth > depth } ?? placed.count
         placed.insert(q, at: i)
@@ -278,5 +283,21 @@ public final class MapScene {
                 canvas.pixels[d + 3] = 255
             }
         }
+    }
+}
+
+/// The adventure map's object draw order (heroes4.exe 0x406f00 / 0x77fd10,
+/// re/adventure_draw_order_spec.md). Underlay pictures go first, in map order, then every
+/// shadow. After that come the pieces: an object's 32-pixel columns and flag, and an army's
+/// ring, body and flag. They are ordered by key = depth - (x + y), largest (furthest back) first,
+/// then by the object's place in the map, then by the piece's index within its object.
+public enum DrawOrder {
+    /// Every adv_actor model's depth byte (+0x18) is 1, and 0x403950 negates it.
+    public static let armyDepth = -1
+    public static func key(depth: Int, cellX: Int, cellY: Int) -> Int { depth - (cellX + cellY) }
+    public static func before(_ a: (key: Int, seq: Int, sub: Int), _ b: (key: Int, seq: Int, sub: Int)) -> Bool {
+        if a.key != b.key { return a.key > b.key }
+        if a.seq != b.seq { return a.seq < b.seq }
+        return a.sub < b.sub
     }
 }

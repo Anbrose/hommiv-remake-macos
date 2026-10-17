@@ -190,6 +190,10 @@ if let town = scene.placed.first(where: { p in ownedByFirst.map { p.category == 
         hero.maxMovement = game.armyMovement(hero); hero.movement = hero.maxMovement
         if let m = movementLeft { hero.movement = m }
         hero.owner = map.humanColour
+        if let b = o.boat {   // the army starts aboard its ship (t_army record +0xbc)
+            hero.boat = ["life", "order", "death", "chaos", "nature", "might"][b]
+            hero.maxMovement = game.armyMovement(hero); hero.movement = movementLeft ?? hero.maxMovement
+        }
         game.heroes.append(hero)
         lap("\(hero.name) level \(hero.level) \(hero.classKeyword) at (\(o.x),\(o.y)) skills \(hero.skills) with \(all.map { "\($0.name) level \($0.level) \($0.classKeyword) \($0.skills)" })")
     }
@@ -236,6 +240,7 @@ for o in map.objects where o.type == "hero_army" && o.owner != map.humanColour &
     let e = all.removeFirst()
     e.companions = all; e.owner = o.owner ?? 1; e.z = o.level; e.home = (o.x, o.y)
     e.army = (o.army ?? []).compactMap { $0 }.compactMap { s in s.creature < RuleTables.creatureIds.count ? Hero.Stack(creature: RuleTables.creatureIds[s.creature], count: s.count) : nil }
+    if let b = o.boat { e.boat = ["life", "order", "death", "chaos", "nature", "might"][b] }
     e.maxMovement = game.armyMovement(e); e.movement = e.maxMovement
     game.place(enemy: e)
     lap("enemy \(e.name) level \(e.level) \(e.classKeyword) of player \(e.owner) at (\(o.x),\(o.y)) with \(all.count) more")

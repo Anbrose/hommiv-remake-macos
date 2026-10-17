@@ -20,6 +20,9 @@ public struct MapObject {
     public var army: [(creature: Int, count: Int)?]? = nil
     /// The heroes of a placed army (players' starting heroes are armies placed on the map).
     public var heroes: [MapHero] = []
+    /// A placed army that starts at sea: its ship's alignment (t_army record v7+, 0x523e1c:
+    /// i8, -1 = on land; 0 life, 1 order, 2 death, 3 chaos, 4 nature, 5 might).
+    public var boat: Int? = nil
     /// A random monster's size range in peasants (min, max), when the editor set one.
     public var monsterRange: (min: Int, max: Int)? = nil
     /// A sign's or bottle's message; the name of an event trigger's or Pandora's box's event.
@@ -412,9 +415,32 @@ public struct MapFile {
             var o = MapObject(name: "army", type: owner == 6 ? "army" : "hero_army", subtype: "", terrain: "", x: x, y: y, level: lv)
             o.army = stacks; o.heroes = heroes
             o.owner = owner == 6 ? nil : owner
+            o.boat = armyBoat(d, at: rd.pos, version: v)
             out.append(o)
         }
         return out
+    }
+
+    /// What follows a t_army record's creature array (0x523b8e..0x523e81): v4+ the formation
+    /// (v5+ a u8 "set" flag first; when 0 nothing else), i8 and u8; v6+ three standard events and
+    /// the timed, triggerable and continuous lists; v7+ i8 ship alignment (-1 none). Returns
+    /// the ship's alignment, nil on land or when the record does not read cleanly.
+    static func armyBoat(_ d: Data, at start: Int, version v: Int) -> Int? {
+        guard v >= 7 else { return nil }
+        var sr = ScriptReader(d, at: start)
+        do {
+            if v >= 4 {
+                if try (v >= 5 ? sr.byte() : 1) != 0 { _ = try sr.byte(); _ = try sr.byte() }
+            }
+            if v >= 6 {
+                for k in 0..<3 { _ = try sr.builtinEvent(slot: k) }
+                _ = try sr.list { try $0.timedEvent() }
+                _ = try sr.list { try $0.triggerableEvent() }
+                _ = try sr.list { try $0.continuousEvent() }
+            }
+            let b = Int(Int8(truncatingIfNeeded: try sr.byte()))
+            return (0...5).contains(b) ? b : nil
+        } catch { return nil }
     }
 
     static func parseObjects(_ d: Data, end: Int, names: Set<String>) -> [MapObject] {

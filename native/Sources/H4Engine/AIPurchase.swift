@@ -239,12 +239,8 @@ extension GameState {
         }
         return n
     }
-    func gateFree(_ i: Int) -> (Int, Int)? {
-        guard let p = townPlaced(i) else { return nil }
-        let back = level; level = towns[i].z; defer { level = back }
-        let probe = Hero(actor: "", x: -1, y: -1, movement: 0)
-        return gateCells(p).first { isVacant($0, for: probe) && enemyAt($0.0, $0.1) == nil }
-    }
+    /// The town's free exit cell (garrison vbase vfunc +0x30 -> 0x8a0d80 -> 0x4f9ea0).
+    func gateFree(_ i: Int) -> (Int, Int)? { townExitCell(i) }
 
     /// The start-of-turn town pass (0x47c170): each town with an empty garrison and a free exit
     /// plans a creature army from its built dwellings with the budget (no discount, no building, no

@@ -9,10 +9,17 @@ import H4Engine
 /// with Shift or the split toggle half of it is split off -- or clicked and then the place clicked; the
 /// Move buttons move everything up or down.
 extension Renderer {
-    /// Two rows while an army visits (or the spare row holds something), else the garrison alone.
+    /// Two rows while an army visits, or while the empty visiting row is offered (0x8b5eb0: fewer
+    /// than 8 armies and a free cell outside the gate), else the garrison alone.
     var townTwoRows: Bool {
         guard let g = game, let i = townOpen, i < g.towns.count else { return false }
-        return g.visitingArmy(town: i) != nil || townSpare.contains { $0 != nil }
+        if townSpare.contains(where: { $0 != nil }) || g.visitingArmy(town: i) != nil { return true }
+        let z = min(g.towns[i].z, g.passabilities.count - 1)
+        let key = [i, g.heroes.count, g.enemyHeroes.count, g.boats.count, g.passabilities[z].revision]
+        if let o = townOffer, o.key == key { return o.offered }
+        let offered = g.townOffersVisitingRow(i)
+        townOffer = (key, offered)
+        return offered
     }
     /// The two rows now (seven places each): the garrison and the visiting army or the spare row.
     func townRows() -> [[ArmySlot?]]? {
@@ -97,10 +104,11 @@ extension Renderer {
         } else if rows[r.row][r.k] != nil { townSelected = r }
         return true
     }
-    /// The town screen closes: a spare row with anything in it becomes an army at the gate.
+    /// The town screen closes (OK, or a switch to another town): a visiting row offered with
+    /// anything in it becomes an army outside the gate, selected (0x8b6010 -> 0x4bada0).
     func closeTown() {
         if let g = game, let i = townOpen, g.visitingArmy(town: i) == nil, townSpare.contains(where: { $0 != nil }) { g.leaveTown(i, spare: townSpare) }
-        townSpare = []; townSelected = nil; townDrag = nil; townDragAt = nil; game?.townVisitor = nil
+        townSpare = []; townOffer = nil; townSelected = nil; townDrag = nil; townDragAt = nil; game?.townVisitor = nil
         townSplitOn = false; townFade = nil
         townOpen = nil
     }

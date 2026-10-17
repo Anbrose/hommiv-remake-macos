@@ -406,24 +406,11 @@ extension GameState {
         return names.dropLast().joined(separator: ", ") + " and " + names.last!
     }
 
-    /// A new army outside the town from a caravan's troops (0x4fa3e0, 0x51fcc0): its first hero
-    /// leads it, else it is a heroless army; on a free cell near the gate.
+    /// A new army outside the town from a caravan's troops (0x4f9ea0 / 0x4fa3e0, 0x51fcc0): its
+    /// first hero leads it, else it is a heroless army; on the town's exit cell.
     func formArmy(from c: Caravan, at t: Int) -> Hero? {
-        guard let p = townPlaced(t) else { return nil }
-        let back = level; level = towns[t].z; defer { level = back }
-        let gates = gateCells(p)
-        func free(_ x: Int, _ y: Int) -> Bool {
-            passability.isFree(x, y) && enemyAt(x, y) == nil && !heroes.contains { $0.z == level && $0.x == x && $0.y == y }
-        }
-        var cell = gates.first { free($0.0, $0.1) }
-        if cell == nil {
-            // the nearest free cell within 3 of the gate [I: the search order of 0x4fa3e0]
-            search: for r in 1...3 {
-                for dx in -r...r { for dy in -r...r where max(abs(dx), abs(dy)) == r {
-                    if free(gates[0].0 + dx, gates[0].1 + dy) { cell = (gates[0].0 + dx, gates[0].1 + dy); break search }
-                } }
-            }
-        }
+        // the exit cell of 0x7d5250: 0x4f9ea0, then 0x4fa3e0
+        let cell = townExitCell(t)
         guard let (x, y) = cell else { return nil }
         let hs = c.heroes
         let lead: Hero = hs.first ?? {

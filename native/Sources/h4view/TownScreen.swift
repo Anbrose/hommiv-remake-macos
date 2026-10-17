@@ -484,7 +484,8 @@ extension Renderer {
 
     /// Snapshot hooks (H4TOWNDLG, comma separated): "rich" builds every building (not the shipyard) and fills
     /// the treasury and dwellings first; then "click:<id>", "rclick:<id>", "fade:<id>:<ticks>" (bought that many 50 ms ticks ago), "buildlist", "detail", "castle", "recruitcastle", "guild0",
-    /// "guild1", "guildspell" or "menu" opens that window; "novisit" sends the heroes away (the single row).
+    /// "guild1", "guildspell" or "menu" opens that window; "novisit" sends the heroes away (no visitor: the
+    /// empty visiting row), "leave" drags the first garrison place into the visiting row, "close" presses OK.
     func townSnapshot(_ s: String) {
         guard let g = game, let i = townOpen else { return }
         let parts = s.split(separator: ",").map(String.init)
@@ -504,6 +505,9 @@ extension Renderer {
             case "guildspell": if let c = guildCells().first { townDialog = .guildSpell(spell: c.spell, heroTop: 0) }
             case "menu": openTownMenu(); menu?.opened = .distantPast
             case "novisit": g.townVisitor = nil; for h in g.heroes { h.x = 0; h.y = 0 }
+            case "leave":   // the first garrison place dragged into the (empty) visiting row
+                if let rows = townRows(), let k = rows[0].firstIndex(where: { $0 != nil }) { townMove(from: (0, k), to: (1, 0), split: false) }
+            case "close": closeTown()   // OK: the visiting row's troops become an army outside
             case _ where p.hasPrefix("click:"):   // "click:<building id>": that building's left click
                 if let b = Int(p.dropFirst(6)) { townBuildingClicked(b) }
             case _ where p.hasPrefix("fade:"):    // "fade:<building id>:<ticks>": that building bought <ticks> x 50 ms ago (frozen)

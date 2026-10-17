@@ -17,14 +17,71 @@ extension GameState {
         guard i < towns.count, towns[i].z < scenes.count else { return nil }
         return scenes[towns[i].z].placed.first { $0.category == "castle" && $0.cellX == towns[i].x && $0.cellY == towns[i].y }
     }
-    /// The player's army on the town's gate cell (not at sea) (0x8abe60).
+    /// The player's army visiting the town (0x8abe60): the one that walked in, else the first army
+    /// standing on a cell in front of the gate (the entering neighbours in the exe's order), not at sea.
     public func visitingArmy(town i: Int) -> Hero? {
         if let v = townVisitor, v.town == i, heroes.contains(where: { $0 === v.hero }) { return v.hero }
-        guard let p = townPlaced(i) else { return nil }
-        let back = level; level = towns[i].z; defer { level = back }
-        let gates = gateCells(p)
-        return heroes.first { h in h.z == towns[i].z && h.boat == nil && gates.contains { g in g == (h.x, h.y) } }
+        let z = towns[i].z
+        for c in townEntryNeighbours(i) {
+            if let h = heroes.first(where: { $0.z == z && $0.boat == nil && $0.x == c.0 && $0.y == c.1 }) { return h }
+        }
+        return nil
     }
+
+    /// The cells a step from which enters the town (0x4f9be0): for each of its trigger cells
+    /// (0x44cdd0; model cells, the first coordinate outer) its 8 neighbours in the exe's direction
+    /// order whose step back toward it crosses an entry edge (0x4d7300) -- the cells in front of
+    /// the gate. A model without entry edges falls back to the remake's gate cells.
+    public func townEntryNeighbours(_ i: Int) -> [(Int, Int)] {
+        guard let p = townPlaced(i) else { return [] }
+        let back = level; level = towns[i].z; defer { level = back }
+        let pass = passability
+        var out: [(Int, Int)] = []
+        for dx in 0..<p.sprite.footprint.w { for dy in 0..<p.sprite.footprint.h {
+            let t = (p.cellX + dx, p.cellY + dy)
+            guard pass.isTrigger(t.0, t.1) else { continue }
+            for d in GameState.directions {
+                let n = (t.0 + d.0, t.1 + d.1)
+                guard n.0 >= 0, n.1 >= 0, n.0 < map.size, n.1 < map.size, pass.enters(from: n.0, n.1, to: t.0, t.1) else { continue }
+                if !out.contains(where: { $0 == n }) { out.append(n) }
+            }
+        } }
+        return out.isEmpty ? gateCells(p) : out
+    }
+
+    /// Where an army leaving the town stands (0x4f9ea0, filter 0x4fa120): the first cell in front
+    /// of the gate that is free land with no trigger, army or ship on it; failing that the nearest
+    /// such cell by route from the town (0x4fa3e0, the planner's settle order [I: cheapest route,
+    /// then the lower cell index]). Nil when there is none.
+    public func townExitCell(_ i: Int) -> (Int, Int)? {
+        guard townPlaced(i) != nil else { return nil }
+        let z = towns[i].z
+        let back = level; level = z; defer { level = back }
+        let pass = passability
+        func free(_ c: (Int, Int)) -> Bool {
+            pass.isFree(c.0, c.1) && !pass.isWater(c.0, c.1) && !pass.isTrigger(c.0, c.1)
+                && !heroes.contains { $0.z == z && standingCell($0) == c }
+                && !enemyHeroes.contains { $0.z == z && $0.x == c.0 && $0.y == c.1 }
+                && !boats.contains { $0.z == z && $0.x == c.0 && $0.y == c.1 }
+        }
+        let front = townEntryNeighbours(i)
+        if let c = front.first(where: free) { return c }
+        let r = pass.search(fromAll: front)
+        var best: (cost: Int32, cell: Int)? = nil
+        for (k, g) in r.cost.enumerated() where g < .max {
+            let c = (k / pass.size, k % pass.size)
+            guard free(c), best.map({ g < $0.cost }) ?? true else { continue }
+            best = (g, k)
+        }
+        return best.map { ($0.cell / pass.size, $0.cell % pass.size) }
+    }
+
+    /// Does the town screen offer the empty visiting row (0x8b5eb0)? No army visits, the player has
+    /// fewer than 8 armies (0x7e1a70) and an army could stand outside (0x4f9ea0 / 0x4fa3e0).
+    public func townOffersVisitingRow(_ i: Int) -> Bool {
+        visitingArmy(town: i) == nil && heroes.count < GameState.maxArmies && townExitCell(i) != nil
+    }
+
     /// A row as its seven places: the items put back where the row's keys say they stood, the
     /// rest into the first free places.
     static func layout(_ items: [ArmySlot], keys: [String?]) -> [ArmySlot?] {
@@ -133,31 +190,39 @@ extension GameState {
         }
         return true
     }
-    /// The town screen closes with a spare row holding something (0x8b0e50 -> 0x4bada0): it becomes
-    /// an army at the gate (or the nearest free cell), with or without a hero (army_split_spec.md §6).
-    public func leaveTown(_ i: Int, spare row: [ArmySlot?]) {
+    /// The town screen closes (or switches town) with the visiting row offered and holding
+    /// something (0x8b6010 / 0x8affc0 -> 0x4bada0): it becomes the player's army on the exit cell
+    /// (searched again), with or without a hero, and is selected; the town remembers it as its
+    /// visitor (town+0x124). With nowhere to stand (never at the exe's opening check) the troops
+    /// go back into the garrison [remake]. Returns the new army.
+    @discardableResult
+    public func leaveTown(_ i: Int, spare row: [ArmySlot?]) -> Hero? {
         let spare = row.compactMap { $0 }
-        guard !spare.isEmpty else { return }
+        guard !spare.isEmpty else { return nil }
         let hs = spare.compactMap { $0.hero }
-        guard let p = townPlaced(i), heroes.count < GameState.maxArmies else {
+        guard heroes.count < GameState.maxArmies, let cell = townExitCell(i) else {
             towns[i].garrisonHeroes += hs; towns[i].garrison += spare.compactMap { $0.stack }
-            return
+            return nil
         }
         let lead: Hero = hs.first ?? {
-            let h = Hero(actor: "", x: 0, y: 0, movement: 0); h.heroless = true; h.name = ""; return h
+            let h = Hero(actor: "", x: 0, y: 0, movement: 0); h.heroless = true; h.name = ""
+            h.alignment = towns[i].alignment; return h
         }()
-        let back = level; level = towns[i].z; defer { level = back }
-        let gates = gateCells(p)
-        guard let cell = gates.first(where: { isVacant($0, for: lead) && enemyAt($0.0, $0.1) == nil }) ?? freeCell(near: gates[0].0, gates[0].1) else {
-            towns[i].garrisonHeroes += hs; towns[i].garrison += spare.compactMap { $0.stack }; return
-        }
         lead.x = cell.0; lead.y = cell.1; lead.z = towns[i].z; lead.owner = map.humanColour
-        lead.companions = Array(hs.dropFirst()); lead.army = spare.compactMap { $0.stack }; lead.rowKeys = GameState.keys(of: row)
+        if lead.heroless { lead.home = cell }
+        lead.companions = lead.heroless ? [] : Array(hs.dropFirst())
+        lead.army = spare.compactMap { $0.stack }; lead.rowKeys = GameState.keys(of: row)
         lead.path = []; lead.plan = []; lead.target = nil; lead.listRank = nextListRank()
         refreshHeroless(lead)
+        // garrison stacks have the day's full movement (new-day refresh / a recruit's, 0x63e2e0);
+        // a hero keeps what it has left; the army goes at its slowest member's pace
         lead.maxMovement = armyMovement(lead)
-        if lead.heroless { lead.movement = lead.maxMovement }
-        heroes.insert(lead, at: 0)
+        lead.movement = lead.heroless ? lead.maxMovement : min(lead.movement, lead.maxMovement)
+        heroes.append(lead)
+        select(lead)   // 0x4b5eb0
+        townVisitor = (i, lead)
+        updateVision()
+        return lead
     }
 
     /// Recruits go into the garrison (0x894470): onto a stack of theirs or a free slot.

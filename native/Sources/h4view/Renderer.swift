@@ -172,7 +172,10 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// The stacks an area spell aimed at the pointer's cell would take in (each gets its target shadow).
     var combatArea: Set<Int>?
     var dayCache: (cell: Int, days: Int?)?
-    var showReach = false      // the game's "Show Movement Shadow" option (off by default, as in the original)
+    /// The combat options "Show Combat Grid" and "Show Movement Shadow" (both off by default, as in
+    /// heroes4.exe); H4GRID / H4SHADE force them on for snapshots.
+    var showCombatGrid: Bool { settings.showCombatGrid ?? (ProcessInfo.processInfo.environment["H4GRID"] != nil) }
+    var showMovementShading: Bool { settings.showMovementShading ?? (ProcessInfo.processInfo.environment["H4SHADE"] != nil) }
     var inCombat: Bool { combat?.battle != nil }
     var chestChoice: Bool? = nil          // true = gold, false = experience
     var armyPopup: ArmyPopup? = nil        // the right-click window of an army
@@ -242,6 +245,9 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
     }
     var uiTextures: [String: MTLTexture] = [:]
+    /// The combat field's cell overlays (grid, movement shadow), one rasterised image each, kept
+    /// while their cells and colours stay the same.
+    var fieldOverlays: [String: (cells: [Int: UInt32], texture: MTLTexture)] = [:]
     /// The town building under the pointer (its layout layer name).
     var townHover: String?
     /// Where the pointer rests on the town screen and since when (the help balloon after a second).

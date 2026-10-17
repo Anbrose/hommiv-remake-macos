@@ -477,6 +477,20 @@ public final class Battle {
             return field.fits(x, y, size: u.size) && !overlaps(x, y, u.size, except: u.id)
         }
     }
+    /// The cells of the movement shadow (heroes4.exe 0x57bae0 over the path map's cover pass
+    /// 0x60ea14): every cell whose cheapest covering placement -- a place the unit can stop at, its
+    /// whole footprint -- costs something and is reached this turn. So a big creature shades the
+    /// full footprint of each place it can move to, and never the cells it stands on (cost 0).
+    public func movementShadow(_ u: Unit) -> Set<Int> {
+        let n = Battlefield.size
+        var out = Set<Int>()
+        for (k, c) in reachable(u) where c > 0 {
+            let x = k / n, y = k % n
+            for i in 0..<u.size { for j in 0..<u.size where x + i < n && y + j < n { out.insert(Battle.key(x + i, y + j)) } }
+        }
+        for i in 0..<u.size { for j in 0..<u.size { out.remove(Battle.key(u.x + i, u.y + j)) } }
+        return out
+    }
     /// The unit's Move: halved by Aging; nothing while Bound.
     func moveBudget(_ u: Unit) -> Float {
         if u.boundBy != nil { return 0 }

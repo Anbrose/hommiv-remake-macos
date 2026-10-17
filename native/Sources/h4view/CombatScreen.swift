@@ -96,8 +96,6 @@ final class CombatScreen {
     var floaters: [Floater] = []
     /// The options gating the numbers (show_damage_numbers, show_death_numbers, show_other_numbers; on by default).
     var showDamageNumbers = true, showDeathNumbers = true, showOtherNumbers = true
-    /// "Show combat grid" (show_grid) and "Show movement shading" (show_movement_grid).
-    var showGrid = ProcessInfo.processInfo.environment["H4NOGRID"] == nil
     /// How long a floating message lives: 300000 / animation speed ms (2 s at 150).
     var floaterLife: Double { 300.0 / Double(max(1, animationSpeed)) }
     /// The player colour index of each side's owner (0 red ... 5 teal, 6 gray for neutral).
@@ -164,6 +162,23 @@ final class CombatScreen {
     }
     /// Auto combat (the toggle): the player's side acts on its own while it is on.
     var autoCombat = false
+    /// The active stack waits for the local player's orders (heroes4.exe battlefield state
+    /// +0x500 = 2, 0x574159): nothing playing, not the computer's side, not Berserk or Hypnotized,
+    /// no auto combat. Only then is the movement shadow of the current stack shown.
+    var awaitingOrders: Bool {
+        guard let b = battle, b.finished == nil, result == nil, !busy, !autoCombat, let u = b.current else { return false }
+        return u.side == 0 && !u.hypnotized && !u.stats.under(6)
+    }
+    /// The stack a right press put the movement shadow on (0x56c9d0), while its creature window is
+    /// open and for 3 s after it closed (timer +0x418, 3000 ms, 0x56cbb0); `current` is the stack
+    /// that was active then (any action or a new turn ends it).
+    var shadowFocus: (unit: Int, current: Int, until: Date?)?
+    /// The stack whose movement shadow shows now, if the option is on (0x57bae0's argument).
+    func shadowedUnit(now: Date) -> Int? {
+        guard let b = battle, let cur = b.current, awaitingOrders else { return nil }
+        if let f = shadowFocus, f.current == cur.id, f.until.map({ now < $0 }) ?? true, b.unit(f.unit).alive { return f.unit }
+        return cur.id
+    }
     /// The battle was ended by surrender (the player's) and what it cost.
     var surrendered = false
 

@@ -952,7 +952,10 @@ final class MapView: MTKView {
         case 126: renderer.pan.y -= step
         case 36, 76: if renderer.townOpen == nil, !renderer.inCombat { renderer.game?.endTurn() }   // Return / Enter
         case 14: if renderer.townOpen == nil, !renderer.inCombat { renderer.game?.endTurn() }       // E
-        case 46: renderer.showReach.toggle()   // M = movement shadow
+        // the battlefield's hot keys (0x6335c0): F10 (key 0x79) toggles the movement shadow, G
+        // (combat_grid_toggle.hot_keys) the grid; each change is kept at once, as the exe's setters do
+        case 109: if renderer.inCombat { renderer.settings.showMovementShading = !renderer.showMovementShading; renderer.settings.save() }
+        case 5: if renderer.inCombat, renderer.prompt == nil { renderer.settings.showCombatGrid = !renderer.showCombatGrid; renderer.settings.save() }
         case 1: if renderer.inCombat, renderer.prompt == nil, let b = renderer.combat?.battle, !(renderer.combat?.busy ?? true), b.finished == nil { b.wait(); renderer.combat?.pump() }   // S = wait
         case 2: if renderer.inCombat, renderer.prompt == nil, let b = renderer.combat?.battle, !(renderer.combat?.busy ?? true), b.finished == nil { b.defend(); renderer.combat?.pump() } // D = defend
         case 53:   // Escape closes a dialog, then leaves the town

@@ -91,28 +91,27 @@ extension Renderer {
                 out.append(Quad(texture: uiTexture("moat|\(ti)", { water.tiles[min(ti, water.tiles.count - 1)] }), x: Int(px - 32 * sc), y: Int(py - 16 * sc), w: Int(64 * sc) + 1, h: Int(32 * sc) + 1))
             } }
         }
-        // the grid (option show_grid, 0x588b60): table.combat_grid_colors per terrain, cell (x, y) in
+        // the grid (option show_combat_grid, off by default; 0x588b60): table.combat_grid_colors per terrain, cell (x, y) in
         // colour [(x + y) & 1] (0 the odd entry, 1 the even), cells an obstacle blocks untinted; the
         // overlay's level n of 15
-        if cs.showGrid {
+        if showCombatGrid {
             let key = f.backdrop != nil ? "water" : (CombatScreen.terrainKeys[f.terrain] ?? "grass")
             let tint = cs.gridColors?.byTerrain[key] ?? GridColors.Entry(alpha: 4, odd: nil, even: (12, 36, 12))
             let alpha = UInt8(min(255, tint.alpha * 255 / 15))
+            var cells: [Int: UInt32] = [:]
             for x in 0..<Battlefield.size { for y in 0..<Battlefield.size where Battlefield.onField(x, y) && b.field.isOpen(x, y) {
                 guard let c = (x + y) & 1 == 0 ? tint.odd : tint.even else { continue }
-                let (px, py) = CombatScreen.point(Float(x) + 0.5, Float(y) + 0.5)
-                out.append(Quad(texture: cellDiamond("grid|\(c.0)|\(c.1)|\(c.2)|\(alpha)", c.0, c.1, c.2, alpha), x: Int(px - 16 * sc), y: Int(py - 8 * sc), w: Int(32 * sc), h: Int(16 * sc)))
+                cells[Battle.key(x, y)] = Renderer.rgba(c.0, c.1, c.2, alpha)
             } }
+            out.append(fieldOverlay("grid", cells))
         }
-        // movement shading (show_movement_grid, 0x57bae0): every cell the acting stack can reach this
-        // turn in (50,50,200) at level 5 of 15
-        if showReach, casting == nil, let cur = b.current, cur.side == 0, !cs.busy, cs.result == nil {
-            let a = UInt8(5 * 255 / 15)
-            for (k, _) in b.reachable(cur) {
-                let x = k / Battlefield.size, y = k % Battlefield.size
-                let (px, py) = CombatScreen.point(Float(x) + 0.5, Float(y) + 0.5)
-                out.append(Quad(texture: cellDiamond("reach", 50, 50, 200, a), x: Int(px - 16 * sc), y: Int(py - 8 * sc), w: Int(32 * sc), h: Int(16 * sc)))
-            }
+        // the movement shadow (show_combat_movement_shading, 0x57bae0; combat_shading_spec 2): only
+        // while the active stack waits for the player's orders (also while a spell is aimed), the
+        // cells of every place it can move to this turn, its own cells not, in (50,50,200) at the
+        // shader's level 5 of 15; a right-pressed stack's instead while its window is open and 3 s after
+        if showMovementShading, let id = cs.shadowedUnit(now: now) {
+            let c = Renderer.rgba(50, 50, 200, UInt8(5 * 255 / 15))
+            out.append(fieldOverlay("shadow", Dictionary(uniqueKeysWithValues: b.movementShadow(b.unit(id)).map { ($0, c) })))
         }
         // obstacles and units, back to front
         var drawn: [(Float, [Quad])] = []
@@ -367,23 +366,26 @@ extension Renderer {
         return out
     }
 
-    /// A 32x16 diamond (one combat cell) in a colour.
-    func cellDiamond(_ key: String, _ r: UInt8, _ g: UInt8, _ bl: UInt8, _ a: UInt8) -> MTLTexture {
-        uiTexture("cell|\(key)|\(a)", {
-            var bm = Bitmap(width: 32, height: 16)
-            for y in 0..<16 {
-                for x in 0..<32 {
-                    let dx: Float = abs(Float(x) - 15.5) / 16
-                    let dy: Float = abs(Float(y) - 7.5) / 8
-                    if dx + dy > 1 { continue }
-                    let i = (y * 32 + x) * 4
-                    bm.pixels[i] = r; bm.pixels[i + 1] = g; bm.pixels[i + 2] = bl; bm.pixels[i + 3] = a
-                }
-            }
-            return bm
-        })
+    static func rgba(_ r: UInt8, _ g: UInt8, _ b: UInt8, _ a: UInt8) -> UInt32 { UInt32(r) | UInt32(g) << 8 | UInt32(b) << 16 | UInt32(a) << 24 }
+    /// A cell overlay of the battle scene (t_combat_area_shader 0x5e7ad0): one image the size of the
+    /// scene in which every pixel takes the colour of the cell under it, so neighbouring cells meet
+    /// edge to edge without seams or double tinting.
+    func fieldOverlay(_ slot: String, _ cells: [Int: UInt32]) -> Quad {
+        let w = 885, h = 768
+        if let o = fieldOverlays[slot], o.cells == cells { return Quad(texture: o.texture, x: 0, y: 0, w: w, h: h) }
+        var bm = Bitmap(width: w, height: h)
+        if !cells.isEmpty {
+            for py in 0..<h { for px in 0..<w {
+                let (x, y) = CombatScreen.cell(at: Float(px) + 0.5, Float(py) + 0.5)
+                guard x >= 0, y >= 0, x < Battlefield.size, y < Battlefield.size, let c = cells[Battle.key(x, y)] else { continue }
+                let i = (py * w + px) * 4
+                bm.pixels[i] = UInt8(c & 0xff); bm.pixels[i + 1] = UInt8(c >> 8 & 0xff); bm.pixels[i + 2] = UInt8(c >> 16 & 0xff); bm.pixels[i + 3] = UInt8(c >> 24)
+            } }
+        }
+        let t = makeTexture(bm)
+        fieldOverlays[slot] = (cells, t)
+        return Quad(texture: t, x: 0, y: 0, w: w, h: h)
     }
-
     /// The enemy unit under a canvas point: its footprint, or its picture's upper body.
     func enemyUnder(_ b: Battle, x: Float, y: Float) -> Battle.Unit? { unitUnder(b, x: x, y: y, side: 1) }
     func unitUnder(_ b: Battle, x: Float, y: Float, side: Int? = nil) -> Battle.Unit? {

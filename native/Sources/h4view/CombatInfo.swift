@@ -170,6 +170,8 @@ extension Renderer {
             return
         }
         cs.info = nil
+        // the right-pressed stack keeps the movement shadow 3 s more (0x56cbb0)
+        if var f = cs.shadowFocus, f.until == nil { f.until = Date().addingTimeInterval(3); cs.shadowFocus = f }
     }
 
     /// The name of what is under the pointer in the creature window (ability or spell icon).
@@ -198,5 +200,8 @@ extension Renderer {
             return
         }
         cs.info = x < 885 ? unitUnder(b, x: x, y: y)?.id : nil
+        // a right press on a stack on the field shows its movement shadow (0x56c9d0) while the
+        // window is open, when the option is on
+        if let id = cs.info, cs.awaitingOrders, let cur = b.current { cs.shadowFocus = (id, cur.id, nil) }
     }
 }

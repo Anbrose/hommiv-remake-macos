@@ -9,6 +9,9 @@ struct GameSettings: Codable {
     var quickCombat = false, showCoordinates = false, movementReminder = true, showMovementPath = true, showAnimations = true
     var armySpeed: Float = 0.5, combatSpeed: Float = 0.5, enemySpeed: Float = 0.5, music: Float = 0.5, sound: Float = 0.8
     var fullScreen: Bool? = nil
+    /// The combat options "Show Combat Grid" (show_combat_grid) and "Show Movement Shadow"
+    /// (show_combat_movement_shading): both off unless set (heroes4.exe 0x7c91d0 defaults them to 0).
+    var showCombatGrid: Bool? = nil, showMovementShading: Bool? = nil
     static func load() -> GameSettings {
         guard let d = UserDefaults.standard.data(forKey: "h4view.settings"), let s = try? JSONDecoder().decode(GameSettings.self, from: d) else { return GameSettings() }
         return s

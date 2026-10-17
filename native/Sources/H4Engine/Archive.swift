@@ -98,7 +98,11 @@ public func gunzip(_ gz: Data, expected: Int) throws -> Data {
     if flags & 16 != 0 { while gz[p] != 0 { p += 1 }; p += 1 }
     if flags & 2 != 0 { p += 2 }
     let body = gz.subdata(in: p..<(gz.count - 8))
-    var out = Data(count: max(expected, 1))
+    // the trailer's ISIZE is the unpacked size (mod 2^32): callers' guesses (12x the packed size)
+    // cut off highly compressed maps such as Ice Age (37 KB -> 494 KB)
+    let t = gz.count - 4
+    let isize = Int(gz[t]) | Int(gz[t + 1]) << 8 | Int(gz[t + 2]) << 16 | Int(gz[t + 3]) << 24
+    var out = Data(count: max(expected, isize, 1))
     let n = out.withUnsafeMutableBytes { dst -> Int in
         body.withUnsafeBytes { src -> Int in
             compression_decode_buffer(dst.bindMemory(to: UInt8.self).baseAddress!, dst.count,

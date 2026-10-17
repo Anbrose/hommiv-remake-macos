@@ -271,7 +271,10 @@ public struct MapFile {
         for _ in 0..<count {
             guard pos + 11 <= d.count else { return nil }
             let t = r.byte(at: pos), v = r.byte(at: pos + 1), n = Int(r.byte(at: pos + 9))
-            guard t <= 18, v <= 3, n <= 8 else { return nil }
+            // every cell record carries u16 8 at +7: without this check a start one byte early
+            // can parse, drift for a few records and resynchronise records later, shifting every
+            // cell of the level (Isle of the Dawn: 3 cells along y; re/start_placement_spec.md)
+            guard t <= 18, v <= 3, n <= 8, r.peekU16(at: pos + 7) == 8 else { return nil }
             var ov: [Overlay] = []
             for i in 0..<n {
                 let p = pos + 10 + i * 5

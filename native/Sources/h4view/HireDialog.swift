@@ -68,7 +68,7 @@ extension Renderer {
         }
         if townButtonHit("buy", x: ox + 447, y: oy + 344, x, y), g.resources["Gold", default: 0] >= o.prices[o.selected] {
             let visitor = o.town == nil ? g.heroes.first : nil
-            if let h = g.hire(o, with: visitor) { g.log.append("\(h.name) joins you"); sound?.play("dialogue.tavern") }
+            if let h = g.hire(o, with: visitor) { g.log.append("\(h.name) joins you") }   // silent; the map tavern's visit plays dialogue.tavern (0x4707b1)
             hire = nil; return
         }
         if townButtonHit("close", x: ox + 616, y: oy + 541, x, y) { hire = nil; return }

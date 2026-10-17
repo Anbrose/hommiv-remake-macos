@@ -273,7 +273,7 @@ extension Renderer {
     func mapRecruitClick(x: Float, y: Float) {
         guard let r = mapRecruit, let g = game, let o = g.dwellingOffer(r.dwelling, for: r.hero) else { mapRecruit = nil; return }
         switch recruitDialogClick(x: x, y: y, count: r.count, most: g.recruitMost(available: o.available, cost: o.cost)) {
-        case .buy: if g.recruit(fromDwelling: r.dwelling, count: r.count, to: r.hero) { sound?.play("dialogue.recruit") }; mapRecruit = nil
+        case .buy: _ = g.recruit(fromDwelling: r.dwelling, count: r.count, to: r.hero); mapRecruit = nil   // silent: the visit played dialogue.recruit (0x43d012)
         case .cancel: mapRecruit = nil
         case .count(let n): mapRecruit?.count = n
         case .none: break
@@ -316,8 +316,7 @@ extension Renderer {
             case .buy:
                 let gold = creatureCost(c).first { $0.0 == "Gold" }?.1
                 if g.townRecruit(i, creature, count: count, gold: gold) > 0 {   // 0x894470, the computer's path too
-                    g.log.append("recruited \(count) \(count == 1 ? c.name : c.plural)")
-                    sound?.play("dialogue.recruit")
+                    g.log.append("recruited \(count) \(count == 1 ? c.name : c.plural)")   // silent (0x8b53c5 / 0x5c66e1)
                     townDialog = back
                 }
             case .cancel: townDialog = back

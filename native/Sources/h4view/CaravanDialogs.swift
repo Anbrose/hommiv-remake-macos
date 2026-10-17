@@ -540,8 +540,7 @@ extension Renderer {
         switch recruitDialogClick(x: x, y: y, count: count, most: g.recruitMost(available: g.dwellings[i].available, cost: cost)) {
         case .buy:
             caravanUI = .create(c)
-            guard let days = c.route?.days, g.buyCaravan(dwelling: i, count: count, to: c.town, days: days) != nil else { return }
-            sound?.play("dialogue.recruit")
+            guard let days = c.route?.days, g.buyCaravan(dwelling: i, count: count, to: c.town, days: days) != nil else { return }   // silent (0x43dee0 direct)
             let s = days == 1 ? text("caravan.dwelling_caravan_sent_1_day", "Today, the caravan began its journey and will arrive at %destination in 1 day.")
                               : text("caravan.dwelling_caravan_sent_multiple_days", "Today, the caravan began its journey and will arrive at %destination in %days days.")
             prompt = (GameState.substitute(s, ["%destination": g.towns[c.town].name, "%days": "\(days)"]), false, nil)

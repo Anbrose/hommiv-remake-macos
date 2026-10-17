@@ -121,8 +121,7 @@ extension Renderer {
                     guard let def = tables.creature(c), g.addToGarrison(i, c, n) else { continue }
                     g.towns[i].available[c, default: 0] -= n
                     for (m, v) in self.creatureCost(def) { g.resources[m, default: 0] -= v * n }
-                }
-                self.sound?.play("dialogue.recruit")
+                }   // silent: the castle window's buy-all plays no sound (0x5c6d00)
             })
             return
         }
@@ -135,6 +134,7 @@ extension Renderer {
                 return
             }
             townDialog = .recruit(creature: c, count: recruitMost(c), fromCastle: true)
+            sound?.play("dialogue.recruit")   // as the castle window's recruit dialog opens (0x5c65e7); a town dwelling's is silent
             return
         }
     }

@@ -12,8 +12,15 @@ final class ArmySession {
     let double: Bool
     /// The town variant (t_army_dialog_town, 0x538b70): the town's rows, applied as they change.
     let town: Int?
-    var selected: (row: Int, k: Int)
+    var selected: (row: Int, k: Int) { didSet { if oldValue != selected { backpackRow = 0 } } }   // another member: the backpack from its top (0x5346b7)
     var splitMode = false
+    /// The artifacts (hero_artifacts_spec.md): a press on one, the one in hand, the pointer, the
+    /// backpack's scrollbar step, a parchment's message at the pointer, a held right-click text.
+    var artPress: ArtifactPlace?
+    var artDrag: ArtifactDrag?
+    var artAt: (Float, Float)?
+    var backpackRow = 0
+    var artNote: (text: String, x: Int, y: Int)?
     var drag: (row: Int, k: Int)?
     var dragAt: (Float, Float)?
     var dragSplit = false
@@ -130,6 +137,9 @@ extension Renderer {
     }
     /// The army screen is done (OK, Escape, a click outside, another army picked): 0x529050.
     func closeArmyScreen() {
+        if let s = armySession, let d = s.artDrag {   // closed with an artifact in hand: it goes home
+            ArtifactRules.cancel(d, tables: game?.tables); s.artDrag = nil; NSCursor.unhide()
+        }
         if let s = armySession, s.town == nil, let g = game { g.finishExchange(s.x) }
         armySession = nil
         splitDialog = nil
@@ -193,11 +203,31 @@ extension Renderer {
     func armyScreenPress(x: Float, y: Float) {
         guard let s = armySession, splitDialog == nil else { return }
         s.dragAt = nil
+        s.artNote = nil
+        s.artPress = nil
+        // an artifact: carried once the pointer moves with the button down (source vtable[2], 0x706770)
+        if let h = sessionHero, let d = ui?.dialog("army.layout") {
+            let (ox, oy) = armyOrigin
+            if let p = heroArtifactPlace(h, d, ox, oy, x: x, y: y), p.isBackpack ? h.backpack.indices.contains(p.index) : h.equipped[p.slot] != nil {
+                s.artPress = p; s.drag = nil; return
+            }
+        }
         guard let r = armyRing(s, at: x, y), sessionRows(s)[r.row][r.k] != nil else { s.drag = nil; return }
         s.drag = r
         if s.selected != r { s.selected = r; heroShown = 0 }
     }
     func armyScreenDragged(x: Float, y: Float, shift: Bool) {
+        if let s = armySession, s.artPress != nil || s.artDrag != nil {
+            if s.artDrag == nil, let p = s.artPress {
+                s.artPress = nil
+                guard let d = ArtifactRules.pickUp(p) else { return }   // taken off at once (0x537650): the stats change
+                s.artDrag = d
+                refreshArtifactArmies(s)
+                NSCursor.hide()
+            }
+            s.artAt = (x, y)
+            return
+        }
         guard let s = armySession, s.drag != nil else { return }
         if s.dragAt == nil { NSCursor.hide() }
         s.dragAt = (x, y)
@@ -206,6 +236,13 @@ extension Renderer {
     }
     /// Mouse up: a drop when dragging. True when it was a drag.
     func armyScreenRelease(x: Float, y: Float, shift: Bool) -> Bool {
+        if let s = armySession, let d = s.artDrag {
+            s.artDrag = nil; s.artAt = nil; s.artPress = nil
+            NSCursor.unhide()
+            artifactDrop(s, d, x: x, y: y)
+            return true
+        }
+        armySession?.artPress = nil
         guard let s = armySession, let from = s.drag else { return false }
         defer { s.drag = nil; if s.dragAt != nil { NSCursor.unhide() }; s.dragAt = nil }
         guard s.dragAt != nil else { return false }
@@ -229,16 +266,9 @@ extension Renderer {
             if sessionRows(s)[r.row][r.k] != nil { s.selected = r }
             return
         }
-        // an artifact: worn ones come off into the backpack, backpack ones are put on where they fit
-        if let h = sessionHero, let hit = heroArtifactHit(h, d, ox, oy, x: x, y: y) {
-            switch hit {
-            case .worn(let k): h.unequip(slot: k)
-            case .backpack(let k):
-                if g.drink(h, backpackIndex: k) { break }
-                if !h.equip(backpackIndex: k, tables: g.tables) { g.log.append("No free place to wear \(g.artifactName(h.backpack[k]))") }
-            }
-            if g.heroes.contains(where: { $0 === s.leader }) { g.refreshMovement(s.leader) }
-            sound?.play("miscellaneous.button")
+        // the backpack's scrollbar: a click above / below its middle steps it (rows of two)
+        if sessionHero != nil, let sb = d["Scrollbar"], inside(sb, at: ox, oy, x, y) {
+            scrollBackpack(s, by: y < Float(oy + sb.y + sb.height / 2) ? -1 : 1)
             return
         }
         // the army list: another army (the current one is finished first)
@@ -410,6 +440,12 @@ extension Renderer {
             }
             if armies.count > 4 { out += layoutImage(d, "Army_Up_Released", ox, oy); out += layoutImage(d, "Army_Down_Released", ox, oy) }
         }
+        // the artifact in hand: its icon centred on the pointer (t_drag_artifact, hot spot w/2, h/2)
+        if let a = s.artDrag, let at = s.artAt, let l = artifactIcon(a.artifact) {
+            out.append(Quad(texture: uiTexture("art|\(a.artifact)", { l.bitmap }), x: Int(at.0) - l.width / 2, y: Int(at.1) - l.height / 2, w: l.width, h: l.height))
+        }
+        if let n = s.artNote { out += pointBoxQuads(n.text, cx: n.x, y: n.y) }
+        out += heldHelpQuads()
         // a refused transfer's note over the place, for a few seconds
         if let n = s.note, Date().timeIntervalSince(n.since) < 4 { out += helpBalloonQuads(n.text, at: (Float(n.x), Float(n.y))) }
         return out

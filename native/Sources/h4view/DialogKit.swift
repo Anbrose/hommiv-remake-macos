@@ -115,6 +115,7 @@ extension Renderer {
     /// The hot keys of the open dialog (Enter / Esc and the like); true when one took the key.
     func dialogKey(_ code: UInt16) -> Bool {
         if splitDialog != nil { return splitKey(code) }
+        if caravanUI != nil, prompt == nil { return caravanKey(code) }
         if spellBook != nil { return spellBookKey(code) }
         if game?.levelUp != nil, !inCombat, code == 36 || code == 76 { confirmLevelUp(); return true }
         return false

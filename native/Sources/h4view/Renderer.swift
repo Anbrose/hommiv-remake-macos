@@ -107,6 +107,10 @@ final class Renderer: NSObject, MTKViewDelegate {
     var town: TownScreen?
     var townOpen: Int? = nil      // index into game.towns while the town screen is up
     var townDialog: TownDialog? = nil
+    /// An open caravan dialog (CaravanDialogs.swift), and a ring being dragged in it.
+    var caravanUI: CaravanUI? = nil
+    var caravanDrag: (row: Int, k: Int)? = nil
+    var caravanDragAt: (Float, Float)? = nil
     var adventureDialog: AdventureDialog? = nil
     var combat: CombatScreen?
     /// The game's movies (movies.h4r), decoded on demand.
@@ -403,6 +407,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
         out += townRowQuads()
         out += townDialogQuads()
+        out += caravanQuads()
         out += townBalloonQuads()
         out += shopQuads()
         out += hireQuads()
@@ -612,6 +617,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         out += splitQuads()
         out += choiceQuads()
         out += teleporterQuads()
+        out += caravanQuads()
         out += messageBoxQuads()
         out += saveDialogQuads()
         out += menuQuads()

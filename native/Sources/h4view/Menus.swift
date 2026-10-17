@@ -59,7 +59,7 @@ extension Renderer {
             if self.puzzle == nil { self.prompt = (self.text("no_obelisks_visited.dialog", "You have not visited any obelisks."), false, nil) }
         }))
         items.append((text("dig_treasure", "Dig for Treasure"), { [weak self] in if let g = self?.game, let h = g.heroes.first { g.dig(h) } }))
-        items.append((text("view_caravans", "View Caravans"), { [weak self] in self?.unavailable("view_caravans", "View Caravans") }))
+        items.append((text("view_caravans", "View Caravans"), { [weak self] in self?.openCaravanView(nil) }))
         items.append((text("replay_turn", "Replay Turn"), { [weak self] in self?.unavailable("replay_turn", "Replay Turn") }))
         let b = ui?.hotspot("Game_menu_button")
         menu = PopupMenu(items: items, x: b?.x ?? 963, y: b?.y ?? 71)

@@ -510,7 +510,8 @@ if let out = snapshot {
             renderer.shop = ShopState(offer: o, panel: renderer.ui?.dialog("Blacksmith.\(a)"))
             print("town shop \(a): \(renderer.shop!.rows.map { game.artifactName($0.artifact) })")
         }
-        if let s = ProcessInfo.processInfo.environment["H4TOWNDLG"] { renderer.townSnapshot(s) }   // snapshot: a town dialog (TownScreen.townSnapshot)
+        if let s = ProcessInfo.processInfo.environment["H4TOWNDLG"] { renderer.townSnapshot(s) }
+        if let s = ProcessInfo.processInfo.environment["H4CARAVAN"], let i = renderer.townOpen { renderer.caravanSnapshot(s, town: i) }   // snapshot: a caravan dialog   // snapshot: a town dialog (TownScreen.townSnapshot)
         if let c = ProcessInfo.processInfo.environment["H4RECRUIT"], let i = renderer.townOpen, game.tables?.creature(c) != nil {   // snapshot: the recruit dialog of any creature
             game.towns[i].available[c] = max(game.towns[i].available[c] ?? 0, 5)
             renderer.townDialog = .recruit(creature: c, count: renderer.recruitMost(c))
@@ -735,6 +736,7 @@ final class MapView: MTKView {
         let scale = Float(window?.backingScaleFactor ?? 1)
         renderer.pressSound(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale)
         if armySession != nil { renderer.armyScreenPress(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale); return }
+        if renderer.caravanUI != nil { renderer.caravanPress(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale); return }
         if renderer.townOpen != nil { renderer.townPress(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale) }
     }
     override func mouseDragged(with e: NSEvent) {
@@ -751,6 +753,13 @@ final class MapView: MTKView {
             }
             return
         }
+        if renderer.caravanUI != nil {   // a ring lifted in a caravan dialog
+            if dragged >= 4 {
+                let p = convert(e.locationInWindow, from: nil), sc = Float(window?.backingScaleFactor ?? 1)
+                renderer.caravanDragged(x: Float(p.x) * sc / renderer.uiScale, y: Float(bounds.height - p.y) * sc / renderer.uiScale)
+            }
+            return
+        }
         if renderer.townOpen != nil {
             if dragged >= 4 {
                 let p = convert(e.locationInWindow, from: nil), sc = Float(window?.backingScaleFactor ?? 1)
@@ -764,6 +773,11 @@ final class MapView: MTKView {
         let p0 = convert(e.locationInWindow, from: nil), sc = Float(window?.backingScaleFactor ?? 1)
         renderer.clickCount = e.clickCount
         if armySession != nil, splitDialog == nil, renderer.armyScreenRelease(x: Float(p0.x) * sc / renderer.uiScale, y: Float(bounds.height - p0.y) * sc / renderer.uiScale, shift: e.modifierFlags.contains(.shift)) { return }
+        if renderer.caravanUI != nil, renderer.caravanDrag != nil {   // a drop in a caravan dialog's rows
+            let x = Float(p0.x) * sc / renderer.uiScale, y = Float(bounds.height - p0.y) * sc / renderer.uiScale
+            if dragged >= 4 { renderer.caravanDrop(x: x, y: y, shift: e.modifierFlags.contains(.shift)); return }
+            renderer.caravanDrag = nil
+        }
         if renderer.townOpen != nil, renderer.townDrag != nil {   // a drop in the town's army rows
             let x = Float(p0.x) * sc / renderer.uiScale, y = Float(bounds.height - p0.y) * sc / renderer.uiScale
             if dragged >= 4 { renderer.townDrop(x: x, y: y, split: e.modifierFlags.contains(.shift) || renderer.townDragSplit); return }
@@ -791,6 +805,7 @@ final class MapView: MTKView {
         if renderer.menuClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale) { return }
         if renderer.saveDialogClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale, double: e.clickCount >= 2) { return }
         if renderer.messageBoxClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale) { return }   // a script message: only OK
+        if renderer.caravanUI != nil, renderer.townOpen == nil { renderer.caravanClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.choiceClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale, double: e.clickCount >= 2) { return }
         if renderer.teleporterClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale, double: e.clickCount >= 2) { return }
         if renderer.levelUpClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale, double: e.clickCount >= 2) { return }
@@ -943,6 +958,7 @@ final class MapView: MTKView {
                 return
             }
             if e.keyCode == 37 { renderer.openSaveDialog(.load); return }
+            if e.keyCode == 0, renderer.caravanUI == nil { renderer.openCaravanView(nil); return }   // A: View Caravans (view_caravan.hot_keys)
         }
         switch e.keyCode {
         case 123, 124:   // arrows pan the map, or page the build list

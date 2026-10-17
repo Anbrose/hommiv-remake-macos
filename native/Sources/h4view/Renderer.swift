@@ -118,6 +118,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     var sound: GameSound?
     var saveDialog: SaveDialog?
     var menu: PopupMenu?
+    /// The Tab box (CheatBox.swift), while it is up.
+    var cheatBox: CheatBox?
     /// The game's archive and scenario files (for saving and for starting again from a save).
     var archivePath: String?, mapPath: String?
     var lastAutosaveDay: Int?
@@ -1144,6 +1146,9 @@ final class Renderer: NSObject, MTKViewDelegate {
             updateMusic()
             if lastAutosaveDay != g.day, mapPath != nil { lastAutosaveDay = g.day; autosave() }   // each new day autosaves
             if let won = g.outcome, !outcomeShown, prompt == nil, !inCombat { outcomeShown = true; scenarioOver(won: won) }
+            // Auto Play (nwcGoSolo): the computer plays the human's turn once nothing waits for him
+            if g.autoPlayPending, prompt == nil, !inCombat, townOpen == nil, g.levelUp == nil, g.pendingBattle == nil,
+               g.pendingHeroBattle == nil, g.pendingSiege == nil, g.scripts.messages.isEmpty, cheatBox?.active != true { g.autoPlayTurn() }
             // the hero's ride: sound.hero horse.walk loops while a hero walks on the map
             if !inCombat, townOpen == nil, g.heroes.contains(where: { $0.isWalking }) { sound?.startLoop("hero horse.walk", key: "horse") }
             else { sound?.stopLoop("horse") }
@@ -1198,7 +1203,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         let inTown = townOpen != nil && town != nil
         refreshShroud()
         let mapList = inTown || inCombat ? [] : quads(at: time)
-        let uiList = (inCombat ? combatQuads(now: now) : inTown ? townScreenQuads() : uiQuads()) + abilityPopupQuads()
+        let uiList = (inCombat ? combatQuads(now: now) : inTown ? townScreenQuads() : uiQuads()) + abilityPopupQuads() + cheatBoxQuads()
         // where this frame's buttons are (any quad drawn with a layers.button.* picture), for the click sound
         buttonRects = uiList.filter { buttonTextures.contains(ObjectIdentifier($0.texture)) }.map { ($0.x, $0.y, $0.w, $0.h) }
         // the adventure panel's own buttons are painted into its frame; their hotspots mark them

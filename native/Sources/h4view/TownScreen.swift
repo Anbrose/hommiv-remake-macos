@@ -336,6 +336,7 @@ extension Renderer {
         out += townButton(sp.file, x: sp.x, y: sp.y, pressed: townSplitOn)
         out += townRowQuads()
         out += townDialogQuads()
+        out += caravanQuads()
         out += shopQuads()
         out += hireQuads()
         out += marketQuads()
@@ -353,6 +354,7 @@ extension Renderer {
     func townScreenClick(x: Float, y: Float) {
         guard let ts = town, let g = game, let i = townOpen, i < g.towns.count else { return }
         if prompt != nil { _ = messageBoxClick(x: x, y: y); return }
+        if caravanUI != nil { caravanClick(x: x, y: y); return }
         if townDialog != nil { _ = townDialogClick(x: x, y: y); return }
         if townButtonHit("ok", x: Renderer.townOK.0, y: Renderer.townOK.1, x, y) { closeTown(); return }
         if ts.hit(ts.hotspot("Menu_Button_Released"), x, y) { openTownMenu(); return }
@@ -375,7 +377,7 @@ extension Renderer {
     /// A right click on the town screen: a building describes itself (0x8b9360 on every button's
     /// right-click slot); it stays until OK.
     func townScreenRightClick(x: Float, y: Float) {
-        guard townOpen != nil, townDialog == nil, prompt == nil, menu == nil, market == nil, hire == nil, shop == nil else { return }
+        guard townOpen != nil, townDialog == nil, caravanUI == nil, prompt == nil, menu == nil, market == nil, hire == nil, shop == nil else { return }
         if let hit = townBuildingHit(x, y), TownView.rightClick(hit.id) == .describe { describeBuilding(hit.id) }
     }
     /// The recruit dialog for a creature (0x8b50d0), starting at the most that can be bought:
@@ -404,7 +406,7 @@ extension Renderer {
             if let gold = materialIcon("Gold", size: 64) { items.append((gold, Renderer.grouped(t.treasuryInterest))) }
             showPrompt(g.treasuryText(town: i), title: g.buildingDef(t, id)?.name, items: items)
         case .buildShip: townNotYet("town_build_ship.misc", "Build Ship")
-        case .caravan: townNotYet("town_create_caravan.misc", "Create Caravans")
+        case .caravan: openCaravanBuilding(i)
         case .seminary: townNotYet(id == 30 ? "town_university.misc" : "town_seminary.misc", id == 30 ? "University" : "Seminary")
         case .skeletonTransformer: townNotYet("town_skeleton_transformer.misc", "Skeleton Transformer")
         case .manaVortex: townNotYet("mana_vortex", g.buildingDef(t, id)?.name ?? "Mana Vortex")
@@ -444,7 +446,7 @@ extension Renderer {
         shop = ShopState(offer: o, panel: ui?.dialog("Blacksmith.\(o.panel)")); sound?.play("dialogue.marketplace")
     }
     /// The town menu (0x8b2b60): a scroll menu at the menu button's top-left with the town's actions.
-    /// (Prison, transformer, seminary, university, shipyard, caravan and governor entries have no window
+    /// (Prison, transformer, seminary, university, shipyard and governor entries have no window
     /// in this build and are left out.) The menu is moved up so that it fits on the screen [G].
     func openTownMenu() {
         guard let g = game, let i = townOpen, let ts = town else { return }
@@ -457,6 +459,11 @@ extension Renderer {
         if g.isBuiltPublic(t, 10) {
             let name = g.buildingDef(t, 10)?.name ?? "Blacksmith"
             items.append((text("town_use_blacksmith.misc", "Purchase Equipment").replacingOccurrences(of: "%blacksmith", with: name), { [weak self] in self?.openTownBlacksmith() }))
+        }
+        if g.hasCaravan(i) {   // the caravan's entries (0x8bc680 create, 0x8bc970 view, 0x8bc800 arrivals) [I: their conditions]
+            items.append((text("town_create_caravan.misc", "Create Caravans"), { [weak self] in self?.openCaravanCreate(i) }))
+            items.append((text("town_view_caravans.misc", "View Caravans"), { [weak self] in self?.openCaravanView(i) }))
+            items.append((text("town_handle_arriving_caravans.misc", "Manage Caravans"), { [weak self] in self?.openCaravanArrivals(i) }))
         }
         if t.owned { items.append((text("marketplace", "Marketplace"), { [weak self] in self?.market = MarketState(k: 3) })) }
         let b = ts.hotspot("Menu_Button_Released")

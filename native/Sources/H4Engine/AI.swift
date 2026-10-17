@@ -40,6 +40,7 @@ extension GameState {
     func aiTurn(_ colour: Int) {
         for k in passabilities.indices { passabilities[k].forcedExit = [:] }   // (the player's view of guard zones is not the computer's)
         acting(as: colour) {
+            caravanArrivals(for: colour)   // its turn starts (0x4b2ce0 -> 0x4b1010)
             // income: its towns' halls, its mines
             for t in towns where t.owner == colour { resources["Gold", default: 0] += hallIncome(t) }
             for m in mines where m.owner == colour { resources[m.resource, default: 0] += m.amount }
@@ -75,6 +76,7 @@ extension GameState {
                 }
                 level = back
             }
+            aiCaravans(colour)   // 0x4838e0
             // heroes
             for h in enemyHeroes where h.owner == colour {
                 h.maxMovement = armyMovement(h); h.movement = h.maxMovement
@@ -212,6 +214,7 @@ extension GameState {
             if r.attackerWon {
                 let lost = towns[i].owned
                 towns[i].owner = h.owner; towns[i].owned = false; towns[i].garrison = []
+                caravansAtCapture(town: i, newOwner: h.owner)
                 if lost { log.append(text("town_lost_town.misc", "The enemy has taken the town of %town_name.").replacingOccurrences(of: "%town_name", with: towns[i].name)) }
             } else { removeEnemy(h) }
             return

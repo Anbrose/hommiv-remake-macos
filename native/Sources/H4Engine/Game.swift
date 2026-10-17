@@ -449,6 +449,8 @@ public final class GameState {
         public var guildSpells: [[Int]] = []
         /// Days before the tavern has a hero to hire again (heroes4.exe town+0x18c).
         public var tavernDays = 0
+        /// The treasury's gold interest of yesterday (heroes4.exe town+0x128 >> 8; not yet earned here).
+        public var treasuryInterest = 0
         /// The town's garrison: the creatures that defend it.
         public var garrison: [Hero.Stack] = []
         /// Heroes stationed in the town (they take garrison slots and defend it).

@@ -58,18 +58,6 @@ final class TownScreen {
         return x >= Float(l.x) && x < Float(l.x + l.width) && y >= Float(l.y) && y < Float(l.y + l.height)
     }
 
-    /// The building drawing order per alignment (table 0x996488: later entries over earlier ones).
-    static let drawOrder: [String: [Int]] = [
-        "life": [0, 1, 2, 11, 3, 4, 5, 7, 8, 14, 15, 16, 17, 18, 19, 10, 28, 29, 27, 20, 21, 22, 23, 24, 25, 26, 12, 13, 6, 9],
-        "order": [3, 4, 5, 0, 1, 2, 11, 8, 7, 18, 19, 16, 17, 14, 15, 31, 10, 20, 21, 22, 23, 24, 25, 26, 9, 30, 12, 13, 6],
-        "death": [0, 1, 2, 3, 4, 5, 7, 8, 11, 14, 15, 16, 17, 18, 19, 10, 20, 21, 22, 23, 24, 25, 26, 12, 13, 32, 33, 9, 6],
-        "chaos": [11, 0, 1, 2, 3, 4, 5, 14, 15, 16, 17, 18, 19, 7, 8, 13, 35, 10, 26, 20, 21, 22, 23, 24, 25, 34, 12, 9, 6, 36],
-        "nature": [0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 38, 17, 16, 19, 18, 15, 14, 20, 21, 22, 23, 24, 25, 26, 39, 12, 13, 9, 37],
-        "might": [11, 0, 1, 2, 3, 4, 5, 6, 7, 8, 18, 19, 16, 17, 14, 15, 40, 35, 42, 12, 13, 10, 41, 9],
-    ]
-    /// A built building hides the one it replaces (0xa85d08, applied transitively by 0x8a31f0).
-    static let supersedes: [Int: Int] = [1: 0, 2: 1, 4: 3, 5: 4, 21: 20, 22: 21, 23: 22, 24: 23]
-
     /// The hover picture (0x422b80(layout, 0x180)): every colour's HSV value lifted,
     /// V' = 255 - (255 - V) x 256 / 384, hue and saturation kept (black -> 85 grey). No rim.
     static func lift(_ b: Bitmap) -> Bitmap {
@@ -104,27 +92,26 @@ extension Renderer {
     /// The shown buildings in drawing order: built, not superseded, with a layout layer (0x8af5f0).
     func townShownBuildings(_ t: GameState.Town) -> [(id: Int, layer: UILayer)] {
         guard let g = game, let ts = town, let lay = ts.layout(t.alignment) else { return [] }
-        let order = TownScreen.drawOrder[t.alignment] ?? []
-        let built = Set(order.filter { b in g.buildingKeyword(t.alignment, b).map { t.buildings.contains($0) } ?? false })
-        var hidden = Set<Int>()
-        for b in built { var x = b; while let lower = TownScreen.supersedes[x] { hidden.insert(lower); x = lower } }
-        return order.compactMap { b -> (Int, UILayer)? in
-            guard built.contains(b), !hidden.contains(b), let k = g.buildingKeyword(t.alignment, b) else { return nil }
-            guard let l = lay.layers.first(where: { $0.name.lowercased() == k }), l.width > 0 else { return nil }
-            return (b, l)
-        }
+        return TownView.shown(alignment: t.alignment, built: { b in g.buildingKeyword(t.alignment, b).map { t.buildings.contains($0) } ?? false },
+                              layer: { b in g.buildingKeyword(t.alignment, b).flatMap { k in lay.layers.first { $0.name.lowercased() == k } } })
     }
-    /// The building button under a canvas point: the front-most (last drawn) whose picture is opaque there.
-    func townBuildingAt(_ x: Float, _ y: Float) -> UILayer? {
+    /// The view's layers over the buildings (every layer after the background: the foregrounds).
+    func townForegrounds(_ t: GameState.Town) -> [UILayer] {
+        guard let v = town?.view(t.alignment, t.terrain) else { return [] }
+        return v.layers.filter { $0.name.lowercased() != "background" && $0.width > 0 }
+    }
+    /// The building under a canvas point (town_clicks_spec §2): a solid foreground pixel takes the
+    /// click, else the front-most (last drawn) building whose picture is solid there.
+    func townBuildingHit(_ x: Float, _ y: Float) -> (id: Int, layer: UILayer)? {
         guard let g = game, let i = townOpen, i < g.towns.count, y < 546 else { return nil }
-        for (_, l) in townShownBuildings(g.towns[i]).reversed() {
-            let r = TownScreen.place(l)
-            guard x >= Float(r.x), x < Float(r.x + r.w), y >= Float(r.y), y < Float(r.y + r.h) else { continue }
-            let px = min(l.width - 1, Int((x - Float(r.x)) * Float(l.width) / Float(r.w))), py = min(l.height - 1, Int((y - Float(r.y)) * Float(l.height) / Float(r.h)))
-            if l.bitmap.pixels[(py * l.bitmap.width + px) * 4 + 3] > 15 { return l }
-        }
-        return nil
+        let t = g.towns[i]
+        let sx = Float(TownScreen.sourceW) / Float(TownScreen.viewW), sy = Float(TownScreen.sourceH) / Float(TownScreen.viewH)
+        let px = Int((x * sx).rounded(.down)), py = Int(((y - Float(TownScreen.viewDY)) * sy).rounded(.down))
+        let shown = townShownBuildings(t)
+        guard let id = TownView.building(at: px, py, shown: shown, foregrounds: townForegrounds(t)) else { return nil }
+        return shown.first { $0.id == id }
     }
+    func townBuildingAt(_ x: Float, _ y: Float) -> UILayer? { townBuildingHit(x, y)?.layer }
 
     func townViewQuads(_ t: GameState.Town) -> [Quad] {
         guard let ts = town, let v = ts.view(t.alignment, t.terrain) else { return [] }
@@ -166,7 +153,7 @@ extension Renderer {
             }
         }
         // the view file's other layers (foregrounds), in file order, over the buildings
-        for f in v.layers where f.name.lowercased() != "background" && f.width > 0 { put(f, "town|\(t.alignment)|\(t.terrain)|\(f.name)", f.bitmap) }
+        for f in townForegrounds(t) { put(f, "town|\(t.alignment)|\(t.terrain)|\(f.name)", f.bitmap) }
         return out
     }
 
@@ -351,27 +338,61 @@ extension Renderer {
             return
         }
         for d in townDwellings(i) where ts.hit(ts.hotspot("dwelling_\(d.slot + 1)"), x, y) { openRecruit(d.creature); return }
-        if let top = townBuildingAt(x, y) { townBuildingClicked(top.name.lowercased()) }
+        if let hit = townBuildingHit(x, y) { townBuildingClicked(hit.id) }
     }
-    /// The recruit dialog for a creature (0x8b50d0), starting at the most that can be bought.
+    /// A right click on the town screen: a building describes itself (0x8b9360 on every button's
+    /// right-click slot); it stays until OK.
+    func townScreenRightClick(x: Float, y: Float) {
+        guard townOpen != nil, townDialog == nil, prompt == nil, menu == nil, market == nil, hire == nil, shop == nil else { return }
+        if let hit = townBuildingHit(x, y), TownView.rightClick(hit.id) == .describe { describeBuilding(hit.id) }
+    }
+    /// The recruit dialog for a creature (0x8b50d0), starting at the most that can be bought:
+    /// only in one's own town and with room in the garrison.
     func openRecruit(_ c: String) {
+        guard let g = game, let i = townOpen else { return }
+        if let r = g.townRecruitRefusal(town: i, creature: c) { prompt = (r, false, nil); return }
         townDialog = .recruit(creature: c, count: recruitMost(c))
     }
-    /// A building of the view was clicked: its window (0x8b4a80 and the handlers of town_spec).
-    func townBuildingClicked(_ name: String) {
-        guard let g = game, let i = townOpen, let tables = g.tables else { return }
+    /// A building of the view was left-clicked: the handler bound to its button (town_clicks_spec §3).
+    func townBuildingClicked(_ id: Int) {
+        guard let g = game, let i = townOpen else { return }
         let t = g.towns[i]
-        if name.hasPrefix("mage guild") { openMageGuild(); return }
-        if ["fort", "citadel", "castle"].contains(name) { openCastle(); return }
-        if ["village hall", "town hall", "city hall"].contains(name) { townDialog = .buildList; return }
-        if name == "blacksmith" { openTownBlacksmith(); return }
-        if name.contains("tavern") { openTavern(); return }
-        if let b = tables.buildings(for: t.alignment).first(where: { $0.keyword == name }), let c = b.creature { openRecruit(c); return }
-        townDialog = .buildList
+        switch TownView.leftClick(id) {
+        case .buyBuilding: townDialog = .buildList
+        case .castle: openCastle()
+        case .tavern: openTavern()
+        case .blacksmith: openTownBlacksmith()
+        case .mageGuild: openMageGuild()
+        case .recruit:
+            if let c = g.buildingDef(t, id)?.creature { openRecruit(c) }
+        case .prison:   // no prisoners are kept in towns here: the window only says the cells are empty (0x8a6b98)
+            prompt = (text("town_prison_no_prisoners.misc", "The prison cells are empty."), false, nil)
+        case .treasury:
+            var items: [(picture: UILayer?, caption: String)] = []
+            if let gold = materialIcon("Gold", size: 64) { items.append((gold, Renderer.grouped(t.treasuryInterest))) }
+            showPrompt(g.treasuryText(town: i), title: g.buildingDef(t, id)?.name, items: items)
+        case .buildShip: townNotYet("town_build_ship.misc", "Build Ship")
+        case .caravan: townNotYet("town_create_caravan.misc", "Create Caravans")
+        case .seminary: townNotYet(id == 30 ? "town_university.misc" : "town_seminary.misc", id == 30 ? "University" : "Seminary")
+        case .skeletonTransformer: townNotYet("town_skeleton_transformer.misc", "Skeleton Transformer")
+        case .manaVortex: townNotYet("mana_vortex", g.buildingDef(t, id)?.name ?? "Mana Vortex")
+        case .creaturePortal: townNotYet("creature_portal", g.buildingDef(t, id)?.name ?? "Creature Portal")
+        case .describe: describeBuilding(id)
+        }
+    }
+    /// 0x8b9360: the building's name as the title, its help text, OK.
+    func describeBuilding(_ id: Int) {
+        guard let g = game, let i = townOpen, let b = g.buildingDef(g.towns[i], id) else { return }
+        showPrompt(b.help, title: b.name)
+    }
+    /// A window of the original that is not built yet: say so instead of opening something else.
+    func townNotYet(_ key: String, _ fallback: String) {
+        toasts.append(("\(text(key, fallback)): not available yet", Date().addingTimeInterval(3)))
     }
     func openCastle() {
         guard let g = game else { return }
-        if castleCreatures().isEmpty { prompt = (g.tables?.strings["town.castle_no_dwellings"] ?? "You must build a creature dwelling before you can recruit creatures.", false, nil) }
+        guard let i = townOpen else { return }
+        if !g.castleOpens(g.towns[i]) { prompt = (g.tables?.strings["town.castle_no_dwellings"] ?? "You must build a creature dwelling before you can recruit creatures.", false, nil) }
         else { townDialog = .castle }
     }
     func openMageGuild() {
@@ -384,7 +405,9 @@ extension Renderer {
         if let r = g.tavernRefusal(town: i) { prompt = (r, false, nil) } else { hire = g.hireOffer(town: i) }
     }
     func openTownBlacksmith() {
-        guard let g = game, let i = townOpen, let hero = g.visitingArmy(town: i) ?? g.towns[i].garrisonHeroes.first else { return }
+        guard let g = game, let i = townOpen else { return }
+        if let r = g.blacksmithRefusal(town: i) { prompt = (r, false, nil); return }
+        guard let hero = g.visitingArmy(town: i) ?? g.towns[i].garrisonHeroes.first else { return }
         let o = ShopOffer(key: "town|\(i)", title: text("blacksmith", "Blacksmith"), panel: g.towns[i].alignment.capitalized, items: [], potions: [], hero: hero)
         shop = ShopState(offer: o, panel: ui?.dialog("Blacksmith.\(o.panel)")); sound?.play("dialogue.marketplace")
     }
@@ -421,7 +444,7 @@ extension Renderer {
     }
 
     /// Snapshot hooks (H4TOWNDLG, comma separated): "rich" builds every building (not the shipyard) and fills
-    /// the treasury and dwellings first; then "buildlist", "detail", "castle", "recruitcastle", "guild0",
+    /// the treasury and dwellings first; then "click:<id>", "rclick:<id>", "buildlist", "detail", "castle", "recruitcastle", "guild0",
     /// "guild1", "guildspell" or "menu" opens that window; "novisit" sends the heroes away (the single row).
     func townSnapshot(_ s: String) {
         guard let g = game, let i = townOpen else { return }
@@ -442,6 +465,10 @@ extension Renderer {
             case "guildspell": if let c = guildCells().first { townDialog = .guildSpell(spell: c.spell, heroTop: 0) }
             case "menu": openTownMenu(); menu?.opened = .distantPast
             case "novisit": g.townVisitor = nil; for h in g.heroes { h.x = 0; h.y = 0 }
+            case _ where p.hasPrefix("click:"):   // "click:<building id>": that building's left click
+                if let b = Int(p.dropFirst(6)) { townBuildingClicked(b) }
+            case _ where p.hasPrefix("rclick:"):  // "rclick:<building id>": its right click
+                if let b = Int(p.dropFirst(7)) { describeBuilding(b) }
             default: break
             }
         }

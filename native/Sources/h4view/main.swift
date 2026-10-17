@@ -857,11 +857,14 @@ final class MapView: MTKView {
     /// click lands outside it (as in the game).
     override func rightMouseUp(with e: NSEvent) { renderer.messageItemHelp = nil }
     override func rightMouseDown(with e: NSEvent) {
-        guard renderer.townOpen == nil else { return }
         let p = convert(e.locationInWindow, from: nil)
         let scale = Float(window?.backingScaleFactor ?? 1)
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
         let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale
+        if renderer.townOpen != nil {   // the town screen: a building's description
+            if armySession == nil { renderer.townScreenRightClick(x: cx, y: cy) }
+            return
+        }
         if renderer.spellBook != nil { renderer.spellBook = nil; return }
         // a found artifact in a message: its help while the button is held
         if let r = renderer.itemRect(), cx >= Float(r.x), cx < Float(r.x + r.w), cy >= Float(r.y), cy < Float(r.y + r.h),

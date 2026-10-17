@@ -392,6 +392,11 @@ public final class GameState {
     public var dug: Set<String> = []
     /// The puzzle to show (an obelisk just visited).
     public var puzzleOpen: String?
+    /// Towers, cartographers and Windows of the Magi: the players (colours) that have visited each
+    /// (object key), for the first / re-visit texts and the computer's interest (ShroudRemovers.swift).
+    public var shroudVisits: [String: [Int]] = [:]
+    /// A Window of the Magi's eyes being shown to the player (the view plays it).
+    public var magiView: MagiView?
     /// Empty ships on the water.
     public var boats: [Boat] = []
     /// A script's fight: what runs when it is won and when it is lost.

@@ -65,6 +65,7 @@ extension Renderer {
         if let o = g.sanctuaryOpen { sanctuary = o; g.sanctuaryOpen = nil }
         if let c = g.puzzleOpen, g.scripts.messages.isEmpty { puzzle = c; g.puzzleOpen = nil }
         if g.jumped, let h = g.heroes.first { g.jumped = false; centre(onCell: (h.x, h.y)) }
+        playMagiView(now: now)
     }
     func floaterQuads() -> [Quad] {
         guard let ui = ui else { return [] }

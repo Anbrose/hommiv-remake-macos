@@ -468,6 +468,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
     /// Messages shown over the map for a few seconds.
     var toasts: [(text: String, until: Date)] = []
+    /// A Window of the Magi playing (MagiWindow.swift): the view to come back to and the next tick.
+    var magiPlayback: (pan: SIMD2<Float>, level: Int, due: Date)?
     lazy var shade: MTLTexture = {
         var bm = Bitmap(width: 2, height: 2)
         for i in 0..<4 { bm.pixels[i * 4] = 30; bm.pixels[i * 4 + 1] = 20; bm.pixels[i * 4 + 2] = 10; bm.pixels[i * 4 + 3] = 190 }

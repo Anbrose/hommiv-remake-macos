@@ -34,7 +34,7 @@ extension GameState {
         guard let t = tables else { return [] }
         let key = RuleTables.heroClasses[c].keyword
         let used = Set((heroes + enemyHeroes).flatMap { $0.members }.map { $0.keyword.lowercased() })
-        let all = t.heroes.indices.filter { t.heroes[$0].heroClass == key && (t.heroes[$0].sex == "female") == female }
+        let all = t.heroes.indices.filter { t.heroes[$0].heroClass == key && (t.heroes[$0].sex == "female") == female && t.heroes[$0].allowedByDefault && t.heroes[$0].portrait != nil }
         let unused = all.filter { !used.contains(t.heroes[$0].keyword.lowercased()) }
         return unused.isEmpty ? all : unused
     }
@@ -74,7 +74,7 @@ extension GameState {
         let price = o.prices[c]
         guard resources["Gold", default: 0] >= price else { return nil }
         let def = t.heroes[list[k]]
-        var mh = MapHero(); mh.heroClass = c; mh.level = 1; mh.portrait = list[k]; mh.gender = o.female[c] == true ? 1 : 0; mh.name = def.name
+        var mh = MapHero(); mh.heroClass = c; mh.level = 1; mh.portrait = def.portrait ?? -1; mh.gender = o.female[c] == true ? 1 : 0; mh.name = def.name
         var x = visitor?.x ?? 0, y = visitor?.y ?? 0
         var z = visitor?.z ?? level
         if let ti = o.town, let p = scenes[towns[ti].z].placed.first(where: { $0.category == "castle" && $0.cellX == towns[ti].x && $0.cellY == towns[ti].y }) {

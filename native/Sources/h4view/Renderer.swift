@@ -509,6 +509,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     var teleporterPicked: Int?
     var teleporterScroll = 0
     lazy var hourglassFlip: Sprite? = (try? resolver?.archive.payload("animation.hourglass.flip.h4d")).flatMap { try? Sprite(data: $0) }
+    var abilityPopup: (text: String, rect: DRect)? = nil   // an ability's help, shown while right-clicked (AbilityHelp.swift)
     var messageItemHelp: String? = nil        // a found artifact's help, shown while right-clicked
     var pointerCanvas: (Float, Float) = (0, 0) { didSet { pointerSince = Date() } }
     var pointerSince = Date()
@@ -1094,7 +1095,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         let inTown = townOpen != nil && town != nil
         refreshShroud()
         let mapList = inTown || inCombat ? [] : quads(at: time)
-        let uiList = inCombat ? combatQuads(now: now) : inTown ? townScreenQuads() : uiQuads()
+        let uiList = (inCombat ? combatQuads(now: now) : inTown ? townScreenQuads() : uiQuads()) + abilityPopupQuads()
         // where this frame's buttons are (any quad drawn with a layers.button.* picture), for the click sound
         buttonRects = uiList.filter { buttonTextures.contains(ObjectIdentifier($0.texture)) }.map { ($0.x, $0.y, $0.w, $0.h) }
         // the adventure panel's own buttons are painted into its frame; their hotspots mark them

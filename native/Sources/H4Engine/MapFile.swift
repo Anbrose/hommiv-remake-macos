@@ -63,7 +63,7 @@ public struct MapObject {
         if !n.isEmpty, n.lowercased() != "none" { t.name = n }
         guard rd.remaining >= 1 else { return t }
         if rd.u8() != 0 {
-            guard let g = MapFile.parseCreatureArray(&rd) else { return t }
+            guard let g = MapFile.parseCreatureArray(&rd, heroes: &t.garrisonHeroes) else { return t }
             t.garrison = g
         }
         guard rd.remaining >= 1 else { return t }
@@ -95,6 +95,8 @@ public struct TownSettings {
     public var name: String? = nil
     /// (creature id in heroes4.exe's order, count; 0 = a random count) per slot, nil when empty.
     public var garrison: [(creature: Int, count: Int)?]? = nil
+    /// The heroes in the garrison's slots (hero records of its creature array).
+    public var garrisonHeroes: [MapHero] = []
     /// Building ids (0...42, per town type: see RuleTables.buildingIds) as bit sets.
     public var built: UInt64? = nil, allowed: UInt64? = nil
     public var hasFort = false
@@ -509,6 +511,7 @@ public struct MapFile {
 
 /// A hero as a map sets it up (heroes4.exe t_hero, 0x72f4e0); -1 fields are "random".
 public struct MapHero {
+    /// portrait: an id of RuleTables.heroPortraits (-1: random); heroClass: RuleTables.heroClasses.
     public var portrait = -1, heroClass = -1, gender = -1, level = 1
     public var stats: [Int] = []
     public var name = "", biography = ""

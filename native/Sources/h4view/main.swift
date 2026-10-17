@@ -318,7 +318,7 @@ var townScreen: TownScreen? = nil
 var combatScreen: CombatScreen? = nil
 do { ui = try AdventureUI(archive: archive, index: resolver)
     let dataDir = URL(fileURLWithPath: args[1]).deletingLastPathComponent()
-    ui?.overlays = ["x2.h4r", "updates.h4r"].compactMap { try? H4Archive(url: dataDir.appendingPathComponent($0)) }; townScreen = try TownScreen(archive: archive); combatScreen = try CombatScreen(archive: archive); lap("ui loaded") } catch { print("no UI: \(error)") }
+    ui?.overlays = ["x2.h4r", "updates.h4r"].compactMap { try? H4Archive(url: dataDir.appendingPathComponent($0)) }; if let r = H4Archive.gameResources(dataDirectory: dataDir) { ui?.heroPortraits = HeroPortraits(resources: r) }; townScreen = try TownScreen(archive: archive); combatScreen = try CombatScreen(archive: archive); lap("ui loaded") } catch { print("no UI: \(error)") }
 if let cs = combatScreen, let updates = try? H4Archive(url: URL(fileURLWithPath: args[1]).deletingLastPathComponent().appendingPathComponent("updates.h4r")),
    let d = try? updates.payload("table.combat_grid_colors.h4d") { cs.gridColors = GridColors(data: d) }
 
@@ -482,6 +482,11 @@ if let out = snapshot {
         if let lead = stacks.first { renderer.creatureDialog = (lead.0, lead.1, stacks.dropFirst().map { ($0.0, $0.1) }) }
     }
     if let k = ProcessInfo.processInfo.environment["H4ARMYPOPUP"].flatMap({ Int($0) }) { renderer.armyPopup = ArmyPopup(hero: 0, selected: k) }   // snapshot: the right-click window
+    // snapshot: a right press at "x,y" on a creature window's ability icon (prints the icons on show)
+    if let q = ProcessInfo.processInfo.environment["H4ABILITYPRESS"]?.split(separator: ",").compactMap({ Float($0) }), q.count == 2 {
+        print("ability icons: \(renderer.abilitySlots().map { "\($0.keyword)@\($0.rect.x),\($0.rect.y),\($0.rect.w)x\($0.rect.h)" })")
+        print("ability press: \(renderer.abilityPress(x: q[0], y: q[1]))")
+    }
     if openChest, let h = game.heroes.first { game.chestOffer = (h, 1500, 1000); renderer.adventureDialog = .chest; renderer.chestChoice = true }
     if openTown {
         renderer.townOpen = game.towns.firstIndex { $0.owned }
@@ -674,11 +679,16 @@ final class MapView: MTKView {
         } else if name != cursorName { cursorName = name; cursorFrame = 0; cursors?.set(name)?.frames.first?.set() }
         // the status line appears once the pointer rests on the map for a moment
         renderer.hover = nil
-        hoverPending = (name == "normal" && (renderer.ui == nil || cx >= Float(AdventureUI.mapViewportWidth))) || (renderer.inCombat && renderer.combat?.info == nil && !name.hasPrefix("combat.melee") && name != "combat.shoot") ? nil : (mouse, Date())
+        hoverPending = (name == "normal" && (renderer.ui == nil || cx >= Float(AdventureUI.mapViewportWidth))) || (renderer.inCombat && renderer.combat?.info == nil && !name.hasPrefix("combat.melee") && name != "combat.shoot") ? (renderer.abilityAt(x: cx, y: mouse.y / renderer.uiScale) != nil ? (mouse, Date()) : nil) : (mouse, Date())
     }
     var hoverPending: (mouse: SIMD2<Float>, since: Date)?
     func tickHover() {
-        guard let p = hoverPending, Date().timeIntervalSince(p.since) > 0.4, renderer.hover == nil, renderer.townOpen == nil else { return }
+        guard let p = hoverPending, Date().timeIntervalSince(p.since) > 0.4, renderer.hover == nil, renderer.townOpen == nil, renderer.abilityPopup == nil else { return }
+        // a creature ability's icon: its name (t_skill_icon's help balloon; the town's: townBalloonText)
+        if renderer.spellBook == nil, let a = renderer.abilityAt(x: p.mouse.x / renderer.uiScale, y: p.mouse.y / renderer.uiScale) {
+            renderer.hover = (renderer.abilityName(a.keyword), Int(p.mouse.x / renderer.uiScale), Int(p.mouse.y / renderer.uiScale))
+            return
+        }
         if let tip = renderer.dialogTip(x: p.mouse.x / renderer.uiScale, y: p.mouse.y / renderer.uiScale) {   // the object dialogs' balloons
             renderer.hover = (tip, Int(p.mouse.x / renderer.uiScale), Int(p.mouse.y / renderer.uiScale))
             return
@@ -720,6 +730,7 @@ final class MapView: MTKView {
     override func mouseExited(with e: NSEvent) { NSCursor.arrow.set(); cursorName = ""; renderer.hover = nil; hoverPending = nil }
     override func mouseDown(with e: NSEvent) {
         dragged = 0; renderer.hover = nil; hoverPending = nil
+        renderer.abilityPopup = nil   // an ability's help goes with any left press (0x7e6180)
         let p = convert(e.locationInWindow, from: nil)
         let scale = Float(window?.backingScaleFactor ?? 1)
         renderer.pressSound(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale)
@@ -855,12 +866,14 @@ final class MapView: MTKView {
     }
     /// Right click: opens a box describing what is under the cursor; it stays until a left
     /// click lands outside it (as in the game).
-    override func rightMouseUp(with e: NSEvent) { renderer.messageItemHelp = nil }
+    override func rightMouseUp(with e: NSEvent) { renderer.messageItemHelp = nil; renderer.abilityPopup = nil }
     override func rightMouseDown(with e: NSEvent) {
         let p = convert(e.locationInWindow, from: nil)
         let scale = Float(window?.backingScaleFactor ?? 1)
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
         let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale
+        // a creature ability's icon in a creature window (any screen): its help while the button is held
+        if renderer.spellBook == nil, renderer.abilityPress(x: cx, y: cy) { renderer.hover = nil; return }
         if renderer.townOpen != nil {   // the town screen: a building's description
             if armySession == nil { renderer.townScreenRightClick(x: cx, y: cy) }
             return

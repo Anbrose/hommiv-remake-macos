@@ -57,7 +57,7 @@ extension Renderer {
         case .hero(let h)? where L >= 3: skillIcons = (0..<9).filter { h.skill(id: $0) > 0 }.prefix(5).map { skillIcon($0, level: h.skill(id: $0)) }
         case .stack(let c, _)?:
             let sheet = iconSheet("skills.creature.52")
-            skillIcons = (RuleTables.creatureAbilities[c.keyword.lowercased()] ?? []).prefix(5).compactMap { sheet[$0.lowercased()].map { [$0] } }
+            skillIcons = armyInfoAbilities(c.keyword).compactMap { sheet[$0.lowercased()].map { [$0] } }
         default: break
         }
         for (k, ls) in skillIcons.enumerated() {

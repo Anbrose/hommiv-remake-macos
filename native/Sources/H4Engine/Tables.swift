@@ -49,6 +49,12 @@ public struct CreatureDef {
 public struct HeroDef {
     public let keyword: String, name: String, sex: String, heroClass: String
     public var biography = ""
+    /// "Allowed By Default" not blank (0x667978, record +0x3c): the hero may come up at random
+    /// (a map's allowed-portrait list is filled from it, 0x4dfed3); campaign heroes are not.
+    public var allowedByDefault = true
+    /// The row's portrait id: its keyword in RuleTables.heroPortraits (0x6677bb); nil for the
+    /// generic names, which have no portrait.
+    public var portrait: Int? { RuleTables.portraitId(keyword) }
 }
 
 /// The game's rule tables: creatures, heroes, random town names, mine incomes.
@@ -192,6 +198,7 @@ public final class RuleTables {
         heroes = he.rows.filter { $0.count > 3 && !$0[0].isEmpty }.map {
             var h = HeroDef(keyword: $0[0], name: $0[1], sex: $0[2].lowercased(), heroClass: $0[3].lowercased())
             h.biography = $0.count > 4 ? $0[4] : ""
+            h.allowedByDefault = $0.count > 5 && !$0[5].trimmingCharacters(in: .whitespaces).isEmpty
             return h
         }
         let rn = RuleTable(data: try archive.payload("table.random_names.h4d"))

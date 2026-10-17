@@ -77,11 +77,14 @@ extension GameState {
         for s in h.army { v = max(v, (tables?.creature(s.creature)?.level ?? 1) - 2) }
         return min(4, v)
     }
-    /// The army's stealth: its least stealthy member (a hero's Stealth level, a creature -1).
+    /// The army's stealth (0x6428a0): its least stealthy member, at most 4 -- a hero's Stealth
+    /// level (0 basic ... 4 grandmaster, -1 none), a creature 1 with the Stealth ability (bandits)
+    /// else -1; -1 for an empty army.
     public func stealth(of h: Hero) -> Int {
-        var s = h.army.isEmpty ? Int.max : -1
-        for m in h.members { s = min(s, m.skill("stealth") - 1) }
-        return s == Int.max ? -1 : s
+        var s = 4, any = false
+        for m in h.members { any = true; s = min(s, m.skill("stealth") - 1) }
+        for st in h.army where st.count > 0 { any = true; s = min(s, GameState.isStealthy(st.creature) ? 1 : -1) }
+        return any ? s : -1
     }
     /// Does the player see this enemy army?
     public func isVisible(_ h: Hero) -> Bool {
@@ -126,15 +129,14 @@ extension GameState {
         }
         visionChanged = true
     }
-    /// Does the player see this wandering stack: its cell seen, and a stealthy one's (stealth 0,
-    /// the others -1) at a vision level that beats it (0x526110).
+    /// Does the player see this wandering stack: its cell seen at a vision level not below the
+    /// stack's stealth (0x526110; bandits 1, the others -1).
     public func monsterSeen(_ i: Int) -> Bool {
         guard i < monsters.count else { return false }
         let m = monsters[i]
         guard fogState(m.x, m.y, level: m.z) == GameState.fogSeen else { return false }
         guard fogEnabled, m.z < fogLevel.count else { return true }
-        let stealthy = (RuleTables.creatureAbilities[m.creature.lowercased()] ?? []).contains("stealth")
-        return !stealthy || Int(fogLevel[m.z][m.x * map.size + m.y]) >= 0
+        return stealth(of: m) <= Int(fogLevel[m.z][m.x * map.size + m.y])
     }
     /// The wandering stacks of this level the player sees now.
     func seenMonsters() -> Set<Int> {
@@ -147,17 +149,5 @@ extension GameState {
         hs.combine(towns.filter(\.owned).count); hs.combine(mines.filter(\.owned).count); hs.combine(dwellings.filter(\.owned).count)
         hs.combine(objectStates.values.filter { $0.owner == map.humanColour }.count); hs.combine(sanctuaryGuests.count)
         return hs.finalize()
-    }
-}
-
-extension GameState {
-    /// The guard zones of the stacks the player sees that would notice this hero (a route
-    /// enters them only as its last step, pathing_spec §2).
-    func seenZones(for h: Hero) -> Set<Int> {
-        var out = Set<Int>()
-        for i in monsters.indices where monsters[i].z == level && monsters[i].bank == nil && monsterSeen(i) {
-            for c in zone(of: i) where notices(monsters[i], h, at: c / map.size, c % map.size) { out.insert(c) }
-        }
-        return out
     }
 }

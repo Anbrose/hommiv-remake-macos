@@ -148,8 +148,12 @@ public struct Passability {
     /// An object's footprint covers the cell (its four edges are blocked: no corner cutting past it).
     public var edgeBlocked: [Bool] = []
     func edgeAt(_ x: Int, _ y: Int) -> Bool { x >= 0 && y >= 0 && x < size && y < size && edgeBlocked[x * size + y] }
-    /// Cells of the guard zones the player sees: a route enters them only as its last step.
-    public var zones: Set<Int> = []
+    /// Forced exits of the route planner (heroes4.exe 0x4ff856, adventure_guards_spec.md): in a
+    /// cell of the zone of a stack the player sees, the one direction a route may go on in
+    /// (toward the stack). Set per army by GameState.preparePlanner.
+    public var forcedExit: [Int: Int] = [:]
+    /// Bumped whenever what stands on the level changes (the guard floods depend on it).
+    public internal(set) var revision = 0
     /// Entry edges by cell (as the exe's cell bytes +0x1a / +0x1f): bit 0 the cell's -y edge,
     /// bit 1 its -x edge may be crossed into an object (Sprite.EntryEdges).
     public var entry: [UInt8] = []
@@ -158,12 +162,14 @@ public struct Passability {
     /// Something stands on the cell (an object, a monster, an army, a ship).
     public private(set) var occupied: [Bool] = []
     public mutating func free(_ x: Int, _ y: Int) {
+        revision &+= 1
         if x >= 0, x < size, y >= 0, y < size {
             occupied[x * size + y] = false; blocked[x * size + y] = terrainBlocked[x * size + y]; edgeBlocked[x * size + y] = false
             if !trigger.isEmpty { trigger[x * size + y] = -1 }   // nothing left there to enter
         }
     }
     public mutating func block(_ x: Int, _ y: Int) {
+        revision &+= 1
         if x >= 0, x < size, y >= 0, y < size { occupied[x * size + y] = true; blocked[x * size + y] = true }
     }
     public func isWater(_ x: Int, _ y: Int) -> Bool { x >= 0 && y >= 0 && x < size && y < size && water[x * size + y] }
@@ -293,9 +299,10 @@ public final class Hero {
     public static let baseMovement: Float = 22.56
     /// Remaining path (next cell first) while walking, and progress 0..1 to its first cell.
     public var path: [(x: Int, y: Int)] = []
-    /// The wandering stacks the player could see when this walk began (a walk stops when it
-    /// finds its way runs into the guard zone of one not seen before).
-    var knownThreats: Set<Int>? = nil
+    /// The walk under way was checked as it began (GameState.cutWalk, 0x5439e0).
+    var walkChecked = false
+    /// The walk was cut or stopped short of its route: what its end would have used is not used.
+    var walkCut = false
     /// Where each hero and stack of the army stands in its row's seven places (TownArmies).
     public var rowKeys: [String?] = []
     /// The cell the player clicked for the planned route (it may end short, at a gateway).
@@ -546,26 +553,22 @@ public final class GameState {
     public var towns: [Town] = []
     public var mines: [Mine] = []
     public var dwellings: [Dwelling] = []
-    public var monsters: [Monster] = [] { didSet { dangerCache = nil; zoneCache = [:] } }
+    public var monsters: [Monster] = [] { didSet { dangerCache = nil; zoneCache = [:]; monsterRevision &+= 1 } }
+    var monsterRevision = 0
+    /// The last guard map built (GuardZones.swift) and the key it was built for.
+    var guardCache: (key: Int, map: GuardMap)?
+    /// Armies whose move ended, to be checked for a stack falling on them (0x4f81e0).
+    var pendingGuardChecks: [Hero] = []
 
-    /// A wandering stack's guard zone (heroes4.exe 0x4979f0): the cells a flood from the stack
-    /// reaches within the 5 x 5 square around it (two cells each way), walking over passable
-    /// ground -- obstacles and water cut it short.
+    /// A wandering stack's guard zone (heroes4.exe 0x4979f0, GameState.flood): the cells its
+    /// flood marks for an army without stealth, its own cell left out.
     var zoneCache: [Int: Set<Int>] = [:]
     public func zone(of i: Int) -> Set<Int> {
         if let z = zoneCache[i] { return z }
-        let m = monsters[i], n = map.size
-        var seen: Set<Int> = [m.x * n + m.y], out = Set<Int>(), queue = [(m.x, m.y)]
-        while !queue.isEmpty {
-            let (x, y) = queue.removeFirst()
-            for dx in -1...1 { for dy in -1...1 where dx != 0 || dy != 0 {
-                let nx = x + dx, ny = y + dy
-                guard abs(nx - m.x) <= 2, abs(ny - m.y) <= 2, nx >= 0, ny >= 0, nx < n, ny < n, !seen.contains(nx * n + ny) else { continue }
-                seen.insert(nx * n + ny)
-                guard passability.canStep(from: x, y, to: nx, ny) || (x == m.x && y == m.y && passability.isFree(nx, ny)) else { continue }
-                out.insert(nx * n + ny); queue.append((nx, ny))
-            } }
-        }
+        var marks = [GuardMark?](repeating: nil, count: map.size * map.size)
+        flood(i, stealth: -1, into: &marks, passability)
+        var out = Set<Int>()
+        for (k, m) in marks.enumerated() where m != nil && m!.dist > 0 { out.insert(k) }
         zoneCache[i] = out
         return out
     }
@@ -579,26 +582,6 @@ public final class GameState {
         return out
     }
     public func isDangerous(_ x: Int, _ y: Int) -> Bool { dangerCells.contains(x * map.size + y) }
-
-    /// Does a wandering stack notice the hero on a cell? Stealth (table.skills) hides the hero from
-    /// creatures up to its level: a stack of a higher level sees him, one of the same level only
-    /// when he is next to it (Master Stealth: 4th level creatures when adjacent), lower levels and
-    /// anything against Grandmaster Stealth never. Creatures have no Scouting.
-    public func notices(_ m: Monster, _ h: Hero, at x: Int, _ y: Int) -> Bool {
-        let stealth = h.skill("stealth")
-        guard stealth > 0 else { return true }
-        guard stealth < 5, let level = tables?.creature(m.creature)?.level else { return stealth == 0 }
-        let adjacent = max(abs(m.x - x), abs(m.y - y)) <= 1
-        if level > stealth { return true }
-        if level == stealth || (stealth == 4 && level == 4) { return adjacent }
-        return false
-    }
-    /// The wandering stack that would fall on the hero on this cell: one whose guard radius holds
-    /// the cell and that notices him there.
-    public func threat(to h: Hero, at x: Int, _ y: Int) -> Int? {
-        guard isDangerous(x, y) else { return nil }
-        return monsters.indices.first { i in monsters[i].z == level && monsters[i].bank == nil && zone(of: i).contains(x * map.size + y) && notices(monsters[i], h, at: x, y) }
-    }
 
     /// The movement an army gets per day: the slowest of the hero and its creatures.
     public func armyMovement(_ h: Hero) -> Float {
@@ -1243,13 +1226,15 @@ public final class GameState {
         passability.isFree(c.0, c.1) && !heroes.contains { $0 !== hero && $0.z == level && standingCell($0) == c }
     }
 
-    /// Click on a visitable object: use it if the hero stands next to it, otherwise plan (then
-    /// walk) to the cheapest neighbouring cell; it is used on arrival. A town is entered through
-    /// the middle gate cell; when that is taken, through the nearer of the other two.
+    /// Click on a visitable object (heroes4.exe 0x4f5c80, adventure_guards_spec §6): the first
+    /// click plans the route into it (shown by the arrows), a click on the object the route
+    /// already leads to walks it and the object is used from the cell before it -- an object next
+    /// to the hero too, its route being the one step into it. A click while walking only stops.
+    /// A town is entered through the middle gate cell; when that is taken, through the nearer of
+    /// the other two.
     public func click(hero: Hero, pickup p: MapScene.Placed) {
-        passability.relief = GameState.terrainRelief(hero); passability.zones = seenZones(for: hero)
-        let walking = hero.isWalking
-        if walking { interrupt(hero) }
+        if hero.isWalking { stopWalk(hero); return }
+        preparePlanner(for: hero)
         let from = standingCell(hero)
         let isTown = town(for: p) != nil
         var candidates: [(Int, Int)] = []
@@ -1262,15 +1247,19 @@ public final class GameState {
             for dx in -1...fw { for dy in -1...fh where (dx == -1 || dy == -1 || dx == fw || dy == fh) && (corners || !((dx == -1 || dx == fw) && (dy == -1 || dy == fh))) { candidates.append((p.cellX + dx, p.cellY + dy)) } }
         }
         let cells = entryCells(p)
-        if !walking, cells.isEmpty ? candidates.contains(where: { $0 == from }) && canUse(from: from, p) : canUse(from: from, p) { interact(hero: hero, p); return }
-        if !walking, let t = hero.target, t.x == p.cellX, t.y == p.cellY, !hero.plan.isEmpty {
-            hero.path = hero.plan; hero.plan = []; hero.progress = 0
-            return
+        if let t = hero.target, t.x == p.cellX, t.y == p.cellY {   // the destination the route has: go
+            if !hero.plan.isEmpty { hero.path = hero.plan; hero.plan = []; hero.progress = 0; return }
+            if cells.isEmpty ? candidates.contains(where: { $0 == from }) && canUse(from: from, p) : canUse(from: from, p) {
+                hero.target = nil; hero.targetCell = nil
+                interact(hero: hero, p)
+                moveEnded(hero)
+                return
+            }
         }
         if !cells.isEmpty {
             // the exe's route ends on the object's cell, entered through an entry edge (0x4ff180 /
             // 0x4fe990); the hero walks to the cell before it and uses the object from there
-            if let r = passability.routeInto(cells, from: from), r.route.count >= 2, let last = r.route.last {
+            if let r = passability.routeInto(cells, from: from), let last = r.route.last {
                 hero.plan = Array(r.route.dropLast())
                 hero.target = (p.cellX, p.cellY, p.name); hero.targetCell = (last.x, last.y)
             } else { hero.plan = []; hero.target = nil; hero.targetCell = nil }   // no way in: no route (0x500160 fails)
@@ -1344,15 +1333,11 @@ public final class GameState {
     /// Where the hero will stand once its current step ends.
     func standingCell(_ hero: Hero) -> (Int, Int) { hero.path.first.map { ($0.x, $0.y) } ?? (hero.x, hero.y) }
 
-    /// A click while walking: finish the current step, then stop and show the new route.
-    func interrupt(_ hero: Hero) {
-        if hero.isWalking { hero.path = [hero.path[0]] }
-        hero.target = nil
-    }
-
-    /// Click handling: first click plans a path to the cell, a second click on the same cell walks it.
+    /// Click handling: first click plans a path to the cell, a second click on the same cell walks
+    /// it; a click while walking only stops (0x4f5c80).
     public func click(hero: Hero, x: Int, y: Int) {
-        passability.relief = GameState.terrainRelief(hero); passability.zones = seenZones(for: hero)
+        if hero.isWalking { stopWalk(hero); return }
+        preparePlanner(for: hero)
         if let e = enemyAt(x, y) { attack(e, with: hero); return }
         if let f = heroes.first(where: { $0 !== hero && $0.z == level && standingCell($0) == (x, y) }), hero.boat == nil, f.boat == nil { meet(f, with: hero); return }
         hero.attackTarget = nil; hero.tradeTarget = nil
@@ -1392,14 +1377,9 @@ public final class GameState {
             hero.planGoal = (x, y)
             hero.target = cut.via.map { ($0.cellX, $0.cellY, $0.name) }
         }
-        if hero.isWalking {
-            interrupt(hero)
-            plan(from: standingCell(hero))
-            return
-        }
         if let g = hero.planGoal, g == (x, y), !hero.plan.isEmpty || hero.target != nil {
             if hero.plan.isEmpty, let t = hero.target, let p = scene.placed.first(where: { $0.cellX == t.x && $0.cellY == t.y && $0.name == t.name }), canUse(from: (hero.x, hero.y), p) {
-                interact(hero: hero, p); return
+                interact(hero: hero, p); moveEnded(hero); return
             }
             hero.path = hero.plan
             hero.plan = []
@@ -1415,35 +1395,10 @@ public final class GameState {
         h.path = h.plan; h.plan = []; h.progress = 0
     }
 
-    /// A wandering stack walking up to a hero it fell on: its route (inside its guard square) to
-    /// a cell next to the hero; the battle starts when it gets there.
+    /// A wandering stack walking up to a hero it fell on (t_enemy_army_attack, 0x5472c0): its own
+    /// route up to the cell before the hero (GameState.guardAttack); the battle starts when it
+    /// gets there.
     public var charge: (monster: Int, hero: Hero, path: [(x: Int, y: Int)], progress: Float)?
-    func startCharge(_ i: Int, at h: Hero) {
-        let m = monsters[i], n = map.size
-        // the nearest cell next to the hero the stack can walk to within its square
-        var prev: [Int: Int] = [:], queue = [(m.x, m.y)], goal: (Int, Int)? = nil
-        prev[m.x * n + m.y] = -1
-        if max(abs(m.x - h.x), abs(m.y - h.y)) <= 1 { goal = (m.x, m.y) }
-        while goal == nil, !queue.isEmpty {
-            let (x, y) = queue.removeFirst()
-            for dx in -1...1 { for dy in -1...1 where dx != 0 || dy != 0 {
-                let nx = x + dx, ny = y + dy
-                guard prev[nx * n + ny] == nil, abs(nx - m.x) <= 2, abs(ny - m.y) <= 2, !(nx == h.x && ny == h.y),
-                      passability.canStep(from: x, y, to: nx, ny) || (x == m.x && y == m.y && passability.isFree(nx, ny)) else { continue }
-                prev[nx * n + ny] = x * n + y
-                if max(abs(nx - h.x), abs(ny - h.y)) <= 1 { goal = (nx, ny); break }
-                queue.append((nx, ny))
-            }; if goal != nil { break } }
-        }
-        var path: [(x: Int, y: Int)] = []
-        if let g = goal {
-            var k = g.0 * n + g.1
-            while k != m.x * n + m.y, let p = prev[k], p >= 0 { path.append((k / n, k % n)); k = p }
-            path.reverse()
-        }
-        charge = (i, h, path, 0)
-        if path.isEmpty { finishCharge() }
-    }
     func finishCharge() {
         guard let c = charge else { return }
         charge = nil
@@ -1452,7 +1407,7 @@ public final class GameState {
         if let end = c.path.last {
             passability.free(monsters[c.monster].x, monsters[c.monster].y)
             monsters[c.monster].x = end.x; monsters[c.monster].y = end.y
-            passability.block(end.x, end.y)
+            passability.block(end.x, end.y); passability.openTrigger(end.x, end.y, object: Int.max)
             placed = scene.relocate(p, toX: end.x, y: end.y)
             dangerCache = nil; zoneCache = [:]
         }
@@ -1478,27 +1433,24 @@ public final class GameState {
             if c.progress >= Float(c.path.count) { finishCharge() }
             return
         }
-        for h in heroes where !h.isWalking { h.knownThreats = nil }
+        runGuardChecks()
+        if charge != nil { return }
+        for h in heroes where !h.isWalking { h.walkChecked = false }
         for h in heroes where h.isWalking && h.z == level {
-            if h.knownThreats == nil {
-                // the walk is checked once as it starts (0x5439e0), against where the stacks really
-                // are: it ends a step before the guard zone of a stack the player had not seen
-                // (one that notices the hero); the rest of the route is kept to go on with
-                let known = seenMonsters()
-                h.knownThreats = known
-                if let k = h.path.firstIndex(where: { c in threat(to: h, at: c.x, c.y).map { !known.contains($0) } ?? false }) {
-                    h.plan = Array(h.path[k...]); h.path = Array(h.path[..<k]); h.target = nil
-                    if h.path.isEmpty { continue }
-                }
+            if !h.walkChecked {
+                // the mover cuts the walk as it starts (0x5439e0, GuardZones.cutWalk)
+                h.walkChecked = true; h.walkCut = false
+                cutWalk(h)
+                if h.path.isEmpty { moveEnded(h); continue }
             }
             let next = h.path[0]
             passability.relief = GameState.terrainRelief(h)
             let stepCost = passability.stepCost(from: h.x, h.y, to: next.x, next.y)
             // out of movement: stop here, keeping the rest of the route (red) to go on with later
-            if h.movement + 0.001 < stepCost { h.plan = h.path; h.path = []; continue }
+            if h.movement + 0.001 < stepCost { h.plan = h.path + h.plan; h.path = []; h.walkCut = true; moveEnded(h); continue }
             // at sea, the last step onto land is the landing
             if h.boat != nil, !passability.isWater(next.x, next.y) {
-                land(h, at: (next.x, next.y)); continue
+                land(h, at: (next.x, next.y)); moveEnded(h); continue
             }
             h.facing = Hero.facing(dx: next.x - h.x, dy: next.y - h.y)
             h.progress += dt * GameState.cellsPerSecond
@@ -1509,34 +1461,30 @@ public final class GameState {
                 h.path.removeFirst()
                 h.progress = 0
                 stepped(h, onto: h.x, h.y)
-                // stepping into a wandering stack's guard radius where it notices the hero: it falls on
-                // him and the walk ends there (unless he is on his way to fight that very stack)
-                if let i = threat(to: h, at: h.x, h.y), !(h.target.map { $0.x == monsters[i].x && $0.y == monsters[i].y } ?? false) {
-                    h.plan = h.path; h.path = []
-                    log.append("\(tables?.creature(monsters[i].creature)?.plural ?? monsters[i].creature) attack \(h.name)!")
-                    startCharge(i, at: h)
-                    continue
-                }
-
-                if h.path.isEmpty, let bt = h.boardTarget {
+                // no stack falls on the hero while he walks; the end of the move decides (0x546d50)
+                guard h.path.isEmpty else { continue }
+                defer { moveEnded(h) }
+                if h.walkCut { continue }   // cut or stopped short: what the route led to is not used
+                if let bt = h.boardTarget {
                     h.boardTarget = nil
                     if let b = boat(at: bt.0, bt.1), GameState.adjacent((h.x, h.y), bt) { board(h, b); continue }
                 }
-                if h.path.isEmpty, let f = h.tradeTarget {
+                if let f = h.tradeTarget {
                     h.tradeTarget = nil
                     if GameState.adjacent((h.x, h.y), (f.x, f.y)), heroes.contains(where: { $0 === f }) { pendingTrade = (h, f); continue }
                 }
-                if h.path.isEmpty, let e = h.attackTarget, GameState.adjacent((h.x, h.y), (e.x, e.y)) {
+                if let e = h.attackTarget, GameState.adjacent((h.x, h.y), (e.x, e.y)) {
                     h.attackTarget = nil
                     pendingHeroBattle = (h, e)
                     continue
                 }
-                if h.path.isEmpty, let t = h.target,
+                if let t = h.target,
                    let p = scene.placed.first(where: { $0.cellX == t.x && $0.cellY == t.y && $0.name == t.name }), canUse(from: (h.x, h.y), p) {
                     interact(hero: h, p)
                 }
             }
         }
+        runGuardChecks()
     }
 
     /// The scenario's outcome: true won, false lost, nil still playing.
@@ -1607,7 +1555,7 @@ public final class GameState {
     /// is taken while its cost fits what is left, otherwise the next day starts with full
     /// movement. The adventure cursors show it (their frames are 1, 2, 3 and 4+ days). nil: no way there.
     public func daysToReach(_ h: Hero, _ goal: (Int, Int)) -> Int? {
-        passability.relief = GameState.terrainRelief(h); passability.zones = seenZones(for: h)
+        preparePlanner(for: h)
         if jumpsLevel != level { refreshJumps(); jumpsLevel = level }
         guard let route = passability.path(from: (h.x, h.y), to: goal) else { return nil }
         var left = h.movement, days = 1, px = h.x, py = h.y
@@ -1621,13 +1569,19 @@ public final class GameState {
 
     /// the last cell gets the destination marker.
     public func arrows(for h: Hero) -> [(x: Int, y: Int, name: String)] {
-        passability.relief = GameState.terrainRelief(h); passability.zones = seenZones(for: h)
+        preparePlanner(for: h)
         var plan = h.plan
-        guard !plan.isEmpty else { return [] }
+        // a route of one step into an object or an army next to the hero: only the X on it
+        if plan.isEmpty {
+            if let e = h.attackTarget ?? h.tradeTarget, GameState.adjacent((h.x, h.y), (e.x, e.y)) {
+                return [(e.x, e.y, "\(seenThreat(to: h, at: e.x, e.y) != nil ? "yellow_arrow" : "green_arrow").dest")]
+            }
+            guard h.target != nil, !h.isWalking else { return [] }
+        }
         // a route to an object ends on the object itself (as in the game), though the hero stops
         // on the cell before it: the last arrow points into it and the X sits on it
 
-        if let t = h.target, let last = plan.last, let p = scene.placed.first(where: { $0.cellX == t.x && $0.cellY == t.y && $0.name == t.name }) {
+        if let t = h.target, let last = plan.last ?? (h.isWalking ? nil : (x: h.x, y: h.y)), let p = scene.placed.first(where: { $0.cellX == t.x && $0.cellY == t.y && $0.name == t.name }) {
             var cell = (x: t.x, y: t.y)
             if let c = h.targetCell, GameState.adjacent((last.x, last.y), (c.x, c.y)), passability.enters(from: last.x, last.y, to: c.x, c.y) {
                 cell = c
@@ -1649,7 +1603,7 @@ public final class GameState {
             // the step into an object is costed like any other (the exe's route ends on it)
             let stepCost = passability.stepCost(from: px, py, to: c.x, c.y)
             // green while affordable, yellow inside a wandering stack's guard radius, red beyond this turn
-            let colour = left + 0.001 < stepCost ? "red_arrow" : threat(to: h, at: c.x, c.y) != nil ? "yellow_arrow" : "green_arrow"
+            let colour = left + 0.001 < stepCost ? "red_arrow" : seenThreat(to: h, at: c.x, c.y) != nil ? "yellow_arrow" : "green_arrow"
             left -= stepCost
             if k == plan.count - 1 { out.append((c.x, c.y, "\(colour).dest")); break }
             let n = plan[k + 1]

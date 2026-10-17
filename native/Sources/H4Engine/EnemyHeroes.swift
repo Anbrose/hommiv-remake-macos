@@ -18,9 +18,14 @@ extension GameState {
         if h.z < passabilities.count { passabilities[h.z].free(h.x, h.y) }
     }
 
-    /// Walk up to an enemy army and attack it.
+    /// Walk up to an enemy army and attack it: the first click plans, a click on the army the
+    /// route leads to goes -- next to it too (0x4f5c80: its route is the one step onto it).
     func attack(_ e: Hero, with hero: Hero) {
-        if GameState.adjacent((hero.x, hero.y), (e.x, e.y)) { pendingHeroBattle = (hero, e); return }
+        if GameState.adjacent((hero.x, hero.y), (e.x, e.y)) {
+            if hero.attackTarget === e, hero.plan.isEmpty { hero.attackTarget = nil; pendingHeroBattle = (hero, e); moveEnded(hero) }
+            else { hero.plan = []; hero.attackTarget = e; hero.target = nil; hero.tradeTarget = nil }
+            return
+        }
         let cells = (-1...1).flatMap { dx in (-1...1).map { dy in (e.x + dx, e.y + dy) } }.filter { $0 != (e.x, e.y) && isVacant($0, for: hero) }
         var best: [(x: Int, y: Int)]? = nil, bestN = Int.max
         for c in cells { if let p = passability.path(from: (hero.x, hero.y), to: c), p.count < bestN { best = p; bestN = p.count } }

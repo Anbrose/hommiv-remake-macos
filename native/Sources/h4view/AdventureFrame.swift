@@ -62,11 +62,11 @@ extension Renderer {
             let stamp = g.level * 7_000_001 + g.day * 1000 + enemies + own + places
             if minimapTexture == nil || minimapStamp != stamp { minimapTexture = makeTexture(AdventureUI.minimap(game: g, size: mm.width)); minimapStamp = stamp }
             out.append(Quad(texture: minimapTexture!, x: mm.x, y: mm.y, w: mm.width, h: mm.height))
-            let n = Float(scene.map.size)
+            // the map window over the playable rectangle [0, 32n] x [0, 16n] of the exe's map pixels
+            let n = Float(scene.map.size), w = mapWindow
             let mapW = n * 32, mapH = n * 16
-            let originX: Float = n * 16 + 32, originY: Float = n * 8 + 32
-            let vx0 = (pan.x - originX) / mapW, vy0 = (pan.y - originY) / mapH
-            let vx1 = vx0 + Float(AdventureUI.mapViewportWidth) * uiScale / zoom / mapW, vy1 = vy0 + viewSize.y / zoom / mapH
+            let v0 = pan + w.min / zoom - scene.exeOrigin, v1 = pan + w.max / zoom - scene.exeOrigin
+            let vx0 = v0.x / mapW, vy0 = v0.y / mapH, vx1 = v1.x / mapW, vy1 = v1.y / mapH
             let rx0 = mm.x + Int(max(0, min(1, vx0)) * Float(mm.width)), rx1 = mm.x + Int(max(0, min(1, vx1)) * Float(mm.width))
             let ry0 = mm.y + Int(max(0, min(1, vy0)) * Float(mm.height)), ry1 = mm.y + Int(max(0, min(1, vy1)) * Float(mm.height))
             if rx1 > rx0, ry1 > ry0 {

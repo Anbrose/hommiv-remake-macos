@@ -147,7 +147,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         if inCombat || townOpen != nil { s.setAmbient([:]); return }
         guard now.timeIntervalSince(lastAmbientCheck) > 0.5 else { return }
         lastAmbientCheck = now
-        let centre = cell(at: pan + SIMD2(Float(AdventureUI.mapViewportWidth), Float(AdventureUI.height)) * uiScale / 2 / zoom)
+        let w = mapWindow, centre = cell(at: pan + (w.min + w.max) / 2 / zoom)
         var near: [(key: String, name: String, d: Float)] = []
         for p in scene.placed {
             let dx = Float(p.cellX - centre.0), dy = Float(p.cellY - centre.1)
@@ -481,11 +481,14 @@ final class Renderer: NSObject, MTKViewDelegate {
     var hover: (text: String, x: Int, y: Int)?
     var iconSheets: [String: [String: UILayer]] = [:]
 
-    /// Bring a map cell to the middle of the map viewport (as a click in the hero or town list does).
+    /// Bring a map cell to the middle of the map window (0x4f9060, as a click in the hero or town
+    /// list does): the cell's top vertex goes to the window centre (half sizes truncated), then
+    /// the scroll limits apply, so near an edge the cell is no longer centred.
     func centre(onCell c: (Int, Int)) {
-        let viewportW = ui == nil ? viewSize.x : Float(AdventureUI.mapViewportWidth) * uiScale
-        let (sx, sy) = scene.screen(x: c.0, y: c.1)
-        pan = SIMD2(Float(sx) - viewportW / 2 / zoom, Float(sy) - viewSize.y / 2 / zoom)
+        let w = mapWindow, (sx, sy) = scene.screen(x: c.0, y: c.1)
+        let half = ((w.max - w.min) / zoom / 2).rounded(.towardZero)
+        pan = SIMD2(Float(sx), Float(sy - 16)) - half - w.min / zoom
+        clampPan()
     }
     func centre(onTown i: Int) {
         guard let g = game, i < g.towns.count else { return }
@@ -1163,16 +1166,21 @@ final class Renderer: NSObject, MTKViewDelegate {
         encode(rpd: rpd, present: drawable, time: now.timeIntervalSince(start))
     }
 
-    /// Keep the map view on the map: the playable diamond of cells (y - x within n/2, x + y
-    /// within n/2 of n) is, on the canvas, the rectangle of cell centres x 16n+32...48n+32,
-    /// y 8n+32...24n+32; the view stays half a tile inside it so nothing beyond the edge shows.
+    /// The map window in drawable pixels: heroes4.exe's frame builder (0x4a8f10) makes it the
+    /// rectangle inside the outer frame pieces -- right of "Left", below "Top", left of "Right",
+    /// above "Bottom" ((8,9)-(714,756) at 1024x768); the *_Border pieces are drawn over it.
+    var mapWindow: (min: SIMD2<Float>, max: SIMD2<Float>) {
+        guard let ui, let l = frameLayer(ui, "Left"), let t = frameLayer(ui, "Top"),
+              let r = frameLayer(ui, "Right"), let b = frameLayer(ui, "Bottom") else { return (.zero, viewSize) }
+        return (SIMD2(Float(l.x + l.width), Float(t.y + t.height)) * uiScale, SIMD2(Float(r.x), Float(b.y)) * uiScale)
+    }
+
+    /// Keep the map window within heroes4.exe's scroll limits (MapScene.clampView).
     func clampPan() {
         guard ui != nil else { return }
-        let n = Float(scene.map.size)
-        let x0 = 16 * n + 64, x1 = 48 * n, y0 = 8 * n + 48, y1 = 24 * n + 16
-        let vw = Float(AdventureUI.mapViewportWidth) * uiScale / zoom, vh = viewSize.y / zoom
-        pan.x = vw >= x1 - x0 ? (x0 + x1 - vw) / 2 : min(max(pan.x, x0), x1 - vw)
-        pan.y = vh >= y1 - y0 ? (y0 + y1 - vh) / 2 : min(max(pan.y, y0), y1 - vh)
+        let w = mapWindow, origin = scene.exeOrigin
+        let v = MapScene.clampView(pan + w.min / zoom - origin, size: (w.max - w.min) / zoom, mapSize: scene.map.size)
+        pan = v + origin - w.min / zoom
     }
 
     func encode(rpd: MTLRenderPassDescriptor, present: MTLDrawable?, time: Double) {
@@ -1233,12 +1241,13 @@ final class Renderer: NSObject, MTKViewDelegate {
         let enc = cmd.makeRenderCommandEncoder(descriptor: rpd)!
         enc.setRenderPipelineState(pipeline)
         enc.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
-        // pass 1: the map, clipped to the viewport left of the panel
+        // pass 1: the map, clipped to the map window
         var cam = Camera(vw: viewSize.x, vh: viewSize.y, px: pan.x, py: pan.y, zoom: zoom, pad: 0)
         enc.setVertexBytes(&cam, length: MemoryLayout<Camera>.stride, index: 1)
-        let viewportW = ui == nil ? Int(viewSize.x) : min(Int(viewSize.x), Int(Float(AdventureUI.mapViewportWidth) * uiScale))
-        enc.setScissorRect(MTLScissorRect(x: 0, y: 0, width: max(1, viewportW), height: Int(viewSize.y)))
-        let minX = pan.x, minY = pan.y, maxX = pan.x + Float(viewportW) / zoom, maxY = pan.y + viewSize.y / zoom
+        let win = mapWindow
+        let lo = simd_clamp(win.min.rounded(.down), .zero, viewSize), hi = simd_clamp(win.max.rounded(.down), lo, viewSize)
+        enc.setScissorRect(MTLScissorRect(x: Int(lo.x), y: Int(lo.y), width: max(1, Int(hi.x - lo.x)), height: max(1, Int(hi.y - lo.y))))
+        let minX = pan.x + lo.x / zoom, minY = pan.y + lo.y / zoom, maxX = pan.x + hi.x / zoom, maxY = pan.y + hi.y / zoom
         for (i, q) in mapList.enumerated() {
             if Float(q.x + q.w) < minX || Float(q.x) > maxX || Float(q.y + q.h) < minY || Float(q.y) > maxY { continue }
             enc.setFragmentTexture(q.texture, index: 0)

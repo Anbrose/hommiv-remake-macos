@@ -147,4 +147,26 @@ final class TownClickTests: XCTestCase {
         g.towns[i].owned = false
         XCTAssertEqual(g.townRecruitRefusal(town: i, creature: "c3"), g.tables?.strings["town.buy_creatures_not_owner"])
     }
+
+    /// A purchase's fade (re/town_build_fade_spec.md): level n after n 50 ms ticks, full at 15
+    /// (750 ms) when the animation starts; the replaced building goes at the first tick.
+    func testBuildFade() {
+        XCTAssertEqual(TownView.fadeTickSeconds, 0.05)
+        XCTAssertEqual((0...20).map { TownView.fadeLevel(ticks: $0) }, Array(0...15) + [15, 15, 15, 15, 15])
+        XCTAssertTrue(TownView.replacedShown(ticks: 0))
+        XCTAssertFalse(TownView.replacedShown(ticks: 1))
+        XCTAssertFalse(TownView.animates(ticks: 14))
+        XCTAssertTrue(TownView.animates(ticks: 15))
+        // 0x592370: w = L + ((L >> 3) & 1) of 16
+        XCTAssertEqual(TownView.fadeWeight(level: 0), 0)
+        XCTAssertEqual(TownView.fadeWeight(level: 7), 7 / 16)
+        XCTAssertEqual(TownView.fadeWeight(level: 8), 9 / 16)
+        XCTAssertEqual(TownView.fadeWeight(level: 14), 15 / 16)
+        XCTAssertEqual(TownView.fadeWeight(level: 15), 1)
+        // a kept (replaced) fort is shown with the citadel until the first tick
+        let layer = UILayer(name: "x", kind: 4, x: 0, y: 0, width: 1, height: 1, bitmap: Bitmap(width: 1, height: 1))
+        let built: (Int) -> Bool = { [0, 3, 4].contains($0) }
+        XCTAssertEqual(TownView.shown(alignment: "life", built: built, layer: { _ in layer }).map { $0.id }, [0, 4])
+        XCTAssertEqual(TownView.shown(alignment: "life", built: built, layer: { _ in layer }, keep: [3]).map { $0.id }, [0, 3, 4])
+    }
 }

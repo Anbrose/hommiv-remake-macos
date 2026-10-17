@@ -17,6 +17,16 @@ public struct H4Random {
 /// (0x72bca0). The class follows the skills (0x72b670). Verified against the exe run in an
 /// emulator (9000 random heroes, identical offers and RNG state).
 extension Hero {
+    /// The hero's mage flag (+0x7d4 = 0x737ec0(class)).
+    public var isMageClass: Bool { RuleTables.mageClasses.contains(heroClass) }
+    /// The hero's combat model (0x610c00 -> 0x610fb0, names built by 0x7381a0 from "hero." 0xa4ae50, the
+    /// alignment names 0x996634, the classes fighter / archer / mage 0xa6e484 and female / male 0x989abc):
+    /// the mage model for a magic class unless the hero is of might (index 5, which has none), else the
+    /// archer model when it can shoot (has_ability 51 'ranged'), else the fighter model.
+    public func combatModel(shooter: Bool) -> String {
+        let cls = isMageClass && alignment != "might" ? "mage" : shooter ? "archer" : "fighter"
+        return "hero.\(alignment)_\(cls)_\(actor.lowercased().hasSuffix("_female") ? "female" : "male")"
+    }
     public var classKeyword: String { RuleTables.heroClasses.indices.contains(heroClass) ? RuleTables.heroClasses[heroClass].keyword : "" }
     public func skill(id: Int) -> Int { skill(RuleTables.skillIds[id]) }
     /// The exe's level of a skill: -1 unknown, 0 basic ... 4 grandmaster.

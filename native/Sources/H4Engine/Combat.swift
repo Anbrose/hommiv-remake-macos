@@ -22,6 +22,8 @@ public struct Combatant {
     public var experience: Int          // awarded per unit killed
     public var wounds = 0               // damage already taken by the front unit
     public var isHero = false
+    /// A hero's mage flag (+0x7d4): its shots are "magic" missiles, not arrows (0x72e220).
+    public var mageHero = false
     public var shooter = false          // has shots: its melee attack is halved unless it has "No Melee Penalty"
     public var noMeleePenalty = false
     public var defending = false        // Defend doubles the defense until the next turn

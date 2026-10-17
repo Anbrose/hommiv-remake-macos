@@ -818,6 +818,7 @@ public final class GameState {
     /// 0x99), +2 speed (0x92) and more hit points (0x39).
     public func heroCombatant(_ h: Hero) -> Combatant {
         var c = Combatant(hero: h.name, level: h.level, skills: h.skills)
+        c.mageHero = h.isMageClass
         c.attack += h.attackBonus; c.rangedAttack = c.rangedAttack.map { $0 + h.attackBonus }
         c.defense += h.defenseBonus
         c.speed = max(1, c.speed + h.speedBonus + (h.fountainEffects.contains("speed") ? 2 : 0))

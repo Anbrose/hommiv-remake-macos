@@ -320,7 +320,7 @@ final class CombatScreen {
         for (k, hh) in heroes.enumerated() {
             var st = g.heroCombatant(hh)
             st.morale = Battle.armyMorale(own: hh.alignment, army: army)
-            let model = "hero.\(hh.alignment)_fighter_male", fallback = "hero.\(h.alignment)_fighter_male"
+            let model = hh.combatModel(shooter: st.shooter), fallback = "hero.\(hh.alignment)_fighter_male"
             let book = Caster(hero: hh, spellPoints: g.spellPoints(hh))
             let itemMove = hh.artifactEffects.filter { $0.type == 0x05 && ($0.target == 0 || $0.target == 5) }.reduce(0) { $0 + $1.amount } / 300
             out.append(Battle.Fighter(stats: st, keyword: hh.keyword, actor: actor(model) != nil ? model : fallback, size: actor(model)?.size ?? actor(fallback)?.size ?? 4, move: max(1, 24 + itemMove), shots: st.shots, slot: k, caster: book))
@@ -401,7 +401,6 @@ final class CombatScreen {
         field = generatedField(terrain: terrain, variant: variant, seed: seed, tables: t)
         Combatant.abilityKeywords = t.abilityKeywords
         guard let f = field else { return }
-        let classActor = "hero.\(h.alignment)_fighter_male"
         // morale from each army's alignments (heroes4.exe 0x640310)
         let heroArmy: [(alignment: String, undead: Bool)] = h.members.map { ($0.alignment, false) } + h.army.compactMap { st in t.creature(st.creature).map { ($0.alignment, Combatant(creature: $0, count: 1).has("undead")) } }
         var monsterArmy: [(alignment: String, undead: Bool)] = [(c.alignment, Combatant(creature: c, count: 1).has("undead"))]

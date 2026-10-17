@@ -5,11 +5,19 @@ import H4Engine
 /// hero's army (H4ARMY) against those stacks; H4ANIMACT is a ';' list of actions played in turn on a
 /// fixed clock -- "shoot:<attacker>:<target>", "melee:<attacker>:<target>", "cast:<spell>[@x,y][:<target>[:<caster>]]",
 /// "fx:<unit>:<name>[:damage]", "tele:<unit>:x,y", "disp:<unit>:x,y", "revive:<unit>:n", "phantom:<unit>" (units by keyword, a
-/// target on the other side); H4ANIMT="0.3,0.6" the times (s) of the frames written next to the
+/// target on the other side); H4ANIMHERO="archery:2,class:3,align:chaos,sex:female" the first hero's skills, class, alignment and sex; H4ANIMT="0.3,0.6" the times (s) of the frames written next to the
 /// snapshot path as <name>_<t>.png; H4ANIMLOG prints the playback's timeline.
 func runAnimationTest(_ spec: String, game g: GameState, cs: CombatScreen, hero: Hero, out: String, renderer: Renderer, render: (String) -> Void) {
     let defenders: [(String, Int)] = spec.split(separator: ",").compactMap { p in
         let q = p.split(separator: ":"); return q.count == 2 ? Int(q[1]).map { (String(q[0]), $0) } : nil }
+    // H4ANIMHERO="archery:2,class:3,align:chaos,sex:female": the first hero's skills (by family), class (by id), alignment, sex
+    for p in (ProcessInfo.processInfo.environment["H4ANIMHERO"] ?? "").split(separator: ",") {
+        let q = p.split(separator: ":"); guard q.count == 2 else { continue }
+        if q[0] == "align" { hero.alignment = String(q[1]); continue }
+        if q[0] == "sex" { hero.actor = hero.actor.replacingOccurrences(of: "_female", with: "_male").replacingOccurrences(of: "_male", with: "_\(q[1])"); continue }
+        guard let v = Int(q[1]) else { continue }
+        if q[0] == "class" { hero.heroClass = v } else { hero.skills[String(q[0])] = v }
+    }
     cs.startTest(game: g, hero: hero, defenders: defenders)
     guard let b = cs.battle else { print("no battle"); return }
     let env = ProcessInfo.processInfo.environment

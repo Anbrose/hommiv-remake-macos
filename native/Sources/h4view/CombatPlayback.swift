@@ -358,8 +358,8 @@ extension CombatScreen {
 
     // MARK: missiles (t_move_missile 0x7a37f0)
 
-    /// The missile of a shooter (0x5efa50 / 0x656fc0; heroes 0x72e220: the mage model shoots
-    /// "magic", the others arrows); nil when it has none (a medusa's gaze lands at once).
+    /// The missile of a shooter (0x5efa50 / 0x656fc0; heroes 0x72e220: a hero of a magic class
+    /// (+0x7d4) shoots "magic", the others arrows); nil when it has none (a medusa's gaze lands at once).
     static let creatureMissiles: [String: Int] = [
         "ballista": 8, "beholder": 3, "centaur": 18, "crossbowman": 1, "elf": 1, "cyclops": 4, "gargantuan": 4,
         "venom spawn": 19, "fire elemental": 7, "halfling": 16, "mage": 12, "monk": 12, "evil sorceress": 12,
@@ -371,7 +371,7 @@ extension CombatScreen {
     /// Arced missiles (0x7a2760).
     static let arcedMissiles: Set<Int> = [1, 2, 4, 8, 16, 17, 18, 19, 20, 21]
     func missileType(_ u: Battle.Unit) -> Int? {
-        if u.stats.isHero { return u.actor.contains("_mage_") ? 12 : 1 }
+        if u.stats.isHero { return u.stats.mageHero ? 12 : 1 }
         return CombatScreen.creatureMissiles[u.keyword.lowercased()]
     }
 

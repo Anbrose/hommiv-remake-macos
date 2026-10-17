@@ -430,6 +430,9 @@ public final class RuleTables {
 
     /// A secondary skill's primary (skill ids 9... go three to each primary 0...8 in turn).
     public static func primary(of skill: Int) -> Int { skill < 9 ? skill : (skill - 9) / 3 }
+    /// The classes heroes4.exe counts as magic (the id list at 0x989a54, read by 0x737ec0 into the hero's
+    /// +0x7d4 flag when the class is set): such a hero takes the mage combat model and shoots "magic".
+    public static let mageClasses: Set<Int> = [1, 3, 5, 7, 9, 13, 14, 15, 16, 17, 18, 19, 20, 21, 26, 27, 28, 29, 31, 32, 33, 34, 35, 40, 47]
     /// The hero classes by id (heroes4.exe's class table at 0x989440): keyword, alignment and the
     /// skills it starts with (the ten base classes and barbarian) or needs (the promoted classes;
     /// archmage wants magic).

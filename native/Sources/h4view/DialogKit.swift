@@ -115,6 +115,7 @@ extension Renderer {
     /// The hot keys of the open dialog (Enter / Esc and the like); true when one took the key.
     func dialogKey(_ code: UInt16) -> Bool {
         if splitDialog != nil { return splitKey(code) }
+        if game?.skillDialog != nil, prompt == nil, game?.scripts.messages.isEmpty != false { return skillDialogKey(code) }
         if caravanUI != nil, prompt == nil { return caravanKey(code) }
         if spellBook != nil { return spellBookKey(code) }
         if thievesGuildOpen {   // the ok button's hot key is Enter (0x7d2970(0xd)); Escape closes it as well
@@ -169,6 +170,7 @@ extension Renderer {
         if puzzle != nil { return puzzleTip(x: x, y: y) }
         if thievesGuildOpen { return thievesGuildTip(x: x, y: y) }
         if game?.heroPick != nil { return heroPickTip(x: x, y: y) }
+        if game?.skillDialog != nil { return skillDialogTip(x: x, y: y) }
         return nil
     }
     var dialogOrigin800: (Int, Int) { ((AdventureUI.width - 800) / 2, (AdventureUI.height - 600) / 2) }

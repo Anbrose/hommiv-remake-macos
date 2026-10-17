@@ -501,6 +501,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// Cancel beside OK, and what OK does.
     var prompt: (text: String, cancel: Bool, ok: (() -> Void)?)?
     /// A title banner and pictures for the prompt with this text (a building's description, the treasury).
+    var promptAnchor: (x: Int, y: Int)? = nil   // the question's object box stands above this cell
     var promptDecor: (text: String, title: String?, items: [(picture: UILayer?, caption: String)])?
     /// Show a notice with OK, a title and pictures (a t_basic_dialog of the game's own).
     func showPrompt(_ text: String, title: String?, items: [(picture: UILayer?, caption: String)] = []) {
@@ -627,6 +628,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         out += splitQuads()
         out += choiceQuads()
         out += heroPickQuads()
+        out += skillDialogQuads()
         out += teleporterQuads()
         out += caravanQuads()
         out += messageBoxQuads()

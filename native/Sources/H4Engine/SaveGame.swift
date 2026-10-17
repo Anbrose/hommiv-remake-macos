@@ -75,6 +75,7 @@ public struct SaveGame: Codable {
         public var z: Int?
         public var bonuses: [Int]?          // attack, defense, speed, spell points, dream teachers, spell points now (-1 full), mana today
         public var visitedObjects: [String]?, fountainEffects: [String]?, timedEffects: [String: Int]?
+        public var universitySlots: [String: [Int]]?
         public var armyLuck: [String: Int]?, armyMorale: [String: Int]?, templeAlignment: String?
         public var spells: [Int]?
         public var owner: Int?
@@ -274,7 +275,7 @@ extension SaveGame {
         st.boat = h.boat
         st.heroless = h.heroless ? true : nil; st.listRank = h.listRank
         st.bonuses = [h.attackBonus, h.defenseBonus, h.speedBonus, h.spellPointBonus, h.dreamTeachers, h.spellPoints ?? -1, h.manaRestoredToday]
-        st.visitedObjects = Array(h.visitedObjects).sorted(); st.fountainEffects = Array(h.fountainEffects).sorted(); st.timedEffects = h.timedEffects
+        st.visitedObjects = Array(h.visitedObjects).sorted(); st.fountainEffects = Array(h.fountainEffects).sorted(); st.timedEffects = h.timedEffects; st.universitySlots = h.universitySlots.isEmpty ? nil : h.universitySlots
         st.armyLuck = h.armyLuck; st.armyMorale = h.armyMorale; st.templeAlignment = h.templeAlignment
         st.spells = Array(h.spells).sorted()
         return st
@@ -297,7 +298,7 @@ extension SaveGame {
             h.attackBonus = b[0]; h.defenseBonus = b[1]; h.speedBonus = b[2]; h.spellPointBonus = b[3]; h.dreamTeachers = b[4]
             h.spellPoints = b[5] < 0 ? nil : b[5]; h.manaRestoredToday = b[6]
         }
-        h.visitedObjects = Set(st.visitedObjects ?? []); h.fountainEffects = Set(st.fountainEffects ?? []); h.timedEffects = st.timedEffects ?? [:]
+        h.visitedObjects = Set(st.visitedObjects ?? []); h.fountainEffects = Set(st.fountainEffects ?? []); h.timedEffects = st.timedEffects ?? [:]; h.universitySlots = st.universitySlots ?? [:]
         h.armyLuck = st.armyLuck ?? [:]; h.armyMorale = st.armyMorale ?? [:]; h.templeAlignment = st.templeAlignment
         h.spells = Set(st.spells ?? [])
         h.facing = st.facing; h.movement = st.movement; h.maxMovement = st.maxMovement

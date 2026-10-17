@@ -57,7 +57,7 @@ extension Renderer {
         if let t = g.pendingTrade, adventureDialog == nil { g.pendingTrade = nil; if g.heroes.contains(where: { $0 === t.other }) { openTrade(t.hero, t.other) } }
         if g.chestOffer != nil, adventureDialog == nil { adventureDialog = .chest; chestChoice = true }   // gold is on at opening (0x5a2c00(0))
         // an object's yes/no question (a vein, the Tree of Knowledge) in the message box
-        if let q = g.question, prompt == nil { prompt = (q.text, true, q.yes); g.question = nil }
+        if let q = g.question, prompt == nil { prompt = (q.text, true, q.yes); promptAnchor = g.questionAnchor; g.question = nil; g.questionAnchor = nil }
         if let k = g.marketOpen { market = MarketState(k: k); g.marketOpen = nil }
         if let o = g.hireOpen { hire = o; g.hireOpen = nil }
         if let o = g.dwellingOpen, prompt == nil, g.scripts.messages.isEmpty { openMapRecruit(o.dwelling, o.hero); g.dwellingOpen = nil }
@@ -146,7 +146,8 @@ extension Renderer {
     struct MessageBox { var x, y, w, h: Int; var d: BasicDialog; var title: String?; var artifact: Int? }
     /// The box as t_basic_dialog lays it out: the text fitted and wrapped (font 18), the band, a
     /// title banner when the message has one, a found artifact's bare icon with its name under it,
-    /// the buttons in creation order (a question: Cancel, then OK); centred on the screen.
+    /// the buttons in creation order (a question: Cancel, then OK); above the object for an object's
+    /// own message or question, else centred on the screen.
     func messageBox() -> MessageBox? {
         guard let g = game, let text = prompt?.text ?? g.scripts.messages.first else { return nil }
         let decor = prompt != nil && promptDecor?.text == text ? promptDecor : nil
@@ -156,8 +157,25 @@ extension Renderer {
         if let a = artifact, pictures.isEmpty { items.append((artifactIcon(a), g.artifactName(a))) }
         items += pictures.map(messagePicture)
         guard let d = basicDialog(text: text, title: title, items: items, buttons: prompt?.cancel == true ? ["cancel", "ok"] : ["ok"]) else { return nil }
-        let x = max(0, (AdventureUI.width - d.W) / 2), y = max(0, (AdventureUI.height - d.H) / 2)
-        return MessageBox(x: x, y: y, w: d.W, h: d.H, d: d, title: title, artifact: artifact)
+        let anchor = prompt == nil ? g.messageAnchors[text] : promptAnchor
+        let (x, y) = anchor.map { messagePlace(above: $0, w: d.W, h: d.H) } ?? ((AdventureUI.width - d.W) / 2, (AdventureUI.height - d.H) / 2)
+        return MessageBox(x: max(0, x), y: max(0, y), w: d.W, h: d.H, d: d, title: title, artifact: artifact)
+    }
+    /// An object's box above the visiting army's cell (re/dialog_placement_spec.md): the anchor is
+    /// the cell's top vertex on screen, less the map window's (8, 9) (0x8760f0 never adds it) and
+    /// 64 more up (the remake has no terrain elevation); the box is centred across it with its
+    /// bottom edge on it (0x5595d0(x, y, size, 1, 2)), then pushed onto the screen: bottom, top,
+    /// right, left (0x721a40).
+    func messagePlace(above cell: (x: Int, y: Int), w: Int, h: Int) -> (Int, Int) {
+        let (sx, sy) = scene.screen(x: cell.x, y: cell.y)
+        let a = (SIMD2(Float(sx), Float(sy - 16)) - pan) * zoom / uiScale
+        let ax = Int(a.x.rounded(.down)) - 8, ay = Int(a.y.rounded(.down)) - 9 - 64
+        var x = ax - w / 2, y = ay - h
+        if y + h > AdventureUI.height { y = AdventureUI.height - h }
+        if y < 0 { y = 0 }
+        if x + w > AdventureUI.width { x = AdventureUI.width - w }
+        if x < 0 { x = 0 }
+        return (x, y)
     }
     /// A message's picture as one image with its caption: a skill's 52-px icon in button.frame_52
     /// (0x55c750, captioned "Basic Tactics"), a hero's 52-px portrait in control.creature_select's
@@ -248,12 +266,15 @@ extension Renderer {
             return x >= Float(r.x) && x < Float(r.x + r.w) && y >= Float(r.y) && y < Float(r.y + r.h)
         }
         if let p = prompt {   // the game's own box comes first; it stays until OK or Cancel
-            if on(okRect()) { prompt = nil; promptDecor = nil; p.ok?() } else if on(cancelRect()) { prompt = nil; promptDecor = nil }
+            if on(okRect()) { prompt = nil; promptDecor = nil; promptAnchor = nil; p.ok?() } else if on(cancelRect()) { prompt = nil; promptDecor = nil; promptAnchor = nil }
             return true
         }
         guard let g = game, !g.scripts.messages.isEmpty else { return false }
         messageItemHelp = nil
-        if let ok = okRect(), x >= Float(ok.x), x < Float(ok.x + ok.w), y >= Float(ok.y), y < Float(ok.y + ok.h) { g.scripts.messages.removeFirst() }
+        if let ok = okRect(), x >= Float(ok.x), x < Float(ok.x + ok.w), y >= Float(ok.y), y < Float(ok.y + ok.h) {
+            let t = g.scripts.messages.removeFirst()
+            if !g.scripts.messages.contains(t) { g.messageAnchors[t] = nil }
+        }
         return true
     }
 }

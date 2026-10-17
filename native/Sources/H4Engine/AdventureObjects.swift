@@ -283,7 +283,17 @@ extension GameState {
 
     /// Visit an object; false when it has no visit of its own.
     @discardableResult
+    /// A visit, its message boxes and questions anchored above the visiting army's cell (0x8760f0,
+    /// re/dialog_placement_spec.md); the dedicated dialogs and their result messages stay centred.
     func visitObject(hero: Hero, _ p: MapScene.Placed) -> Bool {
+        let cell = (hero.x, hero.y), before = scripts.messages.count, asked = question != nil, opened = skillDialog
+        let r = visitObjectBody(hero: hero, p)
+        if scripts.messages.count > before { for t in scripts.messages[before...] where messageAnchors[t] == nil { messageAnchors[t] = cell } }
+        if !asked, question != nil { questionAnchor = cell }
+        if let d = skillDialog, d !== opened { d.anchor = cell }
+        return r
+    }
+    private func visitObjectBody(hero: Hero, _ p: MapScene.Placed) -> Bool {
         guard hasVisit(p) else { return false }
         // objects that serve heroes only turn a heroless army away with their no_heroes text
         // (table.Adventure Object; army_split_spec.md §6)
@@ -519,19 +529,10 @@ extension GameState {
         let fresh = canRise.filter { !$0.visitedObjects.contains(key) }
         guard !fresh.isEmpty else { say(p, "Empty"); return }
         let (mat, each) = st.price == 0 ? (0, 2500) : (6, 5)
-        let total = each * fresh.count
-        let text = objectText(p, "Initial", ["%material": materialList([(mat, each)])]) ?? ""
-        question = (text, { [weak self] in
-            guard let self = self else { return }
-            guard self.resources[GameState.materialNames[mat], default: 0] >= total else { self.say(p, "help.rejected"); return }
-            self.resources[GameState.materialNames[mat], default: 0] -= total
-            self.sayWith(p, "Paid", ["%material": self.materialList([(mat, total)])], titled: false, pictures: fresh.map { .hero($0) })
-            for h in fresh {
-                h.visitedObjects.insert(key)
-                let lo = Hero.experienceTable[min(70, h.level)], hi = Hero.experienceTable[min(70, h.level + 1)]
-                self.giveExperience(h.experience >= lo ? hi - lo : hi - h.experience, toOnly: h)
-            }
-        })
+        let d = SkillDialog(kind: .tree(material: mat, price: each), place: p, title: objectText(p, "name") ?? "",
+                            text: objectText(p, "Initial", ["%material": materialList([(mat, each)])]) ?? "", heroes: heroes)
+        for k in heroes.indices { d.ticked[k] = skillDialogEnabled(d, k) }
+        skillDialog = d
     }
 
     /// Morale objects give the army until its next battle: their sum, and a temple +2 to stacks

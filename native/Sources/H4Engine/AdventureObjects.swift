@@ -275,7 +275,7 @@ extension GameState {
     }
     func armyHeroes(_ hero: Hero) -> [Hero] { hero.members }
     /// Object types whose no_heroes / need_hero texts refuse an army without a hero.
-    static let heroOnlyObjects: Set<String> = ["fountain", "mana_recharger", "school", "academy", "arena", "mercenary_camp",
+    static let heroOnlyObjects: Set<String> = ["fountain", "mana_recharger", "academy", "arena", "mercenary_camp",
                                                "sacred_grove", "sphinx", "training_grounds", "tree_of_knowledge"]
 
     /// Debugging: visit an object as `hero` would (no walking).
@@ -451,8 +451,7 @@ extension GameState {
     func giveExperience(_ n: Int, toOnly h: Hero) {
         h.experience += n
         if Hero.level(for: h.experience) > h.level, !levelUpQueue.contains(where: { $0 === h }) { levelUpQueue.append(h) }
-        floaters.append(("+\(n) experience", h.x, h.y))
-        nextLevelUp()
+        nextLevelUp()   // (no floating text: only a picked-up pile floats one, re/pickups_spec.md)
     }
 
     /// Mana sources restore up to 35 / 50 / 65 / 80 / 100% of the maximum, sharing one budget per
@@ -505,28 +504,33 @@ extension GameState {
         })
     }
 
-    /// The Tree of Knowledge: a level for each hero who has not been here, for 2500 gold or 5
-    /// gems each (the price fixed at the start of the game).
+    /// The Tree of Knowledge (0x475bd0): a level for each hero who has not been here and can still
+    /// rise, for 2500 gold or 5 gems each (the price rolled at the start of the game). The sound
+    /// plays first; heroes_full when no hero can rise, Empty when all have been here; `Initial`
+    /// names the price of one hero, `Paid` the total (0x476350). A level is a full level's width of
+    /// experience (0x72c420).
     func visitTree(_ hero: Hero, _ p: MapScene.Placed, _ st: ObjectState) {
         let key = objectKey(p)
         let heroes = armyHeroes(hero)
         guard !heroes.isEmpty else { say(p, "no_heroes"); return }
-        let fresh = heroes.filter { !$0.visitedObjects.contains(key) && $0.level < 70 }
+        dialogueSound(3)
+        let canRise = heroes.filter { $0.level < 70 }
+        guard !canRise.isEmpty else { say(p, "heroes_full"); return }
+        let fresh = canRise.filter { !$0.visitedObjects.contains(key) }
         guard !fresh.isEmpty else { say(p, "Empty"); return }
         let (mat, each) = st.price == 0 ? (0, 2500) : (6, 5)
         let total = each * fresh.count
-        dialogueSound(3)
-        let text = objectText(p, "Initial", ["%material": materialList([(mat, total)]), "%hero_names": fresh.map { $0.name }.joined(separator: ", ")]) ?? "Pay for a level?"
+        let text = objectText(p, "Initial", ["%material": materialList([(mat, each)])]) ?? ""
         question = (text, { [weak self] in
             guard let self = self else { return }
             guard self.resources[GameState.materialNames[mat], default: 0] >= total else { self.say(p, "help.rejected"); return }
             self.resources[GameState.materialNames[mat], default: 0] -= total
+            self.sayWith(p, "Paid", ["%material": self.materialList([(mat, total)])], titled: false, pictures: fresh.map { .hero($0) })
             for h in fresh {
                 h.visitedObjects.insert(key)
-                let need = Hero.experienceTable[min(70, h.level + 1)] - h.experience
-                if need > 0 { self.giveExperience(need, toOnly: h) }
+                let lo = Hero.experienceTable[min(70, h.level)], hi = Hero.experienceTable[min(70, h.level + 1)]
+                self.giveExperience(h.experience >= lo ? hi - lo : hi - h.experience, toOnly: h)
             }
-            self.say(p, "Paid")
         })
     }
 

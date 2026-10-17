@@ -188,6 +188,8 @@ extension Renderer {
         case .material(let m, let n):
             let name = GameState.materialNames[m]
             return (materialIcon(name, size: 32), String(format: "%+d %@", n, name.lowercased()))
+        case .spell(let sp):
+            return (spellIcon(id: sp), sp < RuleTables.spells.count ? RuleTables.spells[sp].name : "")
         case .artifact(let a, let framed):
             guard let icon = artifactIcon(a) else { return (nil, game?.artifactName(a) ?? "") }
             guard framed else { return (icon, game?.artifactName(a) ?? "") }

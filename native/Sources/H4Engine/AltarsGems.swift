@@ -28,6 +28,8 @@ public enum MessagePicture {
     case material(Int, amount: Int)
     /// An artifact: its icon captioned with its name, bare or in button.frame_52 (0x55c300).
     case artifact(Int, framed: Bool)
+    /// A spell's icon captioned with its name (0x55d350).
+    case spell(Int)
 }
 
 extension GameState {
@@ -42,7 +44,7 @@ extension GameState {
     func sayWith(_ p: MapScene.Placed, _ key: String, _ subs: [String: String] = [:], titled: Bool = true, pictures: [MessagePicture]) {
         guard let t = objectText(p, key, subs) else { return }
         scripts.messages.append(t)
-        if titled, let name = objectText(p, "name") { messageTitles[t] = name }
+        if titled, let name = objectText(p, "name", subs) { messageTitles[t] = name }
         if !pictures.isEmpty { messagePictures[t] = pictures }
     }
 }

@@ -12,10 +12,11 @@ extension Renderer {
     var resultsOrigin: (Int, Int) { ((AdventureUI.width - 798) / 2, (AdventureUI.height - 599) / 2) }
 
     /// The result code's parts (+0xfc): kind 0 fight, 1 retreat, 2 surrender, 3 gate, 8 everyone died;
-    /// the winning side (the local player is side 0).
+    /// the side the dialog shows as the winner (the local player is side 0): codes 0...3 side 1, else
+    /// side 0, so "everyone died" puts the attacker in the winner's place (0x6aa640).
     func combatOutcome(_ cs: CombatScreen, _ b: Battle) -> (kind: Int, winner: Int) {
         let alive = { (side: Int) in b.units.contains { $0.side == side && $0.alive && !$0.summoned } }
-        if !alive(0) && !alive(1) { return (8, 1) }
+        if !alive(0) && !alive(1) { return (8, 0) }
         if cs.surrendered { return (2, 1) }
         if b.retreated { return (1, 1) }
         return (0, (b.finished ?? false) ? 0 : 1)
@@ -86,20 +87,22 @@ extension Renderer {
             if let u = leader(side), let p = unitPortrait(u, size: 82), let l = layer(d, slot) { out.append(image(p, key: "p82|\(p.name)", ox + l.x, oy + l.y)) }
         }
         for n in ["Winner_Frame", "Loser_Frame"] { if let l = layer(d, n) { out.append(image(l, key: "dlg|results|\(n)", ox + l.x, oy + l.y)) } }
-        // the casualties: every stack that lost creatures (a hero that fell), as rings at hero_i_of_n
+        // the casualties (0x572f90, re/combat_results_spec.md §2): per creature type, fallen heroes one
+        // each, at most seven, as rings at hero_i_of_n
         if let sel = combat?.layers("control.creature_select"), let ring = sel["Ring_Released"] {
             for (side, slot) in [(winner, "Winner_Rings"), (1 - winner, "Loser_Rings")] {
                 guard let origin = layer(d, slot) else { continue }
-                let lost = b.units.filter { $0.side == side && !$0.summoned }.compactMap { u -> (Battle.Unit, Int)? in
-                    let n = u.stats.isHero ? (u.alive ? 0 : 1) : u.initialCount - u.stats.count
-                    return n > 0 ? (u, n) : nil
-                }.prefix(7)
-                for (k, (u, n)) in lost.enumerated() {
+                let lost = b.casualties(side: side).compactMap { c -> (Battle.Unit, Battle.Casualty)? in
+                    let u = c.hero.map { b.unit($0) } ?? b.units.first { $0.side == side && !$0.summoned && $0.keyword == c.keyword }
+                    return u.map { ($0, c) }
+                }
+                for (k, (u, c)) in lost.enumerated() {
                     guard let pos = sel["hero_\(k + 1)_of_\(lost.count)"] else { continue }
+                    let n = c.count
                     let bx = ox + origin.x + pos.x, by = oy + origin.y + pos.y
                     if let hi = sel["hero_icon"], let p = unitPortrait(u, size: 52) { out.append(image(p, key: "icon|\(p.name)", bx + hi.x - ring.x, by + hi.y - ring.y)) }
                     out.append(image(ring, key: "creature_select|Ring_Released", bx, by))
-                    if !u.stats.isHero, let inset = sel["inset"], let box = sel["inset_text"] {
+                    if c.hero == nil, let inset = sel["inset"], let box = sel["inset_text"] {
                         out.append(image(inset, key: "creature_select|inset", bx + inset.x - ring.x, by + inset.y - ring.y))
                         out += textWindow("\(n)", bx + box.x - ring.x, by + box.y - ring.y, box.width, box.height, font: proseFont(13), centre: true, colour: Renderer.insetColour)
                     }
@@ -113,15 +116,29 @@ extension Renderer {
     /// The casualty count's colour (the caller's argument [G]: dark on the light inset).
     static let insetColour: RGB = (0, 0, 0)
 
-    /// Retreat (0x632cf0 / 0x57a5b0): only heroes can retreat; to the nearest town, losing all the
-    /// troops, after "wish_to_retreat.combat" (Yes / No); refusals as OK notices.
+    /// A hero on the field, either side, wearing an artifact that forbids retreat and surrender
+    /// (0x579bd0: effect type 0x24, Shackles of War): "shackles_prevent_retreat.misc".
+    func shacklesNotice(_ cs: CombatScreen, _ b: Battle, _ g: GameState) -> String? {
+        for u in b.units where u.stats.isHero {
+            guard let h = cs.heroFor(u), let a = h.equipped.compactMap({ $0 }).first(where: { id in
+                (RuleTables.artifactEffects[id] ?? []).contains { $0.type == 0x24 } }) else { continue }
+            return text("shackles_prevent_retreat.misc", "As long as %hero_name weilds %an_artifact, neither side can retreat or surrender.")
+                .replacingOccurrences(of: "%hero_name", with: h.name).replacingOccurrences(of: "%an_artifact", with: g.artifactName(a, article: true))
+        }
+        return nil
+    }
+
+    /// Retreat (0x632cf0 / 0x57a5b0): to the nearest town, losing all the troops, after
+    /// "wish_to_retreat.combat" (Yes / No). Refusals as OK notices, in the exe's order: no town
+    /// (the precomputed reason, +0x74), Shackles of War, only heroes can retreat.
     func askRetreat() {
         guard let cs = combat, let b = cs.battle, let g = game else { return }
-        guard let h = cs.hero, b.units.contains(where: { $0.side == 0 && $0.stats.isHero && $0.alive }) else {
-            prompt = (text("no_heroes.misc", "Only heroes can retreat from combat.  To keep creatures, you must surrender instead."), false, nil); return
-        }
-        guard let town = g.retreatTown(for: h) else {
+        guard let h = cs.hero, let town = g.retreatTown(for: h) else {
             prompt = (text("no_town_after_retreat.combat", "You must have a town to retreat."), false, nil); return
+        }
+        if let s = shacklesNotice(cs, b, g) { prompt = (s, false, nil); return }
+        guard b.units.contains(where: { $0.side == 0 && $0.stats.isHero && $0.alive }) else {
+            prompt = (text("no_heroes.misc", "Only heroes can retreat from combat.  To keep creatures, you must surrender instead."), false, nil); return
         }
         cs.retreatTown = town
         let q = text("wish_to_retreat.combat", "Are you sure you want to retreat to %town_name?  You will lose all your troops!")
@@ -129,19 +146,21 @@ extension Renderer {
         prompt = (q, true, { [weak self] in b.retreat(); self?.combat?.pump() })
     }
 
-    /// Surrender (0x632e80 / 0x57b1f0): neutral armies take none ("no_surrender_to_neutral.misc");
-    /// else "wish_to_surrender.combat" at the army's cost, "insufficient_gold.combat" when it is
-    /// more than the treasury, "no_town_after_surrender.combat" without a town.
+    /// Surrender (0x632e80 / 0x57b1f0): neutral armies take none ("no_surrender_to_neutral.misc"),
+    /// no town ("no_town_after_surrender.combat"), Shackles of War, then the price (0x5798c0, Battle.
+    /// surrenderCost) against the treasury ("insufficient_gold.combat"), else "wish_to_surrender.combat".
+    /// Paying (0x579a30) moves the gold to the enemy's owner (0x7e3dd0); the army keeps its survivors.
     func askSurrender() {
         guard let cs = combat, let b = cs.battle, let g = game else { return }
-        guard cs.enemy != nil, let h = cs.hero else {
+        guard let e = cs.enemy, let h = cs.hero else {
             prompt = (text("no_surrender_to_neutral.misc", "The enemy shows no interest in allowing you to surrender."), false, nil); return
         }
         guard let town = g.retreatTown(for: h) else {
             prompt = (text("no_town_after_surrender.combat", "You do not have a town to return to, so you cannot surrender."), false, nil); return
         }
-        // the cost: what the surviving creatures would cost to hire [G]
-        let cost = b.units.filter { $0.side == 0 && $0.alive && !$0.stats.isHero && !$0.summoned }.reduce(0) { $0 + $1.stats.count * (g.tables?.creature($1.keyword)?.gold ?? 0) }
+        if let s = shacklesNotice(cs, b, g) { prompt = (s, false, nil); return }
+        let heroes = b.units.filter { $0.side == 0 && $0.stats.isHero && !$0.summoned }.compactMap { cs.heroFor($0) }
+        let cost = b.surrenderCost(side: 0, heroes: heroes) { g.tables?.creature($0)?.gold ?? 0 }
         guard g.resources["Gold", default: 0] >= cost else {
             prompt = (text("insufficient_gold.combat", "You don't have enough gold to surrender."), false, nil); return
         }
@@ -149,7 +168,7 @@ extension Renderer {
         let q = text("wish_to_surrender.combat", "Do you wish to surrender at a cost of %surrender_cost gold?  Any heroes and creatures will return to %town_name.")
             .replacingOccurrences(of: "%surrender_cost", with: "\(cost)").replacingOccurrences(of: "%town_name", with: g.towns[town].name)
         prompt = (q, true, { [weak self] in
-            g.resources["Gold", default: 0] -= cost
+            g.paySurrender(cost, to: e.owner)
             cs.surrendered = true
             b.retreat(); self?.combat?.pump()
         })

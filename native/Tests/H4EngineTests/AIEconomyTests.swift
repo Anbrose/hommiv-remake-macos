@@ -68,17 +68,23 @@ final class AIEconomyTests: XCTestCase {
 
     // MARK: on a real map when the game is installed
 
+    /// The archives, tables and map are read once; each test gets a fresh game on them.
+    static var cached: (H4Archive, RuleTables, MapFile, TransitionMasks)?
     static func loadGame() throws -> GameState {
         let data = URL(fileURLWithPath: NSHomeDirectory() + "/Games/HoMM4/prefix/drive_c/Games/HoMM4/Data")
         let mapURL = data.deletingLastPathComponent().appendingPathComponent("Maps/A Land without a King.h4c")
         guard FileManager.default.fileExists(atPath: mapURL.path) else { throw XCTSkip("game data not installed") }
-        let archive = try H4Archive(url: data.appendingPathComponent("heroes4.h4r"))
-        for f in ["x2.h4r", "storm.h4r", "updates.h4r"] { if let a = try? H4Archive(url: data.appendingPathComponent(f)) { archive.supplement(with: a) } }
-        let tables = try RuleTables(archive: H4Archive(url: data.appendingPathComponent("text.h4r")))
+        if cached == nil {
+            let archive = try H4Archive(url: data.appendingPathComponent("heroes4.h4r"))
+            for f in ["x2.h4r", "storm.h4r", "updates.h4r"] { if let a = try? H4Archive(url: data.appendingPathComponent(f)) { archive.supplement(with: a) } }
+            let tables = try RuleTables(archive: H4Archive(url: data.appendingPathComponent("text.h4r")))
+            let names = Set(archive.names(prefix: "adv_object.").map { String($0.dropFirst("adv_object.".count).dropLast(4)) })
+            let map = try MapFile(data: Data(contentsOf: mapURL), objectNames: names)
+            let masks = try TransitionMasks(data: archive.payload("transition.Transitions.h4d"))
+            cached = (archive, tables, map, masks)
+        }
+        let (archive, tables, map, masks) = cached!
         RandomResolver.creaturePool = (1...4).map { lv in tables.creatures.filter { $0.level == lv && $0.expansion == 0 }.map { $0.keyword } }
-        let names = Set(archive.names(prefix: "adv_object.").map { String($0.dropFirst("adv_object.".count).dropLast(4)) })
-        let map = try MapFile(data: Data(contentsOf: mapURL), objectNames: names)
-        let masks = try TransitionMasks(data: archive.payload("transition.Transitions.h4d"))
         let scene = try MapScene(map: map, level: 0, archive: archive, masks: masks)
         let g = GameState(map: map, level: 0, scenes: [scene])
         g.tables = tables
@@ -189,5 +195,50 @@ final class AIEconomyTests: XCTestCase {
         let g = try AIEconomyTests.loadGame()
         XCTAssertEqual(g.costValue([1000, 5, 0, 1, 0, 0, 0], [1, 125, 125, 250, 250, 250, 250]), 1000 + 625 + 250)
         XCTAssertEqual(g.costValue([3, 0, 0, 0, 0, 0, 0], [1.5, 1, 1, 1, 1, 1, 1]), 4)   // truncated
+    }
+
+    func testStartOfTurnPlanFillsAnEmptyGarrisonFromTheBudget() throws {
+        let g = try AIEconomyTests.loadGame()
+        let ai = g.map.humanColour == 1 ? 2 : 1
+        guard let (i, c) = computerTown(g, colour: ai), let def = g.tables?.creature(c) else { throw XCTSkip("no town") }
+        for k in g.towns.indices where k != i && g.towns[k].owner == ai { g.towns[k].owner = nil }
+        g.enemyHeroes.filter { $0.owner == ai }.forEach { g.removeEnemy($0) }
+        g.aiResources[ai] = ["Gold": 5 * def.gold + 1, "Wood": 10, "Ore": 10, "Crystal": 5, "Sulfur": 5, "Mercury": 5, "Gems": 5]
+        g.acting(as: ai) {
+            g.aiComputeWeights(ai)
+            g.aiComputeBudget(ai, withIncome: false)
+            // no reserve options can be bought in full, so the budget is what the reserve leaves
+            g.aiBudget[ai] = g.funds()
+            g.aiTownPlans(ai)
+        }
+        let total = g.towns[i].garrison.reduce(0) { $0 + $1.count }
+        XCTAssertGreaterThan(total, 0)
+        XCTAssertTrue(g.towns[i].garrisonHeroes.isEmpty)          // no hero at the start of the turn
+        XCTAssertGreaterThanOrEqual(g.aiResources[ai]?["Gold"] ?? -1, 1)   // strict: the budget is never spent to 0
+    }
+
+    func testGreedyPrefersValuePerCost() throws {
+        let g = try AIEconomyTests.loadGame()
+        guard let (i, c) = computerTown(g) else { throw XCTSkip("no town") }
+        let p = AIPurchaser(slots: Array(repeating: nil, count: 7), second: nil, money: [1_000_000, 100, 100, 100, 100, 100, 100], noBuilding: true)
+        p.options = g.aiPurchaseOptions(i, discount: 0, includeBuildable: false)
+        XCTAssertTrue(p.options.contains { $0.creature == c })
+        g.aiRunPurchase(p, weights: GameState.goldEquivalent)
+        // everything that waits is bought (money is plenty), each creature in one stack
+        XCTAssertEqual(p.bought[c], 30)
+        let kinds = p.slots.compactMap { $0?.stack?.creature }
+        XCTAssertEqual(Set(kinds).count, kinds.count)
+    }
+
+    func testComputerTurnsRunForAWeek() throws {
+        let g = try AIEconomyTests.loadGame()
+        g.quickCombatOnly = true
+        g.setupTreasuries()
+        for _ in 0..<8 {
+            g.endTurn()
+            g.pendingHeroBattle = nil; g.aiAttacking = false
+            for (_, r) in g.aiResources { for (_, v) in r { XCTAssertGreaterThanOrEqual(v, 0) } }
+        }
+        for c in g.aiPlayers { XCTAssertLessThanOrEqual(g.enemyHeroes.filter { $0.owner == c }.count, 4) }
     }
 }

@@ -34,51 +34,35 @@ extension GameState {
         return out
     }
 
-    /// One computer player's day.
+    /// One computer player's day, in do_turn's order (0x47b720): the start of the turn (resource
+    /// weights, the budget without income, the hero count, the town plans), the moves (each garrison
+    /// buying -- creatures, a building, a hero -- as it leaves its town), the emergency defence of
+    /// threatened towns, the reserve and budget with tomorrow's income, the buildings, the caravans.
     func aiTurn(_ colour: Int) {
         for k in passabilities.indices { passabilities[k].forcedExit = [:] }   // (the player's view of guard zones is not the computer's)
         acting(as: colour) {
-            // income: its towns' halls, its mines
-            for t in towns where t.owner == colour { resources["Gold", default: 0] += hallIncome(t) }
-            for m in mines where m.owner == colour { resources[m.resource, default: 0] += m.amount }
-            // towns: build what it can, hire what it can afford into the garrison
-            for i in towns.indices where towns[i].owner == colour {
-                if let t = tables {
-                    let options = t.buildings(for: towns[i].alignment).filter { canBuild($0, in: towns[i]) }
-                    // dwellings first, the higher the better, then the rest by cost
-                    if let b = options.max(by: { a, b in (a.creature != nil ? 10000 : 0) + a.cost["Gold", default: 0] < (b.creature != nil ? 10000 : 0) + b.cost["Gold", default: 0] }) {
-                        build(b, in: i)
-                    }
-                    for (c, n) in towns[i].available.sorted(by: { (t.creature($0.key)?.level ?? 0) > (t.creature($1.key)?.level ?? 0) }) where n > 0 {
-                        guard let d = t.creature(c), d.gold > 0 else { continue }
-                        let k = min(n, resources["Gold", default: 0] / d.gold)
-                        guard k > 0 else { continue }
-                        if let g = towns[i].garrison.firstIndex(where: { $0.creature == c }) { towns[i].garrison[g].count += k }
-                        else if towns[i].garrison.count < 7 { towns[i].garrison.append(Hero.Stack(creature: c, count: k)) } else { continue }
-                        towns[i].available[c, default: 0] -= k
-                        resources["Gold", default: 0] -= k * d.gold
-                    }
-                }
-            }
-            // a player with towns and no hero hires one at its first town (2500 gold)
-            if !enemyHeroes.contains(where: { $0.owner == colour }), resources["Gold", default: 0] >= 2500,
-               let t = towns.first(where: { $0.owner == colour }), let p = scenes[t.z].placed.first(where: { $0.category == "castle" && $0.cellX == t.x && $0.cellY == t.y }) {
-                let back = level; level = t.z
-                if let cell = gateCells(p).first(where: { passability.isFree($0.0, $0.1) && enemyAt($0.0, $0.1) == nil }) {
-                    var mh = MapHero(); mh.level = 1
-                    let e = Hero.fromMap(mh, alignment: t.alignment, x: cell.0, y: cell.1, tables: tables, random: &random)
-                    e.owner = colour; e.z = t.z; e.home = cell
-                    resources["Gold", default: 0] -= 2500
-                    place(enemy: e)
-                }
-                level = back
-            }
-            // heroes
+            // start_turn 0x47bd10 -> 0x7e2ee0, 0x47bfb0, 0x47c170
+            aiComputeWeights(colour)
+            aiComputeBudget(colour, withIncome: false)
+            let heroCount = aiHeroCount(colour)
+            aiTownPlans(colour)
+            // the move loop (0x47d0b0 / 0x47d340): the armies, then the garrisons that walk out
             for h in enemyHeroes where h.owner == colour {
                 h.maxMovement = armyMovement(h); h.movement = h.maxMovement
                 aiMove(h)
             }
+            for h in aiGarrisonDepartures(colour, heroCount: heroCount) where pendingHeroBattle == nil { aiMove(h) }
+            aiDefendTowns(colour)                        // 0x47c5e0
+            aiComputeBudget(colour, withIncome: true)    // 0x7e3440(day + 1)
+            aiBuild(colour)                              // 0x482c90
+            aiCaravanHook(colour)                        // 0x4838e0
         }
+    }
+
+    /// CARAVAN HOOK (0x4838e0, every 5th day): the computer's dwelling caravans live on the
+    /// `caravans` branch (Caravans.swift `aiCaravans`); wire it here after that branch is merged.
+    func aiCaravanHook(_ colour: Int) {
+        // TODO(caravans merge): `aiCaravans(colour)`
     }
 
     /// A computer hero's moves for the day: the best target by value per day of travel, walked

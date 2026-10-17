@@ -45,6 +45,8 @@ public struct SaveGame: Codable {
     /// town, origin name, id) and the next id.
     public var caravans: [CaravanState]? = nil
     public var nextCaravanId: Int? = nil
+    /// A cheat code was used (game +0xe0).
+    public var cheated: Bool? = nil
 
     public struct SlotState: Codable { public var stack: Stack?; public var hero: HeroState? }
     public struct CaravanState: Codable {
@@ -166,6 +168,7 @@ extension GameState {
                                       sl.map { SaveGame.SlotState(stack: $0.stack.map { .init(creature: $0.creature, count: $0.count) }, hero: $0.hero.map { SaveGame.state(of: $0) }) } })
         }
         s.nextCaravanId = nextCaravanId
+        s.cheated = cheated ? true : nil
         return s
     }
 
@@ -223,6 +226,7 @@ extension GameState {
             scripts.townEvents[t] = evs
         }
         outcome = s.outcome; victoryDays = s.victoryDays
+        cheated = s.cheated ?? false
         if let c = s.monthCreature { monthCreature = c }
         if let c = s.nextMonthCreature { nextMonthCreature = c }
         if let r = s.monthSpawns { monthSpawns = r }

@@ -10,7 +10,10 @@ public final class Battle {
         public let side: Int                  // 0 attacker (bottom-left), 1 defender (top-right)
         public var stats: Combatant
         public let keyword: String            // creature keyword (icons), or the hero's keyword
-        public let actor: String              // "Squire" / "hero.life_fighter_male"
+        public var actor: String              // "Squire" / "hero.life_fighter_male"
+        /// The cheat models (combat creature +0xa2c, Cheats.swift): 1 hero.tattooed_white_trash,
+        /// 2 hero.jack (whose missile is the boulder, 0x5efa50).
+        public var modelOverride = 0
         public let size: Int                  // footprint in cells (combat_actor byte 2)
         public var move: Int                  // cells per turn (the creature's Move)
         public var shots: Int

@@ -347,6 +347,7 @@ if let out = snapshot {
     renderer.combat = combatScreen
     renderer.movies = movies
     if let m = ProcessInfo.processInfo.environment["H4SAVEDIALOG"] { renderer.openSaveDialog(m == "load" ? .load : .save) }   // snapshot the save / load dialog
+    if let t = ProcessInfo.processInfo.environment["H4CHEAT"] { renderer.openCheatBox(text: t) }   // snapshot: the Tab box with this text
     if let m = ProcessInfo.processInfo.environment["H4MENU"] { if m == "game" { renderer.openGameMenu() } else if m == "info" { Renderer.scenarioInfoOpen = true } else { renderer.openSystemMenu() } }   // snapshot the system menu (game: the game menu, info: scenario information)
     // --walk snapshots resolve fights at once (H4WALKBATTLE=1: the battle waits, the map shows the meeting)
     if walk != nil, ProcessInfo.processInfo.environment["H4WALKBATTLE"] == nil { game.quickCombatOnly = true }
@@ -759,6 +760,7 @@ final class MapView: MTKView {
         let p = convert(e.locationInWindow, from: nil)
         let scale = Float(window?.backingScaleFactor ?? 1)
         renderer.pressSound(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale)
+        if renderer.cheatBoxClick(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale) { return }
         if armySession != nil { renderer.armyScreenPress(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale); return }
         if renderer.caravanUI != nil { renderer.caravanPress(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale); return }
         if renderer.townOpen != nil { renderer.townPress(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale) }
@@ -968,6 +970,7 @@ final class MapView: MTKView {
         renderer.zoom = z
     }
     override func keyDown(with e: NSEvent) {
+        if renderer.cheatBoxKey(e) { return }   // Tab opens the cheat box; while it is active it takes the keys
         if renderer.saveDialogKey(e) { return }
         if renderer.armyScreenKey(e.keyCode, chars: e.charactersIgnoringModifiers ?? "") { return }   // the army screen: S split, Enter / Esc done
         if renderer.dialogKey(e.keyCode) { return }   // the spell book's and the object dialogs' hot keys

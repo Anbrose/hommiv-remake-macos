@@ -371,6 +371,7 @@ extension CombatScreen {
     /// Arced missiles (0x7a2760).
     static let arcedMissiles: Set<Int> = [1, 2, 4, 8, 16, 17, 18, 19, 20, 21]
     func missileType(_ u: Battle.Unit) -> Int? {
+        if u.modelOverride == 2 { return 4 }   // hero.jack (nwcOldMan) throws the boulder (0x5efa50)
         if u.stats.isHero { return u.stats.mageHero ? 12 : 1 }
         return CombatScreen.creatureMissiles[u.keyword.lowercased()]
     }

@@ -165,13 +165,14 @@ extension GameState {
                 consider(Float(dwellings[i].available * (tables?.creature(dwellings[i].creature)?.gold ?? 0)) / 2, at: (p.cellX, p.cellY), stand: cells) { [weak self] in self?.aiUse(h, p) }
             }
         }
-        // the player's armies it is stronger than
-        for ph in heroes where ph.z == h.z {
+        // the player's armies it is stronger than (under Auto Play, the human's armies go for the computers')
+        let human = heroes.contains { $0 === h }
+        for ph in (human ? enemyHeroes : heroes) where ph.z == h.z && ph.owner != h.owner {
             let theirs = strength(ph)
             let stand = (-1...1).flatMap { dx in (-1...1).map { (ph.x + dx, ph.y + $0) } }.filter { $0 != (ph.x, ph.y) }
             consider(4000 + theirs / 10, at: (ph.x, ph.y), stand: stand,
                      if: { [unowned self] in predictWin(ourArmy, owner: h.owner, against: combatants(of: ph), owner: ph.owner, seed: day * 17 + ph.x) }) { [weak self] in
-                self?.pendingHeroBattle = (ph, h); self?.aiAttacking = true
+                if human { self?.pendingHeroBattle = (h, ph) } else { self?.pendingHeroBattle = (ph, h); self?.aiAttacking = true }
                 self?.log.append("\(h.name) attacks \(ph.name)!")
             }
         }
@@ -189,12 +190,13 @@ extension GameState {
             let r = QuickCombat.fight(attackers: combatants(of: h), defenders: defenders, seed: day * 31 + i)
             h.army = r.attackers.filter { $0.alive && !$0.isHero }.map { s in Hero.Stack(creature: t?.creatures.first { $0.name == s.name }?.keyword ?? s.name, count: s.count) }
             towns[i].garrison = r.defenders.filter { $0.alive }.map { s in Hero.Stack(creature: t?.creatures.first { $0.name == s.name }?.keyword ?? s.name, count: s.count) }
+            let human = heroes.contains { $0 === h }   // Auto Play: one of the human's armies
             if r.attackerWon {
                 let lost = towns[i].owned
-                towns[i].owner = h.owner; towns[i].owned = false; towns[i].garrison = []
+                towns[i].owner = h.owner; towns[i].owned = human; towns[i].garrison = []
                 caravansAtCapture(town: i, newOwner: h.owner)
                 if lost { log.append(text("town_lost_town.misc", "The enemy has taken the town of %town_name.").replacingOccurrences(of: "%town_name", with: towns[i].name)) }
-            } else { removeEnemy(h) }
+            } else if human { heroes.removeAll { $0 === h } } else { removeEnemy(h) }
             return
         }
         interact(hero: h, p)

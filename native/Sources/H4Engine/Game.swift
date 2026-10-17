@@ -438,6 +438,11 @@ public final class GameState {
     public var fog: [[UInt8]] = []
     public var fogLevel: [[Int8]] = []
     public var fogEnabled = true
+    /// A cheat code was used (heroes4.exe game +0xe0, Cheats.swift): a victory's high score is "Cheater".
+    public var cheated = false
+    /// Auto Play (nwcGoSolo, global 0xac1178): the computer plays the human's turns while on;
+    /// `autoPlayPending`: the turn to end and play next.
+    public var autoPlay = false, autoPlayPending = false
     /// The shroud changed (the view redraws it).
     public var visionChanged = false
     /// The planner's gateway edges and which object each approach cell leads through.

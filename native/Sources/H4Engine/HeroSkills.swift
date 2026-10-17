@@ -216,24 +216,44 @@ extension Hero {
     /// classes), the class skills at basic unless the map gives skills, then one automatic
     /// level-up per level to the map's level, then the class the skills make.
     public static func fromMap(_ m: MapHero, alignment: String, x: Int, y: Int, tables: RuleTables?, random rng: inout H4Random) -> Hero {
+        // the table.heroes row of the map's portrait id: its class and gender stand in for random ones
+        // (0x7315d0 applies the row's class +0x14 and gender +0x18)
+        let all = tables?.heroes ?? []
+        let portraitRow = RuleTables.heroPortraits.indices.contains(m.portrait) ? all.first { $0.portrait == m.portrait } : nil
         var cls = m.heroClass
+        if !RuleTables.heroClasses.indices.contains(cls), let r = portraitRow, let c = RuleTables.heroClasses.firstIndex(where: { $0.keyword == r.heroClass }) { cls = c }
         if !RuleTables.heroClasses.indices.contains(cls) {
             let base = (0..<11).filter { RuleTables.heroClasses[$0].alignment == alignment }
             cls = base.isEmpty ? 10 : base[rng.next() % base.count]
         }
         let def = RuleTables.heroClasses[cls]
-        let gender = m.gender == 0 || m.gender == 1 ? m.gender : rng.next() % 2
+        let gender = m.gender == 0 || m.gender == 1 ? m.gender : portraitRow.map { $0.sex == "female" ? 1 : 0 } ?? rng.next() % 2
         // the adventure model: the class's alignment, might for the fighting base classes
         let model = ["life", "order", "death", "chaos", "nature"].contains(def.alignment) ? def.alignment : "might"
         let might = model == "might" || [0, 2, 4, 6, 8].contains(cls) || def.skills.contains { $0 < 4 }
         let h = Hero(actor: "hero.\(model)_\(might ? "might" : "magic")_\(gender == 1 ? "female" : "male")", x: x, y: y, movement: Hero.baseMovement)
         h.heroClass = cls
         h.alignment = model == "might" ? (def.alignment == "might" ? "might" : alignment) : model
-        // portrait and name: the map's (a row of table.heroes), else a hero of the class
-        let all = tables?.heroes ?? []
-        let pool = all.filter { $0.heroClass == def.keyword && $0.sex == (gender == 1 ? "female" : "male") }
-        let pick = all.indices.contains(m.portrait) ? all[m.portrait] : pool.isEmpty ? nil : pool[rng.next() % pool.count]
-        h.keyword = pick?.keyword ?? ""
+        // portrait and name (0x730990): the map's portrait id (RuleTables.heroPortraits) and the
+        // table.heroes row of that portrait; no portrait (-1): a row of the class and gender with a
+        // portrait, allowed at random (0x731260 -> pool 0x6681e0)
+        let pick: HeroDef?
+        if RuleTables.heroPortraits.indices.contains(m.portrait) {
+            pick = portraitRow
+            h.keyword = pick?.keyword ?? RuleTables.heroPortraits[m.portrait].keyword
+        } else {
+            let sex = gender == 1 ? "female" : "male"
+            var pool = all.filter { $0.heroClass == def.keyword && $0.sex == sex && $0.portrait != nil && $0.allowedByDefault }
+            if pool.isEmpty {
+                // a promoted class has no rows (the game's pool would be empty: maps give random-portrait
+                // heroes base classes); the remake takes its alignment's base classes' rows instead
+                let a = def.alignment == "none" ? alignment : def.alignment
+                let base = Set((0..<11).filter { RuleTables.heroClasses[$0].alignment == a || a == "none" }.map { RuleTables.heroClasses[$0].keyword })
+                pool = all.filter { base.contains($0.heroClass) && $0.sex == sex && $0.portrait != nil && $0.allowedByDefault }
+            }
+            pick = pool.isEmpty ? nil : pool[rng.next() % pool.count]
+            h.keyword = pick?.keyword ?? ""
+        }
         h.name = m.name.isEmpty ? (pick?.name ?? "Hero") : m.name
         if let s = m.skills, s.contains(where: { $0 >= 0 }) {
             for (i, v) in s.enumerated() where v >= 0 && i < 36 { h.setLv(i, v) }

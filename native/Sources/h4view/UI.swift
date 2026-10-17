@@ -18,22 +18,14 @@ final class AdventureUI {
     let resourceNames = ["Wood", "Ore", "Mercury", "Sulfur", "Crystal", "Gems", "Gold"]
 
     let archive: H4Archive
-    var portraitSheets: [String: LayerFile] = [:]
+    /// Hero portraits, resolved in the game's archive order (main.swift sets the merged
+    /// H4Archive.gameResources; this archive alone until then).
+    lazy var heroPortraits = HeroPortraits(resources: archive)
 
-    /// A hero's portrait (52 or 82 px), from layers.icons.hero.<alignment>.<size> keyed by the hero's keyword.
+    /// A hero's portrait (52 or 82 px): its keyword's portrait id (RuleTables.heroPortraits) in
+    /// that portrait's alignment sheet; the alignment only places a keyword outside the table.
     func portrait(keyword: String, alignment: String, size: Int = 52) -> UILayer? {
-        let key = "\(alignment).\(size)"
-        if portraitSheets[key] == nil, let d = try? archive.payload("layers.icons.hero.\(alignment).\(size).h4d"), let f = try? LayerFile(data: d) {
-            portraitSheets[key] = f
-        }
-        if let l = portraitSheets[key]?[keyword.lowercased()] { return l }
-        // a hero of another alignment's sheet (a promoted class, or a map's chosen portrait)
-        for a in ["life", "order", "death", "chaos", "nature", "might"] where a != alignment {
-            let k = "\(a).\(size)"
-            if portraitSheets[k] == nil, let d = try? archive.payload("layers.icons.hero.\(a).\(size).h4d"), let f = try? LayerFile(data: d) { portraitSheets[k] = f }
-            if let l = portraitSheets[k]?[keyword.lowercased()] { return l }
-        }
-        return nil
+        heroPortraits.image(keyword: keyword, alignment: alignment, size: size)
     }
 
     /// Where the hero list's round slots are on the panel (centres, top to bottom).

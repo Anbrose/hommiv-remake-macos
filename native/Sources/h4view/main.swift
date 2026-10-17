@@ -318,7 +318,7 @@ var townScreen: TownScreen? = nil
 var combatScreen: CombatScreen? = nil
 do { ui = try AdventureUI(archive: archive, index: resolver)
     let dataDir = URL(fileURLWithPath: args[1]).deletingLastPathComponent()
-    ui?.overlays = ["x2.h4r", "updates.h4r"].compactMap { try? H4Archive(url: dataDir.appendingPathComponent($0)) }; townScreen = try TownScreen(archive: archive); combatScreen = try CombatScreen(archive: archive); lap("ui loaded") } catch { print("no UI: \(error)") }
+    ui?.overlays = ["x2.h4r", "updates.h4r"].compactMap { try? H4Archive(url: dataDir.appendingPathComponent($0)) }; if let r = H4Archive.gameResources(dataDirectory: dataDir) { ui?.heroPortraits = HeroPortraits(resources: r) }; townScreen = try TownScreen(archive: archive); combatScreen = try CombatScreen(archive: archive); lap("ui loaded") } catch { print("no UI: \(error)") }
 if let cs = combatScreen, let updates = try? H4Archive(url: URL(fileURLWithPath: args[1]).deletingLastPathComponent().appendingPathComponent("updates.h4r")),
    let d = try? updates.payload("table.combat_grid_colors.h4d") { cs.gridColors = GridColors(data: d) }
 

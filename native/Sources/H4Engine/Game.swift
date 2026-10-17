@@ -1080,6 +1080,12 @@ public final class GameState {
                     }
                 }
                 town.allowed = settings?.allowed.map { RuleTables.buildings($0, alignment: faction) }
+                // the garrison's heroes the editor placed
+                for mh in settings?.garrisonHeroes ?? [] {
+                    let h = Hero.fromMap(mh, alignment: faction, x: p.cellX, y: p.cellY, tables: tables, random: &random)
+                    h.owner = settings?.owner ?? h.owner; h.z = level
+                    town.garrisonHeroes.append(h)
+                }
                 if let t = tables {
                     for b in t.buildings(for: faction) where town.buildings.contains(b.keyword) {
                         if let c = b.creature, let def = t.creature(c) { town.available[c] = def.growth }

@@ -78,6 +78,22 @@ extension Hero {
         guard let r = equipped[13].map(RuleTables.artifactBase), r < RuleTables.artifactIds.count else { return false }
         return tables?.artifacts[RuleTables.artifactIds[r]]?.slot.lowercased() == "both hands"
     }
+    /// Put an artifact on where it fits, if that slot is free (0x72a4f0, re/auto_equip_spec.md §3):
+    /// the slot of its type; a ring the right ring, else the left; miscellany the first free of
+    /// slots 4..7; two-handed ones the right hand with both hands free; the left hand not beside a
+    /// two-handed weapon. Potions, backpack items and "invalid" ones are never put on, and a
+    /// parchment put on this way is not read (only a drop on the doll reads it, 0x7263a0).
+    @discardableResult
+    public func autoEquip(_ id: Int, tables: RuleTables?) -> Bool {
+        guard let s = slot(for: id, tables: tables) else { return false }
+        equipped[s] = id
+        return true
+    }
+    /// An artifact reaches this hero (vtable+4 with "equip" set, 0x72a6f0): worn when its slot is
+    /// free (0x72a4f0), else appended to the backpack (0x652850).
+    public func receive(_ id: Int, tables: RuleTables?) {
+        if !autoEquip(id, tables: tables) { backpack.append(id) }
+    }
     /// Put on a backpack item (index), if it has a free slot.
     @discardableResult
     public func equip(backpackIndex i: Int, tables: RuleTables?) -> Bool {

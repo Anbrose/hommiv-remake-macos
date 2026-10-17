@@ -8,7 +8,7 @@ var heldHelp: (text: String, cx: Int, y: Int)?
 /// right-click texts, a parchment's message.
 extension Renderer {
     /// The artifact in hand is let go at a point (0x8d1c00): a worn slot or backpack place of the
-    /// shown hero (0x5370f0), an army ring holding a hero (0x6430bb: into its backpack), or
+    /// shown hero (0x5370f0), an army ring holding a hero (0x6430bb: put on where it fits, else its backpack), or
     /// nothing / a refusal -- then it goes back where it came from (0x706960).
     func artifactDrop(_ s: ArmySession, _ d: ArtifactDrag, x: Float, y: Float) {
         let tables = game?.tables
@@ -18,7 +18,7 @@ extension Renderer {
             if let p = heroArtifactPlace(h, dl, ox, oy, x: x, y: y) { note = ArtifactRules.drop(d, on: p, tables: tables).note }
         }
         if !d.consumed, let r = armyRing(s, at: x, y), let slot = sessionRows(s)[r.row][r.k], let h = slot.hero {
-            ArtifactRules.drop(d, onto: h)
+            ArtifactRules.drop(d, onto: h, tables: tables)
         }
         // (a creature's ring would take it into the creatures' backpack; the remake's stacks have none)
         ArtifactRules.cancel(d, tables: tables)

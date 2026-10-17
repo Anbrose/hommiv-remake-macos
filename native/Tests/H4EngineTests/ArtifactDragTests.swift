@@ -116,11 +116,16 @@ final class ArtifactDragTests: XCTestCase {
         let a = hero(), b = hero()
         a.equipped[12] = id("chainmail")
         let d = ArtifactRules.pickUp(.worn(a, 12))!
-        ArtifactRules.drop(d, onto: b)
+        ArtifactRules.drop(d, onto: b, tables: tables)
         XCTAssertNil(a.equipped[12])
-        XCTAssertEqual(b.backpack, [id("chainmail")])
+        XCTAssertEqual(b.equipped[12], id("chainmail"))     // b's torso was free: put on (0x643187)
+        XCTAssertEqual(b.backpack, [])
         ArtifactRules.cancel(d, tables: tables)              // consumed: nothing comes back
         XCTAssertNil(a.equipped[12])
+        // with the slot taken it goes into b's backpack
+        a.equipped[12] = id("chainmail")
+        ArtifactRules.drop(ArtifactRules.pickUp(.worn(a, 12))!, onto: b, tables: tables)
+        XCTAssertEqual(b.backpack, [id("chainmail")])
     }
 
     func testWornEffectsChangeAtOnce() {

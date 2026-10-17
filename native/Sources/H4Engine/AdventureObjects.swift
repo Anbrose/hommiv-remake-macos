@@ -121,9 +121,32 @@ extension GameState {
         }
         return article ? a.article : a.name
     }
-    /// An artifact joins the army: the hero's backpack (the leader's).
-    func give(artifact id: Int, to hero: Hero) {
-        hero.backpack.append(id)   // (no floating name: the messages show the artifact)
+    /// An artifact joins the army (0x6402b0, re/auto_equip_spec.md): its leader (0x63ff00, the
+    /// highest-level hero, the first of equals) puts it on when its slot is free, else carries it in
+    /// the backpack. A heroless army keeps it in its creatures' backpack. Worn effects work at once
+    /// (the movement as after a drop on the hero screen). (No floating name: the messages show it.)
+    func give(artifact id: Int, to army: Hero) {
+        guard let h = artifactLeader(of: army) else { army.backpack.append(id); return }
+        h.receive(id, tables: tables)
+        artifactsChanged(army)
+    }
+    /// Booty (0x7fb560): every artifact to the army's first hero (a living one first), each put on
+    /// when its slot is free, else into the backpack; a heroless army's creatures carry them.
+    public func giveLoot(_ ids: [Int], to army: Hero) {
+        guard !ids.isEmpty else { return }
+        guard let h = army.members.first else { army.backpack += ids; return }
+        for a in ids { h.receive(a, tables: tables) }
+        artifactsChanged(army)
+    }
+    /// Who of an army takes what it finds (0x63ff00): the highest-level hero, the first of equals;
+    /// nil for a heroless army.
+    public func artifactLeader(of army: Hero) -> Hero? {
+        var best: Hero? = nil
+        for h in army.members where best == nil || h.level > best!.level { best = h }
+        return best
+    }
+    func artifactsChanged(_ army: Hero) {
+        if heroes.contains(where: { $0 === army }) { refreshMovement(army) }
     }
 
     // MARK: game start

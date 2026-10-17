@@ -57,14 +57,16 @@ extension GameState {
         if won {
             hero.army = army
             share(value + theirs.reduce(0) { $0 + ($1.level + 1) * 100 }, among: mine)
-            // the booty: every artifact of the beaten army, into the first hero's backpack
-            for h in theirs { hero.backpack += h.equipped.compactMap { $0 } + h.backpack }
+            // the booty: every artifact of the beaten army to the first hero (0x7fb560)
+            giveLoot(theirs.flatMap { $0.equipped.compactMap { $0 } + $0.backpack }, to: hero)
+            for h in theirs { h.equipped = Array(repeating: nil, count: h.equipped.count); h.backpack = [] }
             removeEnemy(enemy)
             log.append("\(enemy.name)'s army is destroyed; \(theirs.map { $0.name }.joined(separator: ", ")) taken prisoner")
         } else {
             enemy.army = enemyArmy
             share(value + mine.reduce(0) { $0 + ($1.level + 1) * 100 }, among: theirs)
-            for h in mine { enemy.backpack += h.equipped.compactMap { $0 } + h.backpack }
+            giveLoot(mine.flatMap { $0.equipped.compactMap { $0 } + $0.backpack }, to: enemy)
+            for h in mine { h.equipped = Array(repeating: nil, count: h.equipped.count); h.backpack = [] }
             heroes.removeAll { $0 === hero }
             log.append("\(hero.name)'s army is destroyed")
         }

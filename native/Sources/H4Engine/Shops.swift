@@ -94,7 +94,8 @@ extension GameState {
     public func buy(_ rows: [(artifact: Int, count: Int)], for hero: Hero) -> Bool {
         let total = rows.reduce(0) { $0 + artifactCost($1.artifact) * $1.count }
         guard total > 0, total <= resources["Gold", default: 0] else { return false }
-        for r in rows { for _ in 0..<r.count { hero.backpack.append(r.artifact) } }
+        // each copy to the chosen hero: put on when its slot is free, else the backpack (0x673e3f)
+        for r in rows { for _ in 0..<r.count { hero.receive(r.artifact, tables: tables) } }
         resources["Gold", default: 0] -= total
         return true
     }

@@ -96,11 +96,12 @@ public enum ArtifactRules {
     }
 
     /// An artifact arrives at a place (holder +0x10, 0x537c70): worn there when the slot is free,
-    /// else into that hero's backpack; a backpack place inserts it at its index.
+    /// else given to that hero (vtable+4 with "equip", 0x537d6e: put on where it fits, else the
+    /// backpack); a backpack place inserts it at its index.
     public static func place(_ id: Int, at p: ArtifactPlace, tables: RuleTables?) {
         if p.isBackpack { insert(id, into: &p.carrier.backpack, at: p.index); return }
         guard let h = p.carrier.wearer else { p.carrier.backpack.append(id); return }
-        if !h.wear(id, slot: p.slot, tables: tables) { h.backpack.append(id) }
+        if !h.wear(id, slot: p.slot, tables: tables) { h.receive(id, tables: tables) }
     }
 
     /// The drag ends without a taker (a refused drop, a drop on nothing, Escape): home it goes (0x706960).
@@ -136,17 +137,18 @@ public enum ArtifactRules {
                 if case .learned? = note { h.equipped[p.slot] = nil }
             }
         } else {
-            h.backpack.append(d.artifact)
+            h.receive(d.artifact, tables: tables)   // 0x537583: put on where it fits, else the backpack
         }
         if let x = displaced { place(x, at: d.origin, tables: tables) }
         d.consume()
         return (true, note)
     }
 
-    /// A drop on an army ring holding a stack (0x6430bb): into that stack's backpack.
-    public static func drop(_ d: ArtifactDrag, onto c: ArtifactCarrier) {
+    /// A drop on an army ring holding a stack (0x6430bb, vtable+4 with "equip" at 0x643187): a hero
+    /// puts it on when its slot is free, else it goes into the stack's backpack.
+    public static func drop(_ d: ArtifactDrag, onto c: ArtifactCarrier, tables: RuleTables?) {
         guard !d.consumed else { return }
-        c.backpack.append(d.artifact)
+        if let h = c.wearer { h.receive(d.artifact, tables: tables) } else { c.backpack.append(d.artifact) }
         d.consume()
     }
 

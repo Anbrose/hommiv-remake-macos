@@ -116,17 +116,23 @@ final class CheatTests: XCTestCase {
         let (g, h) = try gameWithHero()
         g.enterCheat("nwcEtTuBrute", on: .adventure)
         g.enterCheat("nwcNibelungenlied", on: .adventure)
-        XCTAssertEqual(h.backpack, [0xcc, 0x4e])
+        // both put on at once: their slots were free (0x6402b0 -> 0x72a4f0)
+        XCTAssertEqual(h.equipped[13], 0xcc)
+        XCTAssertEqual(h.equipped[9], 0x4e)
+        XCTAssertEqual(h.backpack, [])
         XCTAssertEqual(RuleTables.artifactIds[0xcc], "tynans_dagger_of_despair")
         XCTAssertEqual(RuleTables.artifactIds[0x4e], "greater_ring_of_vulnerability")
         // nwcExcalibur and nwcHephaestus are the frame's Dump Map / New Game commands
         XCTAssertEqual(g.enterCheat("nwcExcalibur", on: .adventure), .dumpMapImage)
         XCTAssertEqual(g.enterCheat("nwcHephaestus", on: .adventure), .newGame)
-        XCTAssertEqual(h.backpack.count, 2)
-        // an army without a hero gets none (0x6402b0)
+        XCTAssertEqual(h.backpack.count, 0)
+        // a second dagger finds the right hand taken: the backpack
+        g.enterCheat("nwcEtTuBrute", on: .adventure)
+        XCTAssertEqual(h.backpack, [0xcc])
+        // an army without a hero: its creatures carry it (0x63ff00 picks a creature stack)
         h.heroless = true
-        XCTAssertEqual(g.enterCheat("nwcEtTuBrute", on: .adventure), .nothing)
-        XCTAssertEqual(h.backpack.count, 2)
+        XCTAssertEqual(g.enterCheat("nwcEtTuBrute", on: .adventure), .done)
+        XCTAssertEqual(h.backpack, [0xcc, 0xcc])
     }
 
     func testShroudToggles() throws {

@@ -185,8 +185,10 @@ extension GameState {
         case .dumpMapImage: return .dumpMapImage
         default:
             if let id = Cheats.artifacts[c] {
-                guard let h = hero else { return .nothing }   // 0x6402b0 refuses an army without a hero
-                give(artifact: id, to: h); return .done
+                // 0x6402b0: the army's leader (re/auto_equip_spec.md); only an empty army refuses,
+                // a heroless one's creatures carry it
+                guard let a = army else { return .nothing }
+                give(artifact: id, to: a); return .done
             }
             if let k = Cheats.creatures[c] {
                 guard let a = army, let d = tables?.creature(k) else { return .nothing }

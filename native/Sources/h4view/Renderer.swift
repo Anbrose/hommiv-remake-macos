@@ -195,6 +195,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     var hire: HireOffer? = nil             // the tavern's dialog
     var mapRecruit: (dwelling: Int, hero: Hero, count: Int)? = nil   // a map dwelling's recruit dialog
     var townSpare: [ArmySlot?] = []           // the town's visiting row when no army stands at the gate
+    var townOffer: (key: [Int], offered: Bool)? = nil   // townOffersVisitingRow, kept while nothing it reads changes
     var townDragAt: (Float, Float)? = nil      // where a lifted stack is (the pointer) while dragged
     var townDragSplit = false
     var clickCount = 1                     // the clicks of the mouse-up being handled (double clicks)

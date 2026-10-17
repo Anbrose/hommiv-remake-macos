@@ -203,6 +203,7 @@ extension GameState {
         interact(hero: h, p)
         if let q = question { question = nil; q.yes() }
         if let c = choice { choice = nil; c.pick(0) }
+        skillDialog = nil
         if let hp = heroPick { heroPick = nil; if let k = hp.enabled.firstIndex(of: true) { hp.ok(hp.heroes[k]) } }
         if let offer = chestOffer, offer.hero === h { chestOffer = nil; resources["Gold", default: 0] += offer.gold }
         if enteredTown != nil { enteredTown = nil }

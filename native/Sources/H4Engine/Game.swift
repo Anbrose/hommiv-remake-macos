@@ -281,6 +281,8 @@ public final class Hero {
     public var manaRestoredToday = 0
     /// Once-per-hero objects this hero has used ("z|x|y" keys).
     public var visitedObjects: Set<String> = []
+    /// What the hero took at a university, by "z|x|y|slot": [skill, level] (hero+0x7c4, 0x840770).
+    public var universitySlots: [String: [Int]] = [:]
     /// Until the next battle: fountain effects on the hero ("strength", "speed", "vigor").
     public var fountainEffects: Set<String> = []
     /// Until the next battle, for the army: luck and morale by object type, and a temple's alignment.
@@ -427,6 +429,8 @@ public final class GameState {
     public var choice: (text: String, options: [String], pick: (Int) -> Void)?
     /// An altar's or a magic gem's hero pick (the UI shows it; OK runs `ok` with the chosen hero).
     public var heroPick: HeroPick?
+    /// A hut's, school's, university's, library's or the Tree of Knowledge's selection dialog.
+    public var skillDialog: SkillDialog?
     /// A gateway's destinations when there are two or more (t_dialog_teleporter_entrance): the
     /// object's name and text, each destination as "level|x|y" with its label.
     public var teleportChoice: (title: String, text: String, dests: [String], labels: [String], pick: (Int) -> Void)?
@@ -737,6 +741,10 @@ public final class GameState {
     public var messageTitles: [String: String] = [:], messageArtifacts: [String: Int] = [:]
     /// Pictures a message shows under its text (a learned skill and the hero, ...), by the message.
     public var messagePictures: [String: [MessagePicture]] = [:]
+    /// The cell an object's message box stands above (the visiting army's, 0x8760f0), by the message;
+    /// messages without one are centred. The same for the object's yes / no question.
+    public var messageAnchors: [String: (x: Int, y: Int)] = [:]
+    public var questionAnchor: (x: Int, y: Int)? = nil
     /// The campaign being played (its standard id and this scenario's index).
     public var campaign: (id: Int, index: Int)?
     /// The army that walked into the town now on screen (it is the visiting row, 0x8ac0c0's army).

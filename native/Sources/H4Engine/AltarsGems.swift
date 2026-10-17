@@ -41,11 +41,13 @@ extension GameState {
         return (0..<7).filter { n[$0] != 0 }.map { .material($0, amount: n[$0]) }
     }
     /// An object's message with its pictures, and its name as the title when `titled` (t_basic_dialog).
-    func sayWith(_ p: MapScene.Placed, _ key: String, _ subs: [String: String] = [:], titled: Bool = true, pictures: [MessagePicture]) {
-        guard let t = objectText(p, key, subs) else { return }
+    @discardableResult
+    func sayWith(_ p: MapScene.Placed, _ key: String, _ subs: [String: String] = [:], titled: Bool = true, pictures: [MessagePicture]) -> String? {
+        guard let t = objectText(p, key, subs) else { return nil }
         scripts.messages.append(t)
         if titled, let name = objectText(p, "name", subs) { messageTitles[t] = name }
         if !pictures.isEmpty { messagePictures[t] = pictures }
+        return t
     }
 }
 

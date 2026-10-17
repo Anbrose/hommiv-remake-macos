@@ -226,7 +226,7 @@ extension GameState {
     var adventureBusy: Bool {
         charge != nil || pendingBattle != nil || pendingHeroBattle != nil || pendingSiege != nil || pendingTrade != nil
             || chestOffer != nil || question != nil || choice != nil || teleportChoice != nil || hireOpen != nil
-            || dwellingOpen != nil || shopOpen != nil || sanctuaryOpen != nil || puzzleOpen != nil || levelUp != nil || battleUnderway
+            || dwellingOpen != nil || heroPick != nil || skillDialog != nil || shopOpen != nil || sanctuaryOpen != nil || puzzleOpen != nil || levelUp != nil || battleUnderway
             || !scripts.messages.isEmpty
     }
     func runGuardChecks() {

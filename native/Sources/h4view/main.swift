@@ -451,6 +451,12 @@ if let out = snapshot {
                 print("hero pick \(hp.kind): \(hp.title) / \(hp.text.prefix(60)) heroes \(hp.heroes.map { $0.name }) enabled \(hp.enabled)")
                 if ProcessInfo.processInfo.environment["H4PICKOK"] != nil { game.heroPick = nil; hp.ok(hp.heroes[0]) }   // with H4VISIT: take it (OK)
             }
+            if let d = game.skillDialog {
+                print("skill dialog \(d.kind): \(d.title) / \(d.text.prefix(60)) heroes \(d.heroes.map { $0.name }) enabled \(d.heroes.indices.map { game.skillDialogEnabled(d, $0) }) ticked \(d.ticked) cost \(game.skillDialogCost(d))")
+                if case .university = d.kind { print("  status: \(game.universityStatus(d).text)") }
+                if let k = ProcessInfo.processInfo.environment["H4CHOICE"].flatMap({ Int($0) }) { game.skillDialogChoose(d, k) }   // with H4VISIT: the school's / university's skill
+                if ProcessInfo.processInfo.environment["H4PICKOK"] != nil { game.resources["Gold", default: 0] += 10000; game.skillDialogLearn(d) }   // with H4VISIT: Learn / Buy
+            }
             if let q = game.question { print("question: \(q.text)") }
             if let o = game.dwellingOpen, let d = game.dwellingOffer(o.dwelling, for: o.hero) {
                 print("recruit \(d.creature.keyword): \(d.available) available, cost \(d.cost), most \(game.recruitMost(available: d.available, cost: d.cost))")
@@ -837,6 +843,7 @@ final class MapView: MTKView {
         if renderer.caravanUI != nil, renderer.townOpen == nil { renderer.caravanClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.choiceClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale, double: e.clickCount >= 2) { return }
         if renderer.heroPickClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale) { return }
+        if renderer.skillDialogClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale) { return }
         if renderer.teleporterClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale, double: e.clickCount >= 2) { return }
         if renderer.levelUpClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale, double: e.clickCount >= 2) { return }
         if renderer.market != nil { renderer.marketClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }

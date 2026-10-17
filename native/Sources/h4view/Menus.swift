@@ -50,7 +50,7 @@ extension Renderer {
         items.append((text("kingdom_overview", "Kingdom Overview"), { [weak self] in self?.overview = KingdomOverview() }))
         items.append((text("quests", "Quest Log"), { [weak self] in self?.unavailable("quests", "Quest Log") }))
         items.append((text("marketplace", "Marketplace"), { [weak self] in self?.market = MarketState(k: 3) }))
-        items.append((text("thieves_guild", "Thieves Guild"), { [weak self] in self?.unavailable("thieves_guild", "Thieves Guild") }))
+        items.append((text("thieves_guild", "Thieves Guild"), { [weak self] in self?.thievesGuildOpen = true }))
         items.append((text("trade", "Trade"), { [weak self] in self?.unavailable("trade", "Trade") }))
         items.append((text("view_world", "View World"), { [weak self] in self?.unavailable("view_world", "View World") }))
         items.append((text("view_puzzle", "View Puzzle"), { [weak self] in

@@ -764,9 +764,9 @@ public final class GameState {
         return (h.name, body)
     }
 
-    /// Daily income of a town from its hall.
+    /// Daily gold of a town (0x89a2b0): its hall, and 3000 more with the grail built (building 11).
     public func hallIncome(_ t: Town) -> Int {
-        t.buildings.contains("city hall") ? 1000 : t.buildings.contains("town hall") ? 750 : 500
+        (t.buildings.contains("city hall") ? 1000 : t.buildings.contains("town hall") ? 750 : 500) + (t.buildings.contains("grail") ? 3000 : 0)
     }
 
     /// Can the town build this now? One building per day; halls and walls in order; mage guilds in order.

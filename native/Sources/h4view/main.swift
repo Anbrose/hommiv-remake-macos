@@ -866,12 +866,15 @@ final class MapView: MTKView {
     }
     /// Right click: opens a box describing what is under the cursor; it stays until a left
     /// click lands outside it (as in the game).
-    override func rightMouseUp(with e: NSEvent) { renderer.messageItemHelp = nil; renderer.abilityPopup = nil }
+    override func rightMouseUp(with e: NSEvent) { renderer.messageItemHelp = nil; renderer.abilityPopup = nil; heldHelp = nil }
     override func rightMouseDown(with e: NSEvent) {
         let p = convert(e.locationInWindow, from: nil)
         let scale = Float(window?.backingScaleFactor ?? 1)
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
         let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale
+        // an artifact's text while the button is held: the army screen's doll and backpack, a blacksmith's goods
+        if armySession != nil, renderer.armyScreenRightDown(x: cx, y: cy) { return }
+        if renderer.shop != nil, renderer.shopRightDown(x: cx, y: cy) { return }
         // a creature ability's icon in a creature window (any screen): its help while the button is held
         if renderer.spellBook == nil, renderer.abilityPress(x: cx, y: cy) { renderer.hover = nil; return }
         if renderer.townOpen != nil {   // the town screen: a building's description
@@ -903,6 +906,7 @@ final class MapView: MTKView {
         renderer.inspect(mapPoint: renderer.pan + mouse / renderer.zoom, canvas: (cx, cy))
     }
     override func scrollWheel(with e: NSEvent) {
+        if armySession != nil { renderer.armyScreenScroll(e.scrollingDeltaY); return }   // the backpack scrolls
         if renderer.townOpen != nil {   // the build list pages with the wheel
             if case .buildList? = renderer.townDialog, abs(e.scrollingDeltaY) > 2 { renderer.buildPage = max(0, renderer.buildPage + (e.scrollingDeltaY < 0 ? 1 : -1)) }
             return

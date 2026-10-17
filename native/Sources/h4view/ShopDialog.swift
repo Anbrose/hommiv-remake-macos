@@ -122,7 +122,7 @@ extension Renderer {
             if let p = ui.portrait(keyword: h.keyword, alignment: h.alignment, size: 82) { out += dImageAt(p, "portrait82.\(h.alignment)", x: ox + slot.x, y: oy + slot.y) }
         }
         out += dImage(d, "shop", "large_portrait_frame", ox, oy)
-        return out
+        return out + heldHelpQuads()   // an artifact's help while right-clicked
     }
     /// The ring row: at x 148, centred on y 519 (80 high).
     func shopRing() -> [(piece: String, fx: Int, fy: Int)] {

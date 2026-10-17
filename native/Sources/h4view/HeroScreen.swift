@@ -62,20 +62,25 @@ extension Renderer {
         }
         return out
     }
+    /// The first backpack entry shown: two per scrollbar step (0x537e50), the step kept on the session.
+    var backpackOffset: Int { 2 * (armySession?.backpackRow ?? 0) }
+    /// The worn slot places of the paper doll (layers.dialog.army.<model> Bow .. Right Hand), top-left in canvas coordinates.
+    func dollSlots(_ h: Hero, _ d: LayerFile, _ ox: Int, _ oy: Int) -> [(slot: Int, x: Int, y: Int)] {
+        guard let inv = d["hero_inventory"], let m = dollLayout(h), m["Background"] != nil else { return [] }
+        let dx = ox + inv.x, dy = oy + inv.y   // (top-left, 0x597f50)
+        return (0..<14).compactMap { i in m[Renderer.slotLayers[i]].map { (i, dx + $0.x, dy + $0.y) } }
+    }
+    /// The ten backpack places ("backpack %i slot", 0x52f12b) with the backpack index each shows.
+    func backpackPlaces(_ d: LayerFile, _ ox: Int, _ oy: Int) -> [(index: Int, x: Int, y: Int)] {
+        (0..<10).compactMap { k in d["backpack \(k + 1) slot"].map { (backpackOffset + k, ox + $0.x, oy + $0.y) } }
+    }
     /// Where the paper doll and backpack artifacts go: (artifact id, x, y) of 44x44 slots.
     func heroArtifactSlots(_ h: Hero, _ d: LayerFile, _ ox: Int, _ oy: Int) -> (doll: (x: Int, y: Int)?, items: [(id: Int, x: Int, y: Int)]) {
         var items: [(Int, Int, Int)] = []
         var doll: (Int, Int)? = nil
-        if let inv = d["hero_inventory"], let m = dollLayout(h), let bg = m["Background"] {
-            let dx = ox + inv.x, dy = oy + inv.y   // (top-left, 0x597f50)
-            doll = (dx, dy)
-            for (i, a) in h.equipped.enumerated() where i < 14 {
-                if let a = a, let s = m[Renderer.slotLayers[i]] { items.append((a, dx + s.x, dy + s.y)) }
-            }
-        }
-        for (k, a) in h.backpack.prefix(10).enumerated() {
-            if let s = d["backpack \(k + 1) slot"] { items.append((a, ox + s.x, oy + s.y)) }
-        }
+        if let inv = d["hero_inventory"], dollLayout(h)?["Background"] != nil { doll = (ox + inv.x, oy + inv.y) }
+        for s in dollSlots(h, d, ox, oy) { if let a = h.equipped[s.slot] { items.append((a, s.x, s.y)) } }
+        for p in backpackPlaces(d, ox, oy) where h.backpack.indices.contains(p.index) { items.append((h.backpack[p.index], p.x, p.y)) }
         return (doll, items)
     }
 
@@ -90,6 +95,14 @@ extension Renderer {
         if let (dx, dy) = doll, let m = dollLayout(h), let bg = m["Background"] {
             out.append(Quad(texture: uiTexture("doll|\(h.actor)", { bg.bitmap }), x: dx, y: dy, w: bg.width, h: bg.height))
         }
+        // while an artifact is carried, every worn slot that would take it is lit (0x537a30): the
+        // doll's Artifact_highlight at each slot, offset from the slot as it is from Head
+        if let drag = armySession?.artDrag, let m = dollLayout(h), let hl = m["Artifact_highlight"], let head = m["Head"] {
+            let taking = Set(ArtifactRules.takingSlots(drag.artifact, of: h, tables: game?.tables))
+            for s in dollSlots(h, d, ox, oy) where taking.contains(s.slot) {
+                out.append(Quad(texture: uiTexture("dollhl|\(h.actor)", { hl.bitmap }), x: s.x + hl.x - head.x, y: s.y + hl.y - head.y, w: hl.width, h: hl.height))
+            }
+        }
         for it in items {
             guard let l = artifactIcon(it.id) else { continue }
             out.append(Quad(texture: uiTexture("art|\(it.id)", { l.bitmap }), x: it.x + l.x, y: it.y + l.y, w: l.width, h: l.height))
@@ -97,14 +110,22 @@ extension Renderer {
         return out
     }
 
-    /// The name and help of a skill or artifact under the pointer on the hero screen.
+    /// The name and help of a skill, or an artifact's name (its balloon, 0x54eae0), under the pointer on the hero screen.
     func heroThingTip(_ h: Hero, _ d: LayerFile, _ ox: Int, _ oy: Int, x: Float, y: Float) -> String? {
         func at(_ sx: Int, _ sy: Int, _ size: Int) -> Bool { x >= Float(sx) && x < Float(sx + size) && y >= Float(sy) && y < Float(sy + size) }
         for s in heroSkillSlots(h, d, ox, oy) where at(s.x, s.y, 52) {
             let t = skillName(s.id, level: h.skill(id: s.id)); return t.help.isEmpty ? t.name : "\(t.name): \(t.help)"
         }
-        for it in heroArtifactSlots(h, d, ox, oy).items where at(it.x, it.y, 44) {
-            let t = artifactName(it.id); return t.help.isEmpty ? t.name : "\(t.name): \(t.help)"
+        for it in heroArtifactSlots(h, d, ox, oy).items where at(it.x, it.y, 44) { return artifactName(it.id).name }
+        return nil
+    }
+    /// A right click on a worn or backpack artifact: "Name: help" (the picture's right-click text,
+    /// 0x54eae0), shown at the place's centre x and bottom (0x845290).
+    func heroArtifactHelp(_ h: Hero, _ d: LayerFile, _ ox: Int, _ oy: Int, x: Float, y: Float) -> (text: String, x: Int, y: Int)? {
+        func at(_ sx: Int, _ sy: Int) -> Bool { x >= Float(sx) && x < Float(sx + 44) && y >= Float(sy) && y < Float(sy + 44) }
+        for it in heroArtifactSlots(h, d, ox, oy).items where at(it.x, it.y) {
+            let t = artifactName(it.id)
+            return (t.help.isEmpty ? t.name : "\(t.name): \(t.help)", it.x + 22, it.y + 44)
         }
         return nil
     }
@@ -116,19 +137,11 @@ extension Renderer {
         return "Level \(h.level) \(name)"
     }
 
-    enum ArtifactHit { case worn(Int), backpack(Int) }
-    /// Which worn slot or backpack place is under the pointer (a place holding an artifact).
-    func heroArtifactHit(_ h: Hero, _ d: LayerFile, _ ox: Int, _ oy: Int, x: Float, y: Float) -> ArtifactHit? {
+    /// The worn slot or backpack place under the pointer (empty ones too: drops land there).
+    func heroArtifactPlace(_ h: Hero, _ d: LayerFile, _ ox: Int, _ oy: Int, x: Float, y: Float) -> ArtifactPlace? {
         func at(_ sx: Int, _ sy: Int) -> Bool { x >= Float(sx) && x < Float(sx + 44) && y >= Float(sy) && y < Float(sy + 44) }
-        if let inv = d["hero_inventory"], let m = dollLayout(h), let bg = m["Background"] {
-            let dx = ox + inv.x, dy = oy + inv.y   // (top-left, 0x597f50)
-            for (i, a) in h.equipped.enumerated() where i < 14 && a != nil {
-                if let s = m[Renderer.slotLayers[i]], at(dx + s.x, dy + s.y) { return .worn(i) }
-            }
-        }
-        for k in h.backpack.indices.prefix(10) {
-            if let s = d["backpack \(k + 1) slot"], at(ox + s.x, oy + s.y) { return .backpack(k) }
-        }
+        for s in dollSlots(h, d, ox, oy) where at(s.x, s.y) { return .worn(h, s.slot) }
+        for p in backpackPlaces(d, ox, oy) where at(p.x, p.y) { return .backpack(h, p.index) }
         return nil
     }
 }

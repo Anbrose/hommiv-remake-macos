@@ -159,6 +159,8 @@ let device = MTLCreateSystemDefaultDevice()!
 // leftmost town) standing at its gate.
 let resolver = RandomResolver(archive: archive)
 let game = GameState(map: map, level: scene.level, scenes: scenes)
+// the player's difficulty of the new-game screen (game +0x64c): treasuries, monsters, the computer's handicap
+if let k = args.firstIndex(of: "--difficulty"), k + 1 < args.count, let d = Int(args[k + 1]) { game.difficulty = min(4, max(0, d)) }
 game.fogEnabled = ProcessInfo.processInfo.environment["H4NOFOG"] == nil   // debugging: no shroud
 if let tables = ruleTables { game.tables = tables; lap("rules: \(tables.creatures.count) creatures, \(tables.heroes.count) heroes") }
 let alignments = ["haven": "life", "academy": "order", "asylum": "chaos", "necropolis": "death", "preserve": "nature", "stronghold": "might"]
@@ -251,6 +253,7 @@ for spec in map.playerSpecs where spec.colour != map.humanColour && !game.enemyH
     }
     game.level = back
 }
+game.setupTreasuries()   // the starting treasuries by difficulty, human and computer rows (0x7e1030)
 // a campaign scenario: the heroes carried from the last one take their placeholders
 if let ref = campaignRef {
     game.campaign = ref

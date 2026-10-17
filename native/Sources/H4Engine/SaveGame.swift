@@ -39,6 +39,8 @@ public struct SaveGame: Codable {
     public var monthCreature: String? = nil, nextMonthCreature: String? = nil
     public var monthSpawns: [MonthSpawnRecord]? = nil
     public var addedByLevel: [[MapScene.AddedCreature]]? = nil
+    /// The player's difficulty (game +0x64c).
+    public var difficulty: Int? = nil
 
     public struct Stack: Codable { public var creature: String; public var count: Int }
     public struct Cell: Codable { public var x: Int, y: Int }
@@ -135,7 +137,7 @@ extension GameState {
                          outcome: outcome, victoryDays: victoryDays)
         s.removedByLevel = scenes.map { $0.removed }; s.movedByLevel = scenes.map { $0.moved }; s.level = level
         s.objectStates = objectStates; s.usedArtifacts = Array(usedArtifacts).sorted()
-        s.enemyHeroes = enemyHeroes.map { SaveGame.state(of: $0) }; s.aiResources = aiResources; s.keys = Array(keys).sorted()
+        s.enemyHeroes = enemyHeroes.map { SaveGame.state(of: $0) }; s.aiResources = aiResources; s.difficulty = difficulty; s.keys = Array(keys).sorted()
         s.mineOwners = mines.map { $0.owner }
         s.boats = boats
         s.obeliskVisits = obeliskVisits; s.digSites = digSites; s.dug = Array(dug).sorted()
@@ -210,6 +212,7 @@ extension GameState {
             for st in e { place(enemy: SaveGame.hero(from: st)) }
         }
         if let a = s.aiResources { aiResources = a }
+        if let d = s.difficulty { difficulty = d }
         if let k = s.keys { keys = Set(k) }
         if let o = s.obeliskVisits { obeliskVisits = o }
         if let d = s.digSites { digSites = d }

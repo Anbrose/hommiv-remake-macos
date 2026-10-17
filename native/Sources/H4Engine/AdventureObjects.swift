@@ -227,7 +227,7 @@ extension GameState {
             if st.countdown > 0 { st.countdown -= 1 }
             if st.countdown == 0 {
                 if st.owner == map.humanColour || st.owner == nil { resources[GameState.materialNames[st.material], default: 0] += st.amount }
-                else if let o = st.owner { aiResources[o, default: GameState.startingResources][GameState.materialNames[st.material], default: 0] += st.amount }
+                else if let o = st.owner { aiResources[o, default: startingResources(computer: true)][GameState.materialNames[st.material], default: 0] += st.amount }
                 objectStates[k] = st
                 reroll(key: k)
                 objectStates[k]?.countdown = 7
@@ -489,6 +489,13 @@ extension GameState {
             let short = cost.filter { self.resources[GameState.materialNames[$0.0], default: 0] < $0.1 }
                 .map { ($0.0, $0.1 - self.resources[GameState.materialNames[$0.0], default: 0]) }
             if !short.isEmpty { self.say(p, "insufficient.materials", ["%material_list": self.materialList(short)]); return }
+            if !self.isHumanActing {   // the computer pays from its building budget (0x79dca0: budget >= price, then budget -= price)
+                let c = self.actingColour
+                var budget = self.aiBudget[c] ?? self.funds()
+                guard cost.allSatisfy({ budget[$0.0] >= $0.1 }) else { return }
+                for (mat, n) in cost { budget[mat] -= n }
+                self.aiBudget[c] = budget
+            }
             for (mat, n) in cost { self.resources[GameState.materialNames[mat], default: 0] -= n }
             self.mines.append(Mine(x: p.cellX, y: p.cellY, name: p.name, resource: GameState.materialNames[m], amount: [1000, 2, 2, 1, 1, 1, 1][m], owned: self.isHumanActing, z: self.level, owner: self.actingColour))
             self.say(p, "paid")

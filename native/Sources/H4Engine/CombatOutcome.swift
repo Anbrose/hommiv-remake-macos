@@ -69,6 +69,6 @@ extension GameState {
     /// (computer) player's, `to` its colour.
     public func paySurrender(_ cost: Int, to owner: Int) {
         resources["Gold", default: 0] -= cost
-        aiResources[owner, default: GameState.startingResources]["Gold", default: 0] += cost
+        aiResources[owner, default: startingResources(computer: true)]["Gold", default: 0] += cost
     }
 }

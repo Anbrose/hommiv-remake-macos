@@ -228,7 +228,9 @@ public enum QuickCombat {
         public let log: [String]
     }
 
-    public static func fight(attackers: [Combatant], defenders: [Combatant], seed: Int) -> Result {
+    /// `factors`: each side's damage multiplier, as the computer's battle prediction sets them on
+    /// the simulator (heroes4.exe 0x848b00 writes unit +0x930, applied to every blow at 0x845e15).
+    public static func fight(attackers: [Combatant], defenders: [Combatant], seed: Int, factors: (attacker: Double, defender: Double) = (1, 1)) -> Result {
         var a = attackers, d = defenders
         var rng = GameRandom(seed: seed)
         var log: [String] = []
@@ -246,7 +248,9 @@ public enum QuickCombat {
                 guard attacker.alive else { continue }
                 let targets = act.side == 0 ? d : a
                 guard let ti = targets.indices.filter({ targets[$0].alive }).max(by: { threat(targets[$0]) < threat(targets[$1]) }) else { break }
-                let dmg = damage(attacker, targets[ti], rng: &rng, ranged: attacker.shooter)
+                var dmg = damage(attacker, targets[ti], rng: &rng, ranged: attacker.shooter)
+                let f = act.side == 0 ? factors.attacker : factors.defender
+                if f != 1 { dmg = max(1, Int((Double(dmg) * f).rounded())) }
                 var killed = 0
                 if act.side == 0 { killed = d[ti].take(dmg); xp += killed * d[ti].experience } else { killed = a[ti].take(dmg) }
                 log.append("\(attacker.name) x\(attacker.count) hits \(targets[ti].name) for \(dmg), kills \(killed)")

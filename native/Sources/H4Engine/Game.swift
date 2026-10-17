@@ -374,6 +374,10 @@ public final class GameState {
     public var heroes: [Hero] = []
     /// The computer players' treasuries by colour.
     public var aiResources: [Int: [String: Int]] = [:]
+    /// A computer player's resource weights (player +0x10c, from the start of its turn) and
+    /// building budget (+0x28), material order (AIEconomy.swift).
+    public var aiWeights: [Int: [Float]] = [:]
+    public var aiBudget: [Int: [Int]] = [:]
     /// The pending battle with an enemy army was started by the computer (the player defends).
     public var aiAttacking = false
     /// The player acting now (the human, or a computer player during its turn).
@@ -442,8 +446,13 @@ public final class GameState {
     public var sounds: [String] = []
     /// The map's scripted events and their state.
     public let scripts = ScriptState()
-    /// The player's treasury (starting amounts of a normal game).
-    public var resources: [String: Int] = ["Wood": 15, "Ore": 15, "Mercury": 7, "Sulfur": 7, "Crystal": 7, "Gems": 7, "Gold": 15000]
+    /// The player's difficulty chosen on the new-game screen (heroes4.exe game +0x64c, 0 easy ..
+    /// 4 impossible; written by the scenario dialog 0x677910, clamped to 0...4). Not the map's
+    /// rated difficulty: the starting treasuries, the computer's income, its fight predictions
+    /// and the wandering monsters' size all read this one.
+    public var difficulty = 1
+    /// The player's treasury (set from the starting table for the difficulty, AIEconomy.swift).
+    public var resources: [String: Int] = GameState.startingResources(difficulty: 1, computer: false)
     public var tables: RuleTables?
     public struct Town {
         public let x: Int, y: Int
@@ -511,7 +520,7 @@ public final class GameState {
     }
 
     /// Wandering monster value per level (heroes4.exe 0x7f4530: 155 x 2, 310 x 2.5, 620 x 3, 1240 x 4)
-    /// and the map difficulty factor (0x7f4520: easy 2/3 ... impossible x3).
+    /// and the difficulty factor (0x7f4520 of game +0x64c: easy 2/3 ... impossible x3).
     public static let monsterBudget = [0, 310, 775, 1860, 4960]
     public static let difficultyFactor = [0.6667, 1.0, 1.5, 2.0, 3.0]
     static let seaCreatures: Set<String> = ["mermaid", "sea monster", "pirate"]
@@ -553,7 +562,7 @@ public final class GameState {
             lo = Int(base * 0.8); hi = Int(base * 1.2)
         }
         let raw = hi > lo ? rng.next() % (hi - lo + 1) + lo : lo
-        let value = Int(Double(raw) * GameState.difficultyFactor[min(4, max(0, map.difficulty))])
+        let value = Int(Double(raw) * GameState.difficultyFactor[min(4, max(0, difficulty))])   // game +0x64c (0x7f39d2)
         let e = max(1, c.experience)
         let sea = c.keyword.lowercased() == "sea monster" || c.keyword.lowercased() == "mermaid"
         var count = max(1, sea ? value / e : (2 * value + 3 * e - 1) / (3 * e))
@@ -1569,6 +1578,7 @@ public final class GameState {
         day += 1
         for h in heroes { h.maxMovement = armyMovement(h); h.movement = h.maxMovement; h.path = []; h.plan = [] }
         for (res, amount) in income { resources[res, default: 0] += amount }
+        aiNewDay()       // the computer players' income and its difficulty handicap (0x4d8910)
         monthsNewDay()   // 0x4d8910: the month changes before the objects' day
         objectsNewDay()
         sanctuariesNewDay()

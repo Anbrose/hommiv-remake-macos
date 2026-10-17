@@ -314,9 +314,8 @@ extension Renderer {
             let back: TownDialog? = fromCastle ? .castle : nil
             switch recruitDialogClick(x: x, y: y, count: count, most: recruitMost(creature)) {
             case .buy:
-                if g.addToGarrison(i, creature, count) {
-                    g.towns[i].available[creature, default: 0] -= count
-                    for (m, v) in creatureCost(c) { g.resources[m, default: 0] -= v * count }
+                let gold = creatureCost(c).first { $0.0 == "Gold" }?.1
+                if g.townRecruit(i, creature, count: count, gold: gold) > 0 {   // 0x894470, the computer's path too
                     g.log.append("recruited \(count) \(count == 1 ? c.name : c.plural)")
                     sound?.play("dialogue.recruit")
                     townDialog = back

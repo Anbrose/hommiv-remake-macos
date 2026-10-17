@@ -5,8 +5,6 @@ import Foundation
 /// monsters it can beat, towns, the player's armies when it is the stronger). Its fights with
 /// monsters and garrisons are resolved at once; an attack on the player's army opens the battle.
 extension GameState {
-    static let startingResources: [String: Int] = ["Gold": 15000, "Wood": 15, "Ore": 15, "Mercury": 7, "Sulfur": 7, "Crystal": 7, "Gems": 7]
-
     /// The computer players: the scenario's other colours that own a town or a hero.
     public var aiPlayers: [Int] {
         Set(towns.compactMap { $0.owner }).union(enemyHeroes.map { $0.owner }).filter { $0 != map.humanColour }.sorted()
@@ -15,7 +13,7 @@ extension GameState {
     /// Run with a computer player's treasury and ownership.
     func acting<T>(as colour: Int, _ body: () -> T) -> T {
         let saved = resources, savedQuick = quickCombatOnly
-        resources = aiResources[colour] ?? GameState.startingResources
+        resources = aiTreasury(colour)
         acting = colour; quickCombatOnly = true
         let r = body()
         aiResources[colour] = resources
@@ -111,14 +109,16 @@ extension GameState {
 
     /// What the computer hero goes for: (path to where it stands, the target cell, what it does there).
     func aiTarget(_ h: Hero) -> (path: [(x: Int, y: Int)], stand: (Int, Int), at: (Int, Int), use: () -> Void)? {
-        let ours = strength(h)
+        let ours = strength(h), ourArmy = combatants(of: h)
         var best: (score: Float, path: [(x: Int, y: Int)], stand: (Int, Int), at: (Int, Int), use: () -> Void)? = nil
-        func consider(_ value: Float, at cell: (Int, Int), stand: [(Int, Int)], use: @escaping () -> Void) {
+        /// `feasible`: the fight it needs is one the battle prediction says it wins (0x479000).
+        func consider(_ value: Float, at cell: (Int, Int), stand: [(Int, Int)], if feasible: () -> Bool = { true }, use: @escaping () -> Void) {
             guard value > 0 else { return }
             let d = abs(cell.0 - h.x) + abs(cell.1 - h.y)
             guard d < 40 else { return }
             // a rough first cut before the path search
             if let b = best, value / Float(1 + d / 20) <= b.score { return }
+            guard feasible() else { return }
             for s in stand where (s.0 == h.x && s.1 == h.y) || isVacant(s, for: h) {
                 let path: [(x: Int, y: Int)]
                 if s.0 == h.x && s.1 == h.y { path = [] }
@@ -147,8 +147,9 @@ extension GameState {
             let cells = around(p)
             guard !cells.isEmpty else { continue }
             if let i = monster(for: p) {
-                let them = strength(monster: monsters[i])
-                if ours > them * 1.5 { consider(Float(monsters[i].count * (tables?.creature(monsters[i].creature)?.experience ?? 10)) + 200, at: (p.cellX, p.cellY), stand: cells) { [weak self] in self?.aiUse(h, p) } }
+                let m = monsters[i]
+                consider(Float(m.count * (tables?.creature(m.creature)?.experience ?? 10)) + 200, at: (p.cellX, p.cellY), stand: cells,
+                         if: { [unowned self] in predictWin(ourArmy, owner: h.owner, against: combatants(monster: m), owner: nil, seed: day * 131 + i) }) { [weak self] in self?.aiUse(h, p) }
             } else if let i = town(for: p), towns[i].owner == h.owner, !towns[i].garrison.isEmpty {
                 // its own town's garrison: taken along
                 let g = Float(towns[i].garrison.reduce(0) { $0 + (tables?.creature($1.creature)?.gold ?? 0) * $1.count })
@@ -162,9 +163,9 @@ extension GameState {
                     self.refreshMovement(h)
                 }
             } else if let i = town(for: p), towns[i].owner != h.owner {
-                let gate = gateCells(p)
-                let g = Float(towns[i].garrison.reduce(0) { $0 + (tables?.creature($1.creature)?.gold ?? 0) * $1.count })
-                if ours > g * 1.2 { consider(6000, at: (p.cellX, p.cellY), stand: [gate[0]]) { [weak self] in self?.aiUse(h, p) } }
+                let gate = gateCells(p), owner = townColour(towns[i])
+                consider(6000, at: (p.cellX, p.cellY), stand: [gate[0]],
+                         if: { [unowned self] in predictWin(ourArmy, owner: h.owner, against: garrisonCombatants(i), owner: owner, seed: day * 37 + i) }) { [weak self] in self?.aiUse(h, p) }
             } else if let i = mine(for: p), mines[i].owner != h.owner {
                 consider(mines[i].resource == "Gold" ? 1500 : 800, at: (p.cellX, p.cellY), stand: cells) { [weak self] in self?.aiUse(h, p) }
             } else if hasVisit(p) || isPickup(p) {
@@ -188,9 +189,9 @@ extension GameState {
         // the player's armies it is stronger than
         for ph in heroes where ph.z == h.z {
             let theirs = strength(ph)
-            guard ours > theirs * 1.3 else { continue }
             let stand = (-1...1).flatMap { dx in (-1...1).map { (ph.x + dx, ph.y + $0) } }.filter { $0 != (ph.x, ph.y) }
-            consider(4000 + theirs / 10, at: (ph.x, ph.y), stand: stand) { [weak self] in
+            consider(4000 + theirs / 10, at: (ph.x, ph.y), stand: stand,
+                     if: { [unowned self] in predictWin(ourArmy, owner: h.owner, against: combatants(of: ph), owner: ph.owner, seed: day * 17 + ph.x) }) { [weak self] in
                 self?.pendingHeroBattle = (ph, h); self?.aiAttacking = true
                 self?.log.append("\(h.name) attacks \(ph.name)!")
             }

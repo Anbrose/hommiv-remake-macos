@@ -18,15 +18,34 @@ public enum TownView {
 
     /// The shown buttons in creation order: built, not superseded, with a layout layer (0x8ae890
     /// makes no button when the layer is missing; 0x8af5f0 hides the rest).
-    public static func shown(alignment: String, built: (Int) -> Bool, layer: (Int) -> UILayer?) -> [(id: Int, layer: UILayer)] {
+    /// `keep`: replaced buildings still shown (a purchase's fade-out, re/town_build_fade_spec.md §3).
+    public static func shown(alignment: String, built: (Int) -> Bool, layer: (Int) -> UILayer?, keep: Set<Int> = []) -> [(id: Int, layer: UILayer)] {
         let order = drawOrder[alignment] ?? []
         let isBuilt = Set(order.filter(built))
         var hidden = Set<Int>()
         for b in isBuilt { var x = b; while let lower = supersedes[x] { hidden.insert(lower); x = lower } }
+        hidden.subtract(keep)
         return order.compactMap { b in
             guard isBuilt.contains(b), !hidden.contains(b), let l = layer(b), l.width > 0 else { return nil }
             return (b, l)
         }
+    }
+
+    // MARK: a purchase's fade (re/town_build_fade_spec.md)
+
+    /// The town window's idle tick (0x748b00(0, 50) -> 0x8b4f30): every 50 ms.
+    public static let fadeTickSeconds = 0.05
+    /// The bought building's level (0..15) after `ticks` ticks (0x8b4c90 starts it at 0, each tick +1).
+    public static func fadeLevel(ticks: Int) -> Int { max(0, min(15, ticks)) }
+    /// The buildings it replaces stay at full until the first tick, which hides them (the fade-out
+    /// branch at 0x8b5030 hides as soon as the level is above 0).
+    public static func replacedShown(ticks: Int) -> Bool { ticks < 1 }
+    /// The building's animation is created when its level reaches 15 (0x8b3c60).
+    public static func animates(ticks: Int) -> Bool { fadeLevel(ticks: ticks) >= 15 }
+    /// The blend weight of a level for an opaque pixel (0x592370): (L + ((L >> 3) & 1)) / 16.
+    public static func fadeWeight(level: Int) -> Float {
+        let l = max(0, min(15, level))
+        return l >= 15 ? 1 : Float(l + ((l >> 3) & 1)) / 16
     }
 
     /// Is a layer's picture solid at a point of the 1280x825 view (0x5906a0: 4-bit alpha != 0)?

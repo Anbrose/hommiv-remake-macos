@@ -87,13 +87,41 @@ extension Renderer {
         set { Renderer.townSplitStore[ObjectIdentifier(self)] = newValue }
     }
 
+    // MARK: a purchase's fade (re/town_build_fade_spec.md)
+
+    /// `frozen`: a snapshot's fixed tick count.
+    typealias TownFade = (town: Int, id: Int, replaced: Set<Int>, start: Date, frozen: Int?)
+    private static var townFadeStore: [ObjectIdentifier: TownFade] = [:]
+    /// The building bought last in the open town (0x8b4c90 with immediate = 0) while it fades in.
+    var townFade: TownFade? {
+        get { Renderer.townFadeStore[ObjectIdentifier(self)] }
+        set { Renderer.townFadeStore[ObjectIdentifier(self)] = newValue }
+    }
+    /// The open town's fade: the bought building, the buildings it replaced and the 50 ms ticks
+    /// (0x8b4f30) since; nil when none is running.
+    var townFadeNow: (id: Int, replaced: Set<Int>, ticks: Int)? {
+        guard let f = townFade, f.town == townOpen else { return nil }
+        let ticks = f.frozen ?? Int(Date().timeIntervalSince(f.start) / TownView.fadeTickSeconds)
+        return ticks >= 15 ? nil : (f.id, f.replaced, ticks)
+    }
+    /// A building was bought (0x8b4a80 after the modal returned and 0x8941e0 built it): it starts
+    /// at level 0; the buildings shown before and not after are the ones it replaced.
+    func townStartFade(_ i: Int, building id: Int, shownBefore: Set<Int>) {
+        guard let g = game, i < g.towns.count else { return }
+        townFade = nil
+        let after = Set(townShownBuildings(g.towns[i]).map { $0.id })
+        townFade = (i, id, shownBefore.subtracting(after), Date(), nil)
+    }
+
     // MARK: the view
 
-    /// The shown buildings in drawing order: built, not superseded, with a layout layer (0x8af5f0).
+    /// The shown buildings in drawing order: built, not superseded, with a layout layer (0x8af5f0);
+    /// the buildings a purchase replaced stay until the fade's first tick.
     func townShownBuildings(_ t: GameState.Town) -> [(id: Int, layer: UILayer)] {
         guard let g = game, let ts = town, let lay = ts.layout(t.alignment) else { return [] }
+        let keep = townFadeNow.map { TownView.replacedShown(ticks: $0.ticks) ? $0.replaced : [] } ?? []
         return TownView.shown(alignment: t.alignment, built: { b in g.buildingKeyword(t.alignment, b).map { t.buildings.contains($0) } ?? false },
-                              layer: { b in g.buildingKeyword(t.alignment, b).flatMap { k in lay.layers.first { $0.name.lowercased() == k } } })
+                              layer: { b in g.buildingKeyword(t.alignment, b).flatMap { k in lay.layers.first { $0.name.lowercased() == k } } }, keep: keep)
     }
     /// The view's layers over the buildings (every layer after the background: the foregrounds).
     func townForegrounds(_ t: GameState.Town) -> [UILayer] {
@@ -107,7 +135,9 @@ extension Renderer {
         let t = g.towns[i]
         let sx = Float(TownScreen.sourceW) / Float(TownScreen.viewW), sy = Float(TownScreen.sourceH) / Float(TownScreen.viewH)
         let px = Int((x * sx).rounded(.down)), py = Int(((y - Float(TownScreen.viewDY)) * sy).rounded(.down))
-        let shown = townShownBuildings(t)
+        // a picture at level 0 lets clicks through (window type 2, 0x59f040)
+        let fade = townFadeNow
+        let shown = townShownBuildings(t).filter { b in fade.map { b.id != $0.id || TownView.fadeLevel(ticks: $0.ticks) > 0 } ?? true }
         guard let id = TownView.building(at: px, py, shown: shown, foregrounds: townForegrounds(t)) else { return nil }
         return shown.first { $0.id == id }
     }
@@ -116,26 +146,32 @@ extension Renderer {
     func townViewQuads(_ t: GameState.Town) -> [Quad] {
         guard let ts = town, let v = ts.view(t.alignment, t.terrain) else { return [] }
         var out: [Quad] = []
-        func put(_ l: UILayer, _ key: String, _ bitmap: @autoclosure () -> Bitmap) {
+        func put(_ l: UILayer, _ key: String, alpha: Float = 1, _ bitmap: @autoclosure () -> Bitmap) {
+            guard alpha > 0 else { return }
             let r = TownScreen.place(l)
-            out.append(Quad(texture: uiTexture(key, { bitmap() }), x: r.x, y: r.y, w: r.w, h: r.h))
+            out.append(Quad(texture: uiTexture(key, { bitmap() }), x: r.x, y: r.y, w: r.w, h: r.h, alpha: alpha))
         }
         if let bg = v["background"] ?? v.layers.first { put(bg, "town|\(t.alignment)|\(t.terrain)|bg", bg.bitmap) }
         let shown = townShownBuildings(t)
+        // a bought building fades in with its shadow (level n after n ticks); its animation starts at 15
+        let fade = townFadeNow
+        func weight(_ id: Int) -> Float { fade.map { $0.id == id ? TownView.fadeWeight(level: TownView.fadeLevel(ticks: $0.ticks)) : 1 } ?? 1 }
         // every shadow first (they are sent to the back of the view), then the buildings
         if let lay = ts.layout(t.alignment) {
-            for (_, b) in shown {
-                if let sh = lay.layers.first(where: { $0.name.lowercased() == b.name.lowercased() + " shadow" }), sh.width > 0 { put(sh, "town|\(t.alignment)|\(sh.name)", sh.bitmap) }
+            for (id, b) in shown {
+                if let sh = lay.layers.first(where: { $0.name.lowercased() == b.name.lowercased() + " shadow" }), sh.width > 0 { put(sh, "town|\(t.alignment)|\(sh.name)", alpha: weight(id), sh.bitmap) }
             }
         }
-        for (_, b) in shown {
+        for (id, b) in shown {
+            // the hover picture is its own window at level 15: a hovered fading building shows it in full
             if townHover == b.name {
                 let key = "\(t.alignment)|\(b.name)"
                 if ts.lifted[key] == nil { ts.lifted[key] = TownScreen.lift(b.bitmap) }
                 put(b, "townlit|\(key)", ts.lifted[key]!)
             } else {
-                put(b, "town|\(t.alignment)|\(b.name)", b.bitmap)
+                put(b, "town|\(t.alignment)|\(b.name)", alpha: weight(id), b.bitmap)
             }
+            if let f = fade, f.id == id, !TownView.animates(ticks: f.ticks) { continue }
             // its animation: the frames over the building, looping (frame time = speed / 60 s)
             if let anim = ts.animation(t.alignment, b.name) {
                 let frames = anim.images.filter { $0.name.hasPrefix("frame") }
@@ -444,7 +480,7 @@ extension Renderer {
     }
 
     /// Snapshot hooks (H4TOWNDLG, comma separated): "rich" builds every building (not the shipyard) and fills
-    /// the treasury and dwellings first; then "click:<id>", "rclick:<id>", "buildlist", "detail", "castle", "recruitcastle", "guild0",
+    /// the treasury and dwellings first; then "click:<id>", "rclick:<id>", "fade:<id>:<ticks>" (bought that many 50 ms ticks ago), "buildlist", "detail", "castle", "recruitcastle", "guild0",
     /// "guild1", "guildspell" or "menu" opens that window; "novisit" sends the heroes away (the single row).
     func townSnapshot(_ s: String) {
         guard let g = game, let i = townOpen else { return }
@@ -467,6 +503,14 @@ extension Renderer {
             case "novisit": g.townVisitor = nil; for h in g.heroes { h.x = 0; h.y = 0 }
             case _ where p.hasPrefix("click:"):   // "click:<building id>": that building's left click
                 if let b = Int(p.dropFirst(6)) { townBuildingClicked(b) }
+            case _ where p.hasPrefix("fade:"):    // "fade:<building id>:<ticks>": that building bought <ticks> x 50 ms ago (frozen)
+                let q = p.dropFirst(5).split(separator: ":").compactMap { Int($0) }
+                if let b = q.first, let k = g.buildingKeyword(g.towns[i].alignment, b) {
+                    let before = Set(townShownBuildings(g.towns[i]).map { $0.id })
+                    g.towns[i].buildings.insert(k)
+                    townStartFade(i, building: b, shownBefore: before)
+                    townFade?.frozen = q.count > 1 ? q[1] : 0
+                }
             case _ where p.hasPrefix("rclick:"):  // "rclick:<building id>": its right click
                 if let b = Int(p.dropFirst(7)) { describeBuilding(b) }
             default: break

@@ -101,7 +101,7 @@ extension Renderer {
     func closeTown() {
         if let g = game, let i = townOpen, g.visitingArmy(town: i) == nil, townSpare.contains(where: { $0 != nil }) { g.leaveTown(i, spare: townSpare) }
         townSpare = []; townSelected = nil; townDrag = nil; townDragAt = nil; game?.townVisitor = nil
-        townSplitOn = false
+        townSplitOn = false; townFade = nil
         townOpen = nil
     }
 

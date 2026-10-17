@@ -300,7 +300,13 @@ extension Renderer {
             return true
         case .buildDetail(let b):
             let (ox, oy) = buildDetailOrigin
-            if g.canBuild(b, in: g.towns[i]), townButtonHit("buy", x: ox + 496, y: oy + 495, x, y) { g.build(b, in: i); townDialog = nil; return true }
+            if g.canBuild(b, in: g.towns[i]), townButtonHit("buy", x: ox + 496, y: oy + 495, x, y) {
+                // the dialog closes, then the sound, the purchase and the fade (0x8b4a80)
+                let before = Set(townShownBuildings(g.towns[i]).map { $0.id })
+                townDialog = nil; g.build(b, in: i)
+                if let id = g.buildingId(g.towns[i].alignment, b.keyword) { townStartFade(i, building: id, shownBefore: before) }
+                return true
+            }
             if townButtonHit("cancel_button", x: ox + 29, y: oy + 495, x, y) { townDialog = .buildList }
             return true
         case .recruit(let creature, let count, let fromCastle):

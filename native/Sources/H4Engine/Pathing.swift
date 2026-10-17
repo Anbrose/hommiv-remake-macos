@@ -110,6 +110,7 @@ extension Passability {
     /// Mark a cell as a trigger open on all four sides (a wandering stack, an army).
     public mutating func openTrigger(_ x: Int, _ y: Int, object: Int) {
         guard x >= 0, y >= 0, x < size, y < size else { return }
+        revision &+= 1
         trigger[x * size + y] = Int32(clamping: object)
         entry[x * size + y] |= 3
         if x + 1 < size { entry[(x + 1) * size + y] |= 2 }
@@ -119,8 +120,9 @@ extension Passability {
     /// The search of 0x4ff180 from one cell over the whole level (or until every goal is
     /// settled): Dijkstra on integer costs, the exe's direction order and heap, a cell's record
     /// replaced only by a strictly cheaper one. A step the plain rules refuse may still enter an
-    /// object through its entry edges (0x4fe990); object cells and guard-zone cells are reached
-    /// but never left (0x4cbc10). Returns the cost and predecessor of every cell.
+    /// object through its entry edges (0x4fe990); object cells are reached but never left
+    /// (0x4cbc10); a cell with a forced exit (the zone of a stack the player sees, 0x4ff856) is
+    /// left only in that direction. Returns the cost and predecessor of every cell.
     public func search(from start: (Int, Int), goals: Set<Int> = []) -> (cost: [Int32], prev: [Int32]) {
         let n = size * size
         var g = [Int32](repeating: .max, count: n)
@@ -134,9 +136,11 @@ extension Passability {
             let (c, ii) = heap.pop(); let i = Int(ii)
             if c > g[i] { continue }   // a stale record
             if !goals.isEmpty { pending.remove(i); if pending.isEmpty { break } }
-            if i != s, blocked[i] || zones.contains(i) { continue }   // entered, not left
+            if i != s, blocked[i] { continue }   // entered, not left
             let x = i / size, y = i % size
-            for d in Passability.directions {
+            let forced = forcedExit[i]
+            for (k, d) in Passability.directions.enumerated() {
+                if let f = forced, f != k { continue }
                 let nx = x + d.dx, ny = y + d.dy
                 guard nx >= 0, ny >= 0, nx < size, ny < size else { continue }
                 guard canStep(from: x, y, to: nx, ny) || enters(from: x, y, to: nx, ny) else { continue }
@@ -144,7 +148,7 @@ extension Passability {
                 let ng = c + Int32(stepCost100(from: x, y, to: nx, ny))
                 if ng < g[j] { g[j] = ng; prev[j] = Int32(i); heap.push(ng, j) }
             }
-            for j in jumps[i] ?? [] where !blocked[j] {
+            for j in forced == nil ? jumps[i] ?? [] : [] where !blocked[j] {
                 let ng = c + 100
                 if ng < g[j] { g[j] = ng; prev[j] = Int32(i); heap.push(ng, j) }
             }

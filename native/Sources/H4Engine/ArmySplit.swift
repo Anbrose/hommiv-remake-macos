@@ -27,7 +27,11 @@ extension GameState {
     /// Walk up to a friendly army and meet it (0x522560 -> 0x522c6a): the army screen of the two.
     func meet(_ f: Hero, with hero: Hero) {
         hero.attackTarget = nil
-        if GameState.adjacent((hero.x, hero.y), (f.x, f.y)) { pendingTrade = (hero, f); return }
+        if GameState.adjacent((hero.x, hero.y), (f.x, f.y)) {   // two clicks, as any route (0x4f5c80)
+            if hero.tradeTarget === f, hero.plan.isEmpty { hero.tradeTarget = nil; pendingTrade = (hero, f); moveEnded(hero) }
+            else { hero.plan = []; hero.tradeTarget = f; hero.target = nil; hero.planGoal = (f.x, f.y) }
+            return
+        }
         let cells = GameState.directions.map { (f.x + $0.0, f.y + $0.1) }.filter { isVacant($0, for: hero) && enemyAt($0.0, $0.1) == nil }
         var best: [(x: Int, y: Int)]? = nil, bestN = Int.max
         for c in cells {
@@ -225,6 +229,12 @@ extension GameState {
     /// Returns the army now selected.
     @discardableResult
     public func finishExchange(_ x: ArmyExchange) -> Hero? {
+        // the army then selected may stand in a stack's zone: it may be attacked (0x529306 -> 0x4f81e0)
+        let selected = placeExchange(x)
+        if let s = selected { moveEnded(s) }
+        return selected
+    }
+    func placeExchange(_ x: ArmyExchange) -> Hero? {
         let mainRank = x.main.listRank
         func spentOf(_ row: Int) -> Float { (0..<GameState.rowSlots).filter { x.rows[row][$0] != nil }.map { x.spent[row][$0] }.max() ?? 0 }
         func settle(_ h: Hero?, _ row: Int) {

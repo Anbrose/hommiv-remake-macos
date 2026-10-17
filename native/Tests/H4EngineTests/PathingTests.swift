@@ -86,13 +86,19 @@ final class PathingTests: XCTestCase {
         XCTAssertEqual(cells(r), [[3, 2], [4, 2], [4, 3], [4, 4]]); XCTAssertEqual(cost(g, (2, 2), r), 400)
     }
 
-    /// Guard-zone cells are entered but not left (0x4cbc10): the route goes round them.
-    func testGuardZoneIsTerminal() {
+    /// In the zone of a stack the player sees a route goes on only toward the stack (the forced
+    /// exit of 0x4ff856): with the way out pointing back, the route goes round the cells, it
+    /// may still end on one; pointing on, it goes straight through.
+    func testForcedExitInAZone() {
         var g = grid()
-        g.zones = [3 * 7 + 2, 3 * 7 + 3, 3 * 7 + 4]
+        g.forcedExit = [3 * 7 + 2: 0, 3 * 7 + 3: 0, 3 * 7 + 4: 0]   // direction 0: (-1, 0)
         let r = g.path(from: (0, 3), to: (6, 3))
         XCTAssertEqual(cells(r), [[1, 3], [2, 4], [3, 5], [4, 5], [5, 4], [6, 3]]); XCTAssertEqual(cost(g, (0, 3), r), 800)
         XCTAssertEqual(cells(g.path(from: (0, 3), to: (3, 3))), [[1, 3], [2, 3], [3, 3]])
+        g.forcedExit = [3 * 7 + 2: 4, 3 * 7 + 3: 4, 3 * 7 + 4: 4]   // direction 4: (+1, 0)
+        XCTAssertEqual(cells(g.path(from: (0, 3), to: (6, 3))), [[1, 3], [2, 3], [3, 3], [4, 3], [5, 3], [6, 3]])
+        // the start cell too: standing in the zone, the only step is the forced one
+        XCTAssertEqual(cells(g.path(from: (3, 3), to: (3, 0))), [[4, 3], [4, 2], [4, 1], [3, 0]])
     }
 
     /// Onto a bridge's deck 75 (0x4ffa44).
@@ -113,7 +119,7 @@ final class PathingTests: XCTestCase {
         XCTAssertEqual(cells(r?.route), [[5, 4], [4, 4], [3, 4]]); XCTAssertEqual(r?.cost, 300)
         let last = r!.route[r!.route.count - 2], end = r!.route.last!
         XCTAssertTrue(g.enters(from: last.x, last.y, to: end.x, end.y))
-        g.zones = Set([(4, 2), (4, 3), (4, 4), (4, 5)].map { $0.0 * 9 + $0.1 })
+        g.forcedExit = Dictionary(uniqueKeysWithValues: [(4, 2), (4, 3), (4, 4), (4, 5)].map { ($0.0 * 9 + $0.1, 4) })   // away from the gate
         XCTAssertNil(g.routeInto([(3, 3), (3, 4)], from: (6, 4)))
     }
 

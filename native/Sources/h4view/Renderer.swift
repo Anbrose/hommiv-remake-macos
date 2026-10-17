@@ -742,7 +742,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         // sees -- the crossed swords (cursor.attack; 0x4f6780 never uses the single sword)
         if kind == "move", let g = game, let h = g.heroes.first {
             let c = cell(at: m)
-            if let i = g.threat(to: h, at: c.0, c.1), g.monsterSeen(i) { kind = "attack" }
+            if g.seenThreat(to: h, at: c.0, c.1) != nil { kind = "attack" }
         }
         guard ["move", "attack", "activate", "Danger_Zone"].contains(kind), let g = game, let h = g.heroes.first else { return kind }
         guard h.z == g.level else { return "normal" }

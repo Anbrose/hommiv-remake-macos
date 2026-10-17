@@ -7,7 +7,7 @@ import H4Engine
 /// Kept in the user defaults between games.
 struct GameSettings: Codable {
     var quickCombat = false, showCoordinates = false, movementReminder = true, showMovementPath = true, showAnimations = true
-    var armySpeed: Float = 0.5, combatSpeed: Float = 0.5, enemySpeed: Float = 0.5, music: Float = 0.5, sound: Float = 0.8
+    var armySpeed: Float = 0.4, combatSpeed: Float = 0.5, enemySpeed: Float = 0.6, music: Float = 0.5, sound: Float = 0.8
     var fullScreen: Bool? = nil
     /// The combat options "Show Combat Grid" (show_combat_grid) and "Show Movement Shadow"
     /// (show_combat_movement_shading): both off unless set (heroes4.exe 0x7c91d0 defaults them to 0).
@@ -167,7 +167,9 @@ extension Renderer {
         sound?.effectVolume = settings.sound
         sound?.setMusicVolume(settings.music)
         game?.quickCombatOnly = settings.quickCombat
-        GameState.cellsPerSecond = 2 + settings.armySpeed * 8
+        // walk speeds in percent like the combat speed (heroes4.exe defaults 150 own, 200 others)
+        GameState.armySpeedPercent = Int(50 + settings.armySpeed * 250)
+        GameState.otherArmySpeedPercent = Int(50 + settings.enemySpeed * 250)
         combat?.animationSpeed = Int(50 + settings.combatSpeed * 250)
     }
 }

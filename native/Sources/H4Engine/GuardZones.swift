@@ -226,7 +226,7 @@ extension GameState {
     var adventureBusy: Bool {
         charge != nil || pendingBattle != nil || pendingHeroBattle != nil || pendingSiege != nil || pendingTrade != nil
             || chestOffer != nil || question != nil || choice != nil || teleportChoice != nil || hireOpen != nil
-            || dwellingOpen != nil || shopOpen != nil || sanctuaryOpen != nil || puzzleOpen != nil || levelUp != nil
+            || dwellingOpen != nil || shopOpen != nil || sanctuaryOpen != nil || puzzleOpen != nil || levelUp != nil || battleUnderway
             || !scripts.messages.isEmpty
     }
     func runGuardChecks() {
@@ -245,8 +245,13 @@ extension GameState {
         guard let r = p.path(from: (monsters[i].x, monsters[i].y), to: (h.x, h.y)), !r.isEmpty else { return }
         log.append("\(tables?.creature(monsters[i].creature)?.plural ?? monsters[i].creature) attack \(h.name)!")
         h.target = nil
-        charge = (i, h, Array(r.dropLast()), 0)
-        if r.count == 1 { finishCharge() }
+        // t_enemy_army_attack: the stack's walk list stops before the army (its cell is the stop)
+        let path = Array(r.dropLast())
+        var steps: [Int] = [], px = monsters[i].x, py = monsters[i].y
+        for c in path { steps.append(ArmyWalk.distance(px, py, c.x, c.y)); px = c.x; py = c.y }
+        charge = Charge(monster: i, hero: h, path: path, walk: ArmyWalk(steps: steps, gait: gait(monsters[i].model)),
+                        facing: path.first.map { Hero.facing(dx: $0.x - monsters[i].x, dy: $0.y - monsters[i].y) } ?? "s")
+        if path.isEmpty { finishCharge() }
     }
 
     /// A click while the army walks only stops it (0x4f5d58 -> 0x546c20): it ends the step it is
@@ -256,6 +261,7 @@ extension GameState {
         h.plan = Array(h.path.dropFirst()) + h.plan
         h.path = [h.path[0]]
         h.walkCut = true
+        h.walkAnim?.stopAfterCurrentStep(gait(h.model))
     }
 }
 

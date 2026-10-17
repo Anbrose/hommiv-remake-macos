@@ -141,10 +141,21 @@ final class GuardZoneTests: XCTestCase {
         XCTAssertEqual(h.plan.last.map { [$0.x, $0.y] }, [m.0 - 2, m.1])
         g.click(hero: h, x: m.0 - 2, y: m.1)
         XCTAssertTrue(h.isWalking)
-        run(g)
+        var heroStates: [String] = [], stackStates: [String] = []
+        for _ in 0..<900 {
+            g.update(dt: 1.0 / 30)
+            if let s = h.animState, heroStates.last != s { heroStates.append(s) }
+            if let c = g.charge, stackStates.last != c.animState { stackStates.append(c.animState) }
+            if g.pendingBattle != nil { break }
+        }
         XCTAssertEqual([h.x, h.y], [m.0 - 2, m.1])
         XCTAssertEqual(g.pendingBattle?.monster, i)
         XCTAssertEqual([g.monsters[i].x, g.monsters[i].y], [m.0 - 1, m.1])   // it came to the hero
+        // both walks start with the prewalk and end with the postwalk (re/adventure_walk_spec.md §3, §6)
+        XCTAssertEqual(heroStates, ["prewalk", "walk", "postwalk", "attack"])
+        XCTAssertEqual(stackStates.first, "prewalk")
+        XCTAssertEqual(stackStates.last, "postwalk")
+        XCTAssertEqual(g.monsters[i].facing, "ne")   // toward the hero
     }
 
     /// A route cannot cross a seen zone (forced exits toward the stack): it goes round.
@@ -184,6 +195,17 @@ final class GuardZoneTests: XCTestCase {
         run(g)
         XCTAssertEqual(g.pendingBattle?.monster, i)
         XCTAssertEqual([h.x, h.y], [last.x, last.y])
+        // the walk ended facing the stack (0x544ce0), the hero in his attack state and the stack
+        // turned toward him (0x522560); re/adventure_walk_spec.md §5-6
+        XCTAssertEqual(h.facing, Hero.facing(dx: m.0 - h.x, dy: m.1 - h.y))
+        XCTAssertEqual(h.animState, "attack")
+        XCTAssertEqual(g.monsters[i].facing, GameState.facing(from: m, toward: (h.x, h.y)))
+        // the combat screen took the battle: no stack falls on the hero while it is open
+        g.pendingBattle = nil; g.battleUnderway = true
+        for _ in 0..<10 { g.update(dt: 1.0 / 30) }
+        XCTAssertNil(g.pendingBattle)
+        XCTAssertNil(g.charge)
+        g.battleUnderway = false
     }
 
     /// An object next to the hero takes two clicks too (its route is the one step into it).

@@ -13,10 +13,15 @@ extension GameState {
             return out
         }
         switch (p.type, p.subtype) {
-        case ("teacher", _):   // an altar teaches its family: tactician, trainer, scout, noble, priest, scholar, lich, sorcerer, druid
+        case ("teacher", _), ("random_teacher", _):
+            // an altar teaches its family (t_adv_altar +0x48 = the subtype: tactician, trainer, scout, noble,
+            // priest, scholar, lich, sorcerer, druid); a random altar (0x42e5c0) teaches what its resolved
+            // Scholars.<name> sprite shows, so the sprite and the skill agree
             let subs = ["tactician", "trainer", "scout", "noble", "priest", "scholar", "lich", "sorcerer", "druid"]
-            st.skills = [subs.firstIndex(of: p.subtype) ?? rng(9)]
-        case ("random_teacher", _): st.skills = [rng(9)]
+            let sprites = ["tactician": 0, "combat": 1, "scout": 2, "noble": 3, "priest": 4, "scholar": 5, "lich": 6, "sorcerer": 7, "druid": 8]
+            let lower = p.name.lowercased()
+            let shown = sprites.first { lower.contains("scholars.\($0.key).") }?.value
+            st.skills = [subs.firstIndex(of: p.subtype) ?? shown ?? rng(9)]
         case ("school", "witchs_hut"): st.skills = pick(GameState.magicPrimaries, 1)
         case ("school", "beastmasters_hut"): st.skills = pick(GameState.mightPrimaries, 1)
         case ("school", "school_of_magic"): st.skills = pick(GameState.magicPrimaries, 2)
@@ -60,7 +65,6 @@ extension GameState {
         h.learn(s, level: l)
         h.grantSchoolSpells(random: &random)
         h.reconsiderClass()
-        floaters.append((skillLabel(s, l), h.x, h.y))
     }
 
     func visitMore(_ hero: Hero, _ p: MapScene.Placed, _ st: inout ObjectState) -> Bool {
@@ -68,85 +72,17 @@ extension GameState {
         let key = objectKey(p)
         switch p.type {
         case "teacher", "random_teacher":
-            // one free step in the altar's family for one hero, then the altar is gone (0x42d830)
-            guard let fam = st.skills.first else { return true }
-            var options: [(Hero, Int, Int)] = []
-            for h in heroes {
-                if h.skill(id: fam) == 0 {
-                    if (0..<9).filter({ h.skill(id: $0) > 0 }).count < 5 { options.append((h, fam, 0)) }
-                } else {
-                    for i in 0..<36 where RuleTables.primary(of: i) == fam && h.skill(id: i) < 5 {
-                        let l = h.skill(id: i)   // the next level, 0 basic ... 4
-                        if h.meets(i, l) { options.append((h, i, l)) }
-                    }
-                }
-            }
-            dialogueSound(29)
-            if options.isEmpty { say(p, heroes.isEmpty ? "no_heroes" : "denied"); return true }
-            choice = (objectText(p, "Initial") ?? "Choose a skill to learn.", options.map { "\($0.0.name): \(skillLabel($0.1, $0.2))" }, { [weak self] k in
-                guard let self = self else { return }
-                let o = options[k]
-                self.teach(o.0, o.1, o.2)
-                self.say(p, "learned_skill", ["%hero_name": o.0.name, "%skill_name": self.skillLabel(o.1, o.2)])
-                self.remove(p)
-            })
+            visitAltar(hero, p, st)
         case "school" where ["witchs_hut", "beastmasters_hut"].contains(p.subtype):
-            // free: every hero who can learns the primary at basic (0x58ae80)
-            guard let s = st.skills.first else { return true }
-            let learners = heroes.filter { h in h.skill(id: s) == 0 && (0..<9).filter({ h.skill(id: $0) > 0 }).count < 5 }
-            if heroes.isEmpty { say(p, "no_heroes") }
-            else if learners.isEmpty { say(p, heroes.allSatisfy { $0.skill(id: s) > 0 } ? "already_known" : "cannot_learn", ["%skill_name": skillLabel(s, 0)]) }
-            else { for h in learners { teach(h, s, 0) }; say(p, "initial", ["%skill_name": skillLabel(s, 0)]) }
-            dialogueSound(29)
-        case "school" where ["school_of_magic", "school_of_war", "magic_university", "war_college"].contains(p.subtype):
-            // a class for 2000 gold: one of the two primaries once per hero, or any of the four secondaries
-            let university = p.subtype == "magic_university" || p.subtype == "war_college"
-            var options: [(Hero, Int)] = []
-            for h in heroes where university || !h.visitedObjects.contains(key) {
-                for s in st.skills where h.skill(id: s) == 0 {
-                    if university ? h.meets(s, 0) : (0..<9).filter({ h.skill(id: $0) > 0 }).count < 5 { options.append((h, s)) }
-                }
-            }
-            dialogueSound(29)
-            if options.isEmpty { say(p, heroes.isEmpty ? "no_heroes" : university ? "university_brain_full" : "Rejected"); return true }
-            choice = (objectText(p, "Initial") ?? objectText(p, "help") ?? "Learn a skill for 2000 gold?", options.map { "\($0.0.name): \(skillLabel($0.1, 0)) (2000)" }, { [weak self] k in
-                guard let self = self else { return }
-                guard self.resources["Gold", default: 0] >= 2000 else { self.say(p, university ? "university_no_money" : "denied"); return }
-                self.resources["Gold", default: 0] -= 2000
-                let o = options[k]
-                self.teach(o.0, o.1, 0); o.0.visitedObjects.insert(key)
-                self.say(p, "paid", ["%hero_name": o.0.name, "%skill_name": self.skillLabel(o.1, 0)])
-            })
-        case "school":   // library, war institute: a random step up for 2000 gold per hero, once each
-            let magic = p.subtype == "library"
-            let fresh = heroes.filter { !$0.visitedObjects.contains(key) }
-            dialogueSound(10)
-            guard !fresh.isEmpty else { say(p, heroes.isEmpty ? "need_hero" : "Empty"); return true }
-            let total = 2000 * fresh.count
-            question = (objectText(p, "Initial") ?? "Pay \(total) gold?", { [weak self] in
-                guard let self = self else { return }
-                guard self.resources["Gold", default: 0] >= total else { self.say(p, "denied"); return }
-                self.resources["Gold", default: 0] -= total
-                for h in fresh {
-                    h.visitedObjects.insert(key)
-                    let steps = (0..<36).filter { i in
-                        let fam = RuleTables.primary(of: i)
-                        return (magic ? fam >= 4 : fam < 4) && h.skill(id: fam) > 0 && h.skill(id: i) < 5 && h.meets(i, h.skill(id: i))
-                    }
-                    if !steps.isEmpty { let i = steps[self.rng(steps.count)]; self.teach(h, i, h.skill(id: i)) }
-                }
-                self.say(p, "paid")
-            })
+            visitHut(hero, p, st)
+        case "school" where ["school_of_magic", "school_of_war"].contains(p.subtype):
+            visitSchool(hero, p, st)
+        case "school" where ["magic_university", "war_college"].contains(p.subtype):
+            visitUniversity(hero, p, st)
+        case "school":
+            visitLibrary(hero, p)
         case "shrine", "random_shrine":
-            // every hero whose school skill reaches the spell's level learns it (0x46b8a0)
-            guard let sp = st.spell else { return true }
-            let def = RuleTables.spells[sp]
-            let subs = ["%spell_name": def.name, "%magic_type": def.school.capitalized, "%skill_name": skillLabel(def.schoolSkill, max(0, def.level - 1))]
-            let learners = heroes.filter { !$0.spells.contains(sp) && $0.canLearn(sp) }
-            if !learners.isEmpty { for h in learners { h.spells.insert(sp) }; say(p, "initial", subs) }
-            else if heroes.contains(where: { $0.spells.contains(sp) }) { say(p, "empty", subs) }
-            else { say(p, "denied", subs) }
-            dialogueSound(22)
+            visitShrine(hero, p, st)
         case "subterranean_gate":
             guard let to = st.partner else { say(p, "denied"); return true }
             teleport(hero, to: to, p)

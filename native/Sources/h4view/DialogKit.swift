@@ -168,6 +168,7 @@ extension Renderer {
         if shop != nil { return shopTip(x: x, y: y) }
         if puzzle != nil { return puzzleTip(x: x, y: y) }
         if thievesGuildOpen { return thievesGuildTip(x: x, y: y) }
+        if game?.heroPick != nil { return heroPickTip(x: x, y: y) }
         return nil
     }
     var dialogOrigin800: (Int, Int) { ((AdventureUI.width - 800) / 2, (AdventureUI.height - 600) / 2) }

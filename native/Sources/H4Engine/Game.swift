@@ -410,6 +410,8 @@ public final class GameState {
     public var question: (text: String, yes: () -> Void)?
     /// A choice an object offers: the question, the options, what picking one does.
     public var choice: (text: String, options: [String], pick: (Int) -> Void)?
+    /// An altar's or a magic gem's hero pick (the UI shows it; OK runs `ok` with the chosen hero).
+    public var heroPick: HeroPick?
     /// A gateway's destinations when there are two or more (t_dialog_teleporter_entrance): the
     /// object's name and text, each destination as "level|x|y" with its label.
     public var teleportChoice: (title: String, text: String, dests: [String], labels: [String], pick: (Int) -> Void)?
@@ -698,6 +700,8 @@ public final class GameState {
     public var enteredTown: Int?
     /// A message's title banner and the artifact it hands over (by the message's text).
     public var messageTitles: [String: String] = [:], messageArtifacts: [String: Int] = [:]
+    /// Pictures a message shows under its text (a learned skill and the hero, ...), by the message.
+    public var messagePictures: [String: [MessagePicture]] = [:]
     /// The campaign being played (its standard id and this scenario's index).
     public var campaign: (id: Int, index: Int)?
     /// The army that walked into the town now on screen (it is the visiting row, 0x8ac0c0's army).
@@ -1352,7 +1356,7 @@ public final class GameState {
     public var chestOffer: (hero: Hero, gold: Int, experience: Int)?
     public func resolveChest(gold: Bool) {
         guard let c = chestOffer else { return }
-        if gold { resources["Gold", default: 0] += c.gold; floaters.append(("+\(c.gold) gold", c.hero.x, c.hero.y)) }
+        if gold { resources["Gold", default: 0] += c.gold }   // (no floating text: 0x8c7260)
         else {   // shared equally by the army's heroes (0x641310 with the equal split)
             let hs = c.hero.members
             for h in hs { giveExperience(c.experience / hs.count, toOnly: h) }

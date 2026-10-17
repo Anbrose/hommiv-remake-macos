@@ -329,6 +329,13 @@ public final class Hero {
         return (Float(x) + (Float(next.x) - Float(x)) * progress, Float(y) + (Float(next.y) - Float(y)) * progress)
     }
 
+    /// The cell the army is sorted by on the map (heroes4.exe t_army_mover 0x545560 / 0x545d90):
+    /// it moves onto the next cell when half the step is walked, while its picture moves smoothly.
+    public var drawCell: (x: Int, y: Int) {
+        guard let next = path.first, progress >= 0.5 else { return (x, y) }
+        return (next.x, next.y)
+    }
+
     /// Pixels the hero is raised at its current (fractional) position.
     public func elevation(in p: Passability) -> Float {
         let here = p.elevation(x, y)
@@ -1432,6 +1439,18 @@ public final class GameState {
         guard pts.count > 1 else { return (c.monster, Float(m.x), Float(m.y)) }
         let a = pts[max(0, k)], b = pts[max(0, k) + 1]
         return (c.monster, Float(a.x) + Float(b.x - a.x) * f, Float(a.y) + Float(b.y - a.y) * f)
+    }
+    /// The cell a charging stack is sorted by: like a walking army (Hero.drawCell), the next cell
+    /// from half the step on.
+    public var chargeDrawCell: (x: Int, y: Int)? {
+        guard let c = charge, c.monster < monsters.count else { return nil }
+        let m = monsters[c.monster]
+        let pts = [(x: m.x, y: m.y)] + c.path
+        guard pts.count > 1 else { return (m.x, m.y) }
+        let t = min(Float(pts.count - 1), c.progress)
+        let k = min(pts.count - 2, Int(t)), f = t - Float(max(0, k))
+        let a = pts[max(0, k)], b = pts[max(0, k) + 1]
+        return f >= 0.5 ? (b.x, b.y) : (a.x, a.y)
     }
 
     /// Advance walking heroes by dt seconds.

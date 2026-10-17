@@ -887,17 +887,19 @@ final class Renderer: NSObject, MTKViewDelegate {
         ((y - x) * 32 + Float(scene.map.size * 32 + 32), (x + y) * 16 + 32)
     }
 
-    /// The quads of one hero at time t: its current sequence frame (and shadow) at its map position.
-    func heroQuads(_ h: Hero, at t: Double) -> [Quad] {
-        guard let r = resolver else { print("hero: no resolver"); return [] }
+    /// The pieces of one army at time t (heroes4.exe t_abstract_adv_actor): the selection ring
+    /// under it, its shadow (drawn with the other shadows), the current sequence frame, and the
+    /// owner's flag.
+    func heroParts(_ h: Hero, at t: Double) -> (ring: Quad?, shadow: Quad?, body: Quad?, flag: Quad?) {
+        guard let r = resolver else { print("hero: no resolver"); return (nil, nil, nil, nil) }
         let state = h.isWalking ? "walk" : "wait"
         // at sea the army is drawn as its ship (adv_actor.ships.<alignment>)
         let actorName = h.boat.map { "ships.\(["life", "order", "death", "chaos", "nature", "might"].contains($0) ? $0 : "generic")" } ?? h.actor
-        guard let entry = r.sequence(actor: actorName, state: state, facing: h.facing) else { print("hero: no sequence for \(h.actor) \(state) \(h.facing)"); return [] }
+        guard let entry = r.sequence(actor: actorName, state: state, facing: h.facing) else { print("hero: no sequence for \(h.actor) \(state) \(h.facing)"); return (nil, nil, nil, nil) }
         if actorSprites[entry] == nil {
             do { actorSprites[entry] = try Sprite(data: r.archive.payload(entry)) } catch { print("hero: \(entry): \(error)") }
         }
-        guard let s = actorSprites[entry] else { return [] }
+        guard let s = actorSprites[entry] else { return (nil, nil, nil, nil) }
         let tl = s.timeline
         var frame = s.frames.first, shadow = frame.flatMap { s.shadow(for: $0) }
         if !tl.isEmpty {
@@ -912,74 +914,150 @@ final class Renderer: NSObject, MTKViewDelegate {
         let (sx, sy0) = screen(px, py)
         let sy = sy0 - (game.map { h.elevation(in: $0.passability) } ?? 0)   // raised on bridges
         let ox = Int(sx) + Int(s.origin.x), oy = Int(sy) - 16 + Int(s.origin.y)   // origin is from the cell's top vertex
-        var out: [Quad] = []
+        var parts: (ring: Quad?, shadow: Quad?, body: Quad?, flag: Quad?) = (nil, nil, nil, nil)
         // the selected army's ring (adv_object.internal.selected.army, 8 turning frames) under its feet
         if h === game?.heroes.first, let ring = arrowSprite("selected.army"), !ring.frames.isEmpty {
             let f = ring.frames[Int(t / 0.1) % ring.frames.count]
             let rx = Int(sx) + Int(ring.origin.x), ry = Int(sy) + Int(ring.origin.y)   // (centred under the feet: the cell's bottom vertex)
-            out.append(Quad(texture: texture(for: f, of: "selected.army"), x: rx + f.box.left, y: ry + f.box.top, w: f.bitmap.width, h: f.bitmap.height))
+            parts.ring = Quad(texture: texture(for: f, of: "selected.army"), x: rx + f.box.left, y: ry + f.box.top, w: f.bitmap.width, h: f.bitmap.height)
         }
-        if let sh = shadow { out.append(Quad(texture: texture(for: sh, of: entry), x: ox + sh.box.left, y: oy + sh.box.top, w: sh.bitmap.width, h: sh.bitmap.height)) }
-        if let f = frame { out.append(Quad(texture: texture(for: f, of: entry), x: ox + f.box.left, y: oy + f.box.top, w: f.bitmap.width, h: f.bitmap.height)) }
+        if let sh = shadow { parts.shadow = Quad(texture: texture(for: sh, of: entry), x: ox + sh.box.left, y: oy + sh.box.top, w: sh.bitmap.width, h: sh.bitmap.height) }
+        if let f = frame { parts.body = Quad(texture: texture(for: f, of: entry), x: ox + f.box.left, y: oy + f.box.top, w: f.bitmap.width, h: f.bitmap.height) }
         // the owner's flag at the actor model's flag point (an army with no owner, 6, has none)
         // (its phase keyed by the army, an empty ship's by its cell, so it does not jump as it walks)
         let id = ObjectIdentifier(h).hashValue, phase = h.actor.isEmpty ? (h.x, h.y) : (id & 0xffff, (id >> 16) & 0xffff)
-        if let q = actorFlag(actor: actorName, owner: h.owner, imageX: Int(sx), imageY: Int(sy) - 16, cellX: phase.0, cellY: phase.1, at: t) { out.append(q) }
+        parts.flag = actorFlag(actor: actorName, owner: h.owner, imageX: Int(sx), imageY: Int(sy) - 16, cellX: phase.0, cellY: phase.1, at: t)
         if ProcessInfo.processInfo.environment["H4DEBUG"] != nil {
+            let out = [parts.ring, parts.shadow, parts.body, parts.flag].compactMap { $0 }
             print("hero: \(entry) at cell (\(px),\(py)) screen (\(sx),\(sy)) origin \(s.origin) frame \(frame?.name ?? "-") box \(frame.map { "\($0.box)" } ?? "-") -> \(out.map { "(\($0.x),\($0.y) \($0.w)x\($0.h))" })")
+        }
+        return parts
+    }
+
+    /// The quads of one army at time t, in its own drawing order (ring, shadow, body, flag).
+    func heroQuads(_ h: Hero, at t: Double) -> [Quad] {
+        let p = heroParts(h, at: t)
+        return [p.ring, p.shadow, p.body, p.flag].compactMap { $0 }
+    }
+
+    /// One piece of the adventure map's object sort (re/adventure_draw_order_spec.md §3): an
+    /// object's 32-pixel column, its flag, or an army's ring, body or flag.
+    struct MapPiece {
+        var key: Int          // depth - (x + y): larger is further back
+        var seq: Int          // the object's place in the map (earlier is behind on a tie)
+        var sub: Int          // the subimage's index within its object
+        var quads: [Quad]
+        var body = false      // an army's body: shown through what stands in front of it
+    }
+    /// The draw order of the pieces (0x406f00): key descending, then seq, then subimage index.
+    static func drawsBefore(_ a: MapPiece, _ b: MapPiece) -> Bool { DrawOrder.before((a.key, a.seq, a.sub), (b.key, b.seq, b.sub)) }
+    /// Seq bases for objects the remake does not have in the map's list: empty boats, then armies
+    /// (made after the map is loaded), then path arrows (made when a route is shown).
+    static let boatSeq = 1 << 24, armySeq = 1 << 25, arrowSeq = 1 << 26
+
+    /// An overlay object's pieces: one per 32-pixel column of its picture (0x7d1d10), each at
+    /// the column's depth from the model, then its flag at the depth of the frontmost column
+    /// it meets (0x411a40).
+    func columnPieces(sprite s: Sprite, quads: [Quad], flag: Quad?, anchorX: Int, anchorY: Int, cellX: Int, cellY: Int, seq: Int) -> [MapPiece] {
+        let b = s.imageBounds
+        guard b.right > b.left else { return [MapPiece(key: DrawOrder.key(depth: DrawOrder.armyDepth, cellX: cellX, cellY: cellY), seq: seq, sub: 0, quads: quads + (flag.map { [$0] } ?? []))] }
+        let c0 = Int((Double(b.left) / 32).rounded(.down)), c1 = Int((Double(b.right) / 32).rounded(.up))
+        var out: [MapPiece] = []
+        for c in c0..<c1 {
+            let clip = (x: anchorX + 32 * c, y: anchorY + b.top, w: 32, h: b.bottom - b.top)
+            out.append(MapPiece(key: DrawOrder.key(depth: s.columnDepth(c), cellX: cellX, cellY: cellY), seq: seq, sub: c - c0, quads: quads.map { var q = $0; q.clip = clip; return q }))
+        }
+        if let f = flag {
+            let fx0 = f.x - anchorX, fx1 = fx0 + f.w, fy0 = f.y - anchorY, fy1 = fy0 + f.h
+            var depth: Int? = nil
+            for c in c0..<c1 where max(32 * c, b.left) < fx1 && min(32 * c + 32, b.right) > fx0 && b.top < fy1 && b.bottom > fy0 {
+                depth = min(depth ?? Int.max, s.columnDepth(c))
+            }
+            let d = depth ?? -((s.flagPoint?.y ?? 0) / 16)
+            out.append(MapPiece(key: DrawOrder.key(depth: d, cellX: cellX, cellY: cellY), seq: seq, sub: c1 - c0, quads: [f]))
         }
         return out
     }
 
-    /// A cell's draw depth, raised past every large object whose footprint it stands in front of.
-    /// An object sorts by its footprint's bottom row, but a cell beside one of its front walls
-    /// (beyond it in x or in y, e.g. a town's gate) is nearer the viewer than the whole object.
-    func inFront(_ x: Int, _ y: Int, _ depth: Float) -> Float {
-        var d = depth
-        for p in scene.placed where p.sprite.footprint.w * p.sprite.footprint.h > 1 && Float(p.depth) >= d {
-            let x0 = p.cellX, y0 = p.cellY, x1 = p.cellX + p.sprite.footprint.w, y1 = p.cellY + p.sprite.footprint.h
-            guard x >= x0 - 1, y >= y0 - 1, x <= x1 + 1, y <= y1 + 1 else { continue }
-            let beyondX = x >= x1 && y >= y0, beyondY = y >= y1 && x >= x0
-            if beyondX || beyondY { d = Float(p.depth) + 1 }
+    /// An army's pieces (0x403950: every subimage at the model's depth, -1): [ring], body, [flag].
+    func armyPieces(ring: Quad?, body: Quad?, flag: Quad?, cell: (x: Int, y: Int), seq: Int) -> [MapPiece] {
+        let key = DrawOrder.key(depth: DrawOrder.armyDepth, cellX: cell.x, cellY: cell.y)
+        var out: [MapPiece] = []
+        if let r = ring { out.append(MapPiece(key: key, seq: seq, sub: 0, quads: [r])) }
+        if let q = body { out.append(MapPiece(key: key, seq: seq, sub: 1, quads: [q], body: true)) }
+        if let f = flag { out.append(MapPiece(key: key, seq: seq, sub: 2, quads: [f])) }
+        return out
+    }
+
+    /// The see-through pass (0x77fd10, last loop): in every 32x32 tile where anything but an army
+    /// body is drawn after an army's body, the body is drawn again at alpha 8 of 15, cut to the tile.
+    static func ghostQuads(_ pieces: [MapPiece]) -> [Quad] {
+        func rect(_ q: Quad) -> (Int, Int, Int, Int) {
+            guard let c = q.clip else { return (q.x, q.y, q.x + q.w, q.y + q.h) }
+            return (max(q.x, c.x), max(q.y, c.y), min(q.x + q.w, c.x + c.w), min(q.y + q.h, c.y + c.h))
         }
-        return d
+        func tiles(_ r: (Int, Int, Int, Int)) -> [Int64] {
+            guard r.2 > r.0, r.3 > r.1 else { return [] }
+            var t: [Int64] = []
+            for ty in (r.1 >> 5)...((r.3 - 1) >> 5) { for tx in (r.0 >> 5)...((r.2 - 1) >> 5) { t.append(Int64(ty) << 32 | Int64(UInt32(bitPattern: Int32(tx)))) } }
+            return t
+        }
+        var front = Set<Int64>()   // tiles with a non-body piece in front of what comes next (scanning back to front)
+        var out: [Quad] = []
+        for p in pieces.reversed() {
+            if p.body {
+                for q in p.quads {
+                    let r = rect(q)
+                    for k in tiles(r) where front.contains(k) {
+                        let tx = Int(Int32(truncatingIfNeeded: k)) << 5, ty = Int(k >> 32) << 5
+                        var g = q; g.alpha = 8.0 / 15
+                        let x0 = max(tx, r.0), y0 = max(ty, r.1), x1 = min(tx + 32, r.2), y1 = min(ty + 32, r.3)
+                        g.clip = (x0, y0, x1 - x0, y1 - y0)
+                        out.append(g)
+                    }
+                }
+            } else {
+                for q in p.quads { for k in tiles(rect(q)) { front.insert(k) } }
+            }
+        }
+        return out
     }
 
     func quads(at t: Double) -> [Quad] {
         var out = terrain
-        let terrainCount = out.count
+        var underlays: [(seq: Int, quads: [Quad])] = []
         var shadows: [Quad] = []
+        var pieces: [MapPiece] = []
         let minX = pan.x - 512, minY = pan.y - 512, maxX = pan.x + viewSize.x / zoom + 512, maxY = pan.y + viewSize.y / zoom + 512
-        // heroes are sorted in among the objects by the same depth rule (cell row, then column)
-        var pending: [(depth: Float, quads: [Quad])] = []
         if let g = game {
             // empty ships on the water
-            for b in g.boats where b.z == g.level && g.fogState(b.x, b.y) != GameState.fogUnexplored {
+            for (i, b) in g.boats.enumerated() where b.z == g.level && g.fogState(b.x, b.y) != GameState.fogUnexplored {
                 let ship = Hero(actor: "", x: b.x, y: b.y, movement: 0)
                 ship.boat = b.alignment; ship.facing = "sw"; ship.owner = b.owner ?? 6
-                pending.append((inFront(b.x, b.y, Float((b.x + b.y) * 1000 + (b.y - b.x) + 500)), heroQuads(ship, at: t)))
+                let p = heroParts(ship, at: t)
+                if let s = p.shadow { shadows.append(s) }
+                pieces += armyPieces(ring: p.ring, body: p.body, flag: p.flag, cell: (b.x, b.y), seq: Renderer.boatSeq + i)
             }
-            for h in (g.heroes + g.enemyHeroes.filter { g.isVisible($0) }) where h.z == g.level {
+            var arrowIndex = 0
+            for (i, h) in (g.heroes + g.enemyHeroes.filter { g.isVisible($0) }).enumerated() where h.z == g.level {
                 for a in (g.heroes.contains(where: { $0 === h }) && settings.showMovementPath ? g.arrows(for: h) : []) {   // (the player's armies; their colour need not be the first)
-                    // arrows sort with the objects (a tree in front hides them) and ride up onto bridges
+                    // the arrows are map objects of their own (t_path_arrow) and ride up onto bridges
                     guard let s = arrowSprite(a.name), let f = s.frames.first else { continue }
                     let raise = g.passability.elevation(a.x, a.y)
                     let (sx, sy) = screen(Float(a.x), Float(a.y))
-                    let ox = Int(sx) + Int(s.origin.x), oy = Int(sy - raise) - 16 + Int(s.origin.y)
-                    var q: [Quad] = []
-                    if let sh = s.shadow(for: f) { q.append(Quad(texture: texture(for: sh, of: a.name), x: ox + sh.box.left, y: oy + sh.box.top, w: sh.bitmap.width, h: sh.bitmap.height)) }
-                    q.append(Quad(texture: texture(for: f, of: a.name), x: ox + f.box.left, y: oy + f.box.top, w: f.bitmap.width, h: f.bitmap.height))
-                    pending.append((inFront(a.x, a.y, Float((a.x + a.y) * 1000 + (a.y - a.x) + 499) + (raise > 0 ? 2500 : 0)), q))
+                    let ax = Int(sx), ay = Int(sy - raise) - 16
+                    let ox = ax + Int(s.origin.x), oy = ay + Int(s.origin.y)
+                    if let sh = s.shadow(for: f) { shadows.append(Quad(texture: texture(for: sh, of: a.name), x: ox + sh.box.left, y: oy + sh.box.top, w: sh.bitmap.width, h: sh.bitmap.height)) }
+                    let q = Quad(texture: texture(for: f, of: a.name), x: ox + f.box.left, y: oy + f.box.top, w: f.bitmap.width, h: f.bitmap.height)
+                    pieces += columnPieces(sprite: s, quads: [q], flag: nil, anchorX: ax, anchorY: ay, cellX: a.x, cellY: a.y, seq: Renderer.arrowSeq + arrowIndex)
+                    arrowIndex += 1
                 }
-                let (px, py) = h.position
-                // on a bridge the hero is drawn after the bridge pieces around it
-                let raised: Float = h.elevation(in: g.passability) > 0 ? 2500 : 0
-                pending.append((inFront(Int(px.rounded()), Int(py.rounded()), (px + py) * 1000 + (py - px) + 500 + raised), heroQuads(h, at: t)))
+                let p = heroParts(h, at: t)
+                if let s = p.shadow { shadows.append(s) }
+                pieces += armyPieces(ring: p.ring, body: p.body, flag: p.flag, cell: h.drawCell, seq: Renderer.armySeq + i)
             }
-            pending.sort { $0.depth < $1.depth }
         }
         for p in scene.placed {
-            while let first = pending.first, first.depth <= Float(p.depth) { out += first.quads; pending.removeFirst() }
             if Float(p.anchorX) < minX || Float(p.anchorX) > maxX || Float(p.anchorY) < minY || Float(p.anchorY) > maxY { continue }
             // under the shroud nothing shows; a wandering army only where it is seen now
             // (other objects are drawn and the shroud laid over them cell by cell, as the original does)
@@ -987,31 +1065,42 @@ final class Renderer: NSObject, MTKViewDelegate {
                 if p.type == "random_monster" || p.type == "monster" || p.type == "army", let i = g.monster(for: p), !g.monsterSeen(i) { continue }
             }
             // a wandering stack stands in the turning dashed ring (animation.highlight_ring), centred under its feet
-            if let g = game, let i = g.monster(for: p), g.monsters[i].bank == nil, let ring = highlightRing, !ring.frames.isEmpty {
-                let f = ring.frames[Int(t / 0.08) % ring.frames.count]
-                out.append(Quad(texture: texture(for: f, of: "highlight_ring"), x: p.anchorX - f.bitmap.width / 2, y: p.anchorY - 2 - f.bitmap.height / 2, w: f.bitmap.width, h: f.bitmap.height))
+            var ring: Quad? = nil
+            if let g = game, let i = g.monster(for: p), g.monsters[i].bank == nil, let r = highlightRing, !r.frames.isEmpty {
+                let f = r.frames[Int(t / 0.08) % r.frames.count]
+                ring = Quad(texture: texture(for: f, of: "highlight_ring"), x: p.anchorX - f.bitmap.width / 2, y: p.anchorY - 2 - f.bitmap.height / 2, w: f.bitmap.width, h: f.bitmap.height)
             }
             let (f, sh) = frame(of: p, at: t)
-            var ox = p.anchorX + Int(p.sprite.origin.x), oy = p.anchorY + Int(p.sprite.origin.y)
-            // a wandering stack walking up to a hero: drawn where it has got to
+            var ax = p.anchorX, ay = p.anchorY, cell = (x: p.cellX, y: p.cellY)
+            // a wandering stack walking up to a hero: drawn where it has got to, sorted as an army is
             if let g = game, let cp = g.chargePosition, g.monster(for: p) == cp.monster {
                 let (sx, sy) = screen(cp.x, cp.y)
-                ox = Int(sx) + Int(p.sprite.origin.x); oy = Int(sy) - 16 + Int(p.sprite.origin.y)
+                ax = Int(sx); ay = Int(sy) - 16
+                if let c = g.chargeDrawCell { cell = c }
             }
+            let ox = ax + Int(p.sprite.origin.x), oy = ay + Int(p.sprite.origin.y)
+            var qs: [Quad] = []
             if let base = p.sprite.baseFrame, f.name != base.name {   // animated towns: frames are deltas over base_frame
-                if let s = sh { shadows.append(Quad(texture: texture(for: s, of: p.name), x: ox + s.box.left, y: oy + s.box.top, w: s.bitmap.width, h: s.bitmap.height)) }
-                out.append(Quad(texture: texture(for: base, of: p.name), x: ox + base.box.left, y: oy + base.box.top, w: base.bitmap.width, h: base.bitmap.height))
-                out.append(Quad(texture: texture(for: f, of: p.name), x: ox + f.box.left, y: oy + f.box.top, w: f.bitmap.width, h: f.bitmap.height))
-            } else {
-                if let s = sh { shadows.append(Quad(texture: texture(for: s, of: p.name), x: ox + s.box.left, y: oy + s.box.top, w: s.bitmap.width, h: s.bitmap.height)) }
-                out.append(Quad(texture: texture(for: f, of: p.name), x: ox + f.box.left, y: oy + f.box.top, w: f.bitmap.width, h: f.bitmap.height))
+                qs.append(Quad(texture: texture(for: base, of: p.name), x: ox + base.box.left, y: oy + base.box.top, w: base.bitmap.width, h: base.bitmap.height))
             }
-            // an owned object's flag on it, behind whatever stands in front of the object
-            if let q = objectFlag(p, at: t) { out.append(q) }
+            qs.append(Quad(texture: texture(for: f, of: p.name), x: ox + f.box.left, y: oy + f.box.top, w: f.bitmap.width, h: f.bitmap.height))
+            if let s = sh { shadows.append(Quad(texture: texture(for: s, of: p.name), x: ox + s.box.left, y: oy + s.box.top, w: s.bitmap.width, h: s.bitmap.height)) }
+            let flag = objectFlag(p, at: t)
+            if !p.sprite.isAdvObject {   // an actor sequence: a wandering stack, sorted as an army
+                pieces += armyPieces(ring: ring, body: qs.last, flag: flag, cell: cell, seq: p.seq)
+            } else if p.sprite.underlay {   // moss, tufts, cracks ...: under everything, in map order
+                underlays.append((p.seq, (ring.map { [$0] } ?? []) + qs + (flag.map { [$0] } ?? [])))
+            } else {
+                if let r = ring { pieces.append(MapPiece(key: DrawOrder.key(depth: DrawOrder.armyDepth, cellX: cell.x, cellY: cell.y), seq: p.seq, sub: -1, quads: [r])) }
+                pieces += columnPieces(sprite: p.sprite, quads: qs, flag: flag, anchorX: ax, anchorY: ay, cellX: cell.x, cellY: cell.y, seq: p.seq)
+            }
         }
-        for p in pending { out += p.quads }
-        // the objects' shadows lie on the ground under every object (a wall's blocks do not shade each other)
-        out.insert(contentsOf: shadows, at: terrainCount)
+        // 0x77fd10: underlays, then every shadow, then the sorted pieces, then the see-through armies
+        for u in underlays.sorted(by: { $0.seq < $1.seq }) { out += u.quads }
+        out += shadows
+        pieces.sort(by: Renderer.drawsBefore)
+        for p in pieces { out += p.quads }
+        out += Renderer.ghostQuads(pieces)
         out += shroudQuads()
         if let g = game, showBlocked {   // on top of everything so buildings do not hide their own cells
             let n = g.map.size

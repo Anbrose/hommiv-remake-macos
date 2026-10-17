@@ -275,7 +275,7 @@ extension GameState {
     }
     func armyHeroes(_ hero: Hero) -> [Hero] { hero.members }
     /// Object types whose no_heroes / need_hero texts refuse an army without a hero.
-    static let heroOnlyObjects: Set<String> = ["fountain", "mana_recharger", "school", "teacher", "academy", "arena", "mercenary_camp",
+    static let heroOnlyObjects: Set<String> = ["fountain", "mana_recharger", "school", "academy", "arena", "mercenary_camp",
                                                "sacred_grove", "sphinx", "training_grounds", "tree_of_knowledge"]
 
     /// Debugging: visit an object as `hero` would (no walking).
@@ -359,15 +359,7 @@ extension GameState {
         case "academy", "arena", "training_grounds", "mercenary_camp", "sacred_grove", "sphinx":
             onceEachHero(hero, p)
         case "magic_gem":
-            // one hero takes it for good: opal +6 spell points, sapphire +6 defense, ruby +6 attack, emerald +2 speed
-            guard let h = heroes.first else { say(p, "no heroes"); break }
-            switch p.subtype {
-            case "opal_of_magic": h.spellPointBonus += 6; h.spellPoints = min(maxSpellPoints(h), spellPoints(h) + 6)
-            case "sapphire_of_health": h.defenseBonus += 6
-            case "ruby_of_offense": h.attackBonus += 6
-            default: h.speedBonus += 2
-            }
-            say(p, "Initial"); dialogueSound(15); remove(p)
+            visitGem(hero, p)
         case "mana_recharger":
             visitMana(hero, p)
         case "fountain" where ["fountain_of_strength", "spring_of_speed", "fountain_of_vigor", "pool_of_power"].contains(p.subtype):

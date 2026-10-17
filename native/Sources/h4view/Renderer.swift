@@ -202,6 +202,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     var townDrag: (row: Int, k: Int)? = nil
     var shop: ShopState? = nil             // a blacksmith's or conservatory's shop
     var sanctuary: SanctuaryOffer? = nil   // a sanctuary's dialog
+    var heroPickSelected: Int? = nil   // the ring picked in an altar's / magic gem's hero pick
     var puzzle: String? = nil              // the puzzle map shown (an obelisk colour)
     var thievesGuildOpen = false           // the Thieves Guild window (Game Menu, hot key G)
     var heroShown = 0                     // which of the army's heroes the hero screen shows
@@ -624,6 +625,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         out += levelUpQuads()
         out += splitQuads()
         out += choiceQuads()
+        out += heroPickQuads()
         out += teleporterQuads()
         out += caravanQuads()
         out += messageBoxQuads()

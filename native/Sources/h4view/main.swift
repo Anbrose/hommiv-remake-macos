@@ -446,6 +446,10 @@ if let out = snapshot {
             if !game.debugVisitDwelling(hero: h, p) { _ = game.debugVisit(hero: h, p) }
             if ProcessInfo.processInfo.environment["H4AIM"] != nil { aim(renderer, at: (p.cellX, p.cellY)) }
             if let c = game.choice { print("choice: \(c.text.prefix(60)) \(c.options)") }
+            if let hp = game.heroPick {
+                print("hero pick \(hp.kind): \(hp.title) / \(hp.text.prefix(60)) heroes \(hp.heroes.map { $0.name }) enabled \(hp.enabled)")
+                if ProcessInfo.processInfo.environment["H4PICKOK"] != nil { game.heroPick = nil; hp.ok(hp.heroes[0]) }   // with H4VISIT: take it (OK)
+            }
             if let q = game.question { print("question: \(q.text)") }
             if let o = game.dwellingOpen, let d = game.dwellingOffer(o.dwelling, for: o.hero) {
                 print("recruit \(d.creature.keyword): \(d.available) available, cost \(d.cost), most \(game.recruitMost(available: d.available, cost: d.cost))")
@@ -823,6 +827,7 @@ final class MapView: MTKView {
         if renderer.messageBoxClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale) { return }   // a script message: only OK
         if renderer.caravanUI != nil, renderer.townOpen == nil { renderer.caravanClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.choiceClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale, double: e.clickCount >= 2) { return }
+        if renderer.heroPickClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale) { return }
         if renderer.teleporterClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale, double: e.clickCount >= 2) { return }
         if renderer.levelUpClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale, double: e.clickCount >= 2) { return }
         if renderer.market != nil { renderer.marketClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }

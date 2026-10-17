@@ -150,9 +150,38 @@ extension Renderer {
         let title = prompt == nil ? g.messageTitles[text] : decor?.title, artifact = prompt == nil ? g.messageArtifacts[text] : nil
         var items: [(picture: UILayer?, caption: String)] = decor?.items ?? []
         if let a = artifact { items.append((artifactIcon(a), g.artifactName(a))) }
+        if prompt == nil { items += (g.messagePictures[text] ?? []).map(messagePicture) }
         guard let d = basicDialog(text: text, title: title, items: items, buttons: prompt?.cancel == true ? ["cancel", "ok"] : ["ok"]) else { return nil }
         let x = max(0, (AdventureUI.width - d.W) / 2), y = max(0, (AdventureUI.height - d.H) / 2)
         return MessageBox(x: x, y: y, w: d.W, h: d.H, d: d, title: title, artifact: artifact)
+    }
+    /// A message's picture as one image with its caption: a skill's 52-px icon in button.frame_52
+    /// (0x55c750, captioned "Basic Tactics"), a hero's 52-px portrait in control.creature_select's
+    /// ring (0x64ddb0, captioned with the name).
+    func messagePicture(_ p: MessagePicture) -> (picture: UILayer?, caption: String) {
+        func compose(_ key: String, _ parts: [(UILayer, Int, Int)]) -> UILayer? {
+            guard !parts.isEmpty else { return nil }
+            let x0 = parts.map { $0.1 }.min()!, y0 = parts.map { $0.2 }.min()!
+            let x1 = parts.map { $0.1 + $0.0.width }.max()!, y1 = parts.map { $0.2 + $0.0.height }.max()!
+            var bm = Bitmap(width: x1 - x0, height: y1 - y0)
+            for (l, x, y) in parts { AdventureUI.blend(l.bitmap, onto: &bm, x: x - x0, y: y - y0) }
+            return UILayer(name: key, kind: 4, x: 0, y: 0, width: bm.width, height: bm.height, bitmap: bm)
+        }
+        switch p {
+        case .skill(let s, let level):
+            let f = dFile("Button.Frame_52") ?? dFile("button.frame_52")
+            let box = dRect(f, "icon") ?? DRect(0, 0, 52, 52)
+            var parts = skillIcon(s, level: level + 1).map { ($0, box.x + $0.x, box.y + $0.y) }
+            if let fr = dLayer(f, "Released") ?? f?.layers.first(where: { $0.isImage }) { parts.append((fr, fr.x, fr.y)) }
+            return (compose("msgskill.\(s).\(level)", parts), skillName(s, level: level + 1).name)
+        case .hero(let h):
+            let sel = dFile("control.creature_select")
+            guard let ring = dLayer(sel, "Ring_Released") else { return (nil, h.name) }
+            var parts: [(UILayer, Int, Int)] = []
+            if let hi = dLayer(sel, "hero_icon"), let pt = ui?.portrait(keyword: h.keyword, alignment: h.alignment, size: 52) { parts.append((pt, hi.x, hi.y)) }
+            parts.append((ring, ring.x, ring.y))
+            return (compose("msghero.\(h.keyword)", parts), h.name)
+        }
     }
     func messageButton(_ name: String) -> (x: Int, y: Int, w: Int, h: Int)? {
         guard let m = messageBox(), let k = m.d.buttons.firstIndex(of: name) else { return nil }

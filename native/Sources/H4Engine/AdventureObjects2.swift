@@ -13,10 +13,15 @@ extension GameState {
             return out
         }
         switch (p.type, p.subtype) {
-        case ("teacher", _):   // an altar teaches its family: tactician, trainer, scout, noble, priest, scholar, lich, sorcerer, druid
+        case ("teacher", _), ("random_teacher", _):
+            // an altar teaches its family (t_adv_altar +0x48 = the subtype: tactician, trainer, scout, noble,
+            // priest, scholar, lich, sorcerer, druid); a random altar (0x42e5c0) teaches what its resolved
+            // Scholars.<name> sprite shows, so the sprite and the skill agree
             let subs = ["tactician", "trainer", "scout", "noble", "priest", "scholar", "lich", "sorcerer", "druid"]
-            st.skills = [subs.firstIndex(of: p.subtype) ?? rng(9)]
-        case ("random_teacher", _): st.skills = [rng(9)]
+            let sprites = ["tactician": 0, "combat": 1, "scout": 2, "noble": 3, "priest": 4, "scholar": 5, "lich": 6, "sorcerer": 7, "druid": 8]
+            let lower = p.name.lowercased()
+            let shown = sprites.first { lower.contains("scholars.\($0.key).") }?.value
+            st.skills = [subs.firstIndex(of: p.subtype) ?? shown ?? rng(9)]
         case ("school", "witchs_hut"): st.skills = pick(GameState.magicPrimaries, 1)
         case ("school", "beastmasters_hut"): st.skills = pick(GameState.mightPrimaries, 1)
         case ("school", "school_of_magic"): st.skills = pick(GameState.magicPrimaries, 2)
@@ -68,28 +73,7 @@ extension GameState {
         let key = objectKey(p)
         switch p.type {
         case "teacher", "random_teacher":
-            // one free step in the altar's family for one hero, then the altar is gone (0x42d830)
-            guard let fam = st.skills.first else { return true }
-            var options: [(Hero, Int, Int)] = []
-            for h in heroes {
-                if h.skill(id: fam) == 0 {
-                    if (0..<9).filter({ h.skill(id: $0) > 0 }).count < 5 { options.append((h, fam, 0)) }
-                } else {
-                    for i in 0..<36 where RuleTables.primary(of: i) == fam && h.skill(id: i) < 5 {
-                        let l = h.skill(id: i)   // the next level, 0 basic ... 4
-                        if h.meets(i, l) { options.append((h, i, l)) }
-                    }
-                }
-            }
-            dialogueSound(29)
-            if options.isEmpty { say(p, heroes.isEmpty ? "no_heroes" : "denied"); return true }
-            choice = (objectText(p, "Initial") ?? "Choose a skill to learn.", options.map { "\($0.0.name): \(skillLabel($0.1, $0.2))" }, { [weak self] k in
-                guard let self = self else { return }
-                let o = options[k]
-                self.teach(o.0, o.1, o.2)
-                self.say(p, "learned_skill", ["%hero_name": o.0.name, "%skill_name": self.skillLabel(o.1, o.2)])
-                self.remove(p)
-            })
+            visitAltar(hero, p, st)
         case "school" where ["witchs_hut", "beastmasters_hut"].contains(p.subtype):
             // free: every hero who can learns the primary at basic (0x58ae80)
             guard let s = st.skills.first else { return true }

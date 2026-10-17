@@ -330,9 +330,7 @@ if let cs = combatScreen, let updates = try? H4Archive(url: URL(fileURLWithPath:
 /// the requested zoom, the requested cell in the middle of the map viewport.
 func aim(_ renderer: Renderer, at c: (Int, Int)) {
     renderer.zoom = zoom * (ui == nil ? 1 : renderer.uiScale)
-    let viewportW = ui == nil ? renderer.viewSize.x : Float(AdventureUI.mapViewportWidth) * renderer.uiScale
-    let (sx, sy) = scene.screen(x: c.0, y: c.1)
-    renderer.pan = SIMD2(Float(sx) - viewportW / 2 / renderer.zoom, Float(sy) - renderer.viewSize.y / 2 / renderer.zoom)
+    renderer.centre(onCell: c)
 }
 
 if let out = snapshot {

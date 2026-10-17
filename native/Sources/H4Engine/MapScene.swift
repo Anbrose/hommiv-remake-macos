@@ -109,6 +109,20 @@ public final class MapScene {
     public func screen(x: Int, y: Int) -> (Int, Int) {
         ((y - x) * 32 + map.size * 32 + 32, (x + y) * 16 + 32)
     }
+    /// heroes4.exe's map pixel (0, 0) on this canvas. The exe puts a cell's top vertex at
+    /// ((y - x) * 32 + 16n, (x + y) * 16 - 8n) (0x4061f0), so the playable diamond is the
+    /// rectangle [0, 32n] x [0, 16n] from here (adventure_view_bounds_spec.md).
+    public var exeOrigin: SIMD2<Float> { SIMD2(Float(map.size * 16 + 32), Float(map.size * 8 + 16)) }
+    /// heroes4.exe's scroll limits (0x4f8f40) for a view whose top-left is `v` in the exe's map
+    /// pixels: x >= -50 and y >= -305 (room for tall objects on the top rows), then the far edge
+    /// within 32n + 50 and 16n + 50, which wins when the view is larger than the map.
+    public static func clampView(_ v: SIMD2<Float>, size: SIMD2<Float>, mapSize n: Int) -> SIMD2<Float> {
+        var v = SIMD2(max(v.x, -50), max(v.y, -305))
+        let far = SIMD2(Float(32 * n + 50), Float(16 * n + 50))
+        if v.x + size.x > far.x { v.x = far.x - size.x }
+        if v.y + size.y > far.y { v.y = far.y - size.y }
+        return v
+    }
 
     private func buildTerrain(archive: H4Archive, masks: TransitionMasks) throws {
         let n = map.size, cs = MapScene.chunkSize

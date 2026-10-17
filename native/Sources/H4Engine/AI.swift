@@ -41,6 +41,7 @@ extension GameState {
     func aiTurn(_ colour: Int) {
         for k in passabilities.indices { passabilities[k].forcedExit = [:] }   // (the player's view of guard zones is not the computer's)
         acting(as: colour) {
+            caravanArrivals(for: colour)   // its turn starts (0x4b2ce0 -> 0x4b1010)
             // start_turn 0x47bd10 -> 0x7e2ee0, 0x47bfb0, 0x47c170
             aiComputeWeights(colour)
             aiComputeBudget(colour, withIncome: false)
@@ -55,14 +56,8 @@ extension GameState {
             aiDefendTowns(colour)                        // 0x47c5e0
             aiComputeBudget(colour, withIncome: true)    // 0x7e3440(day + 1)
             aiBuild(colour)                              // 0x482c90
-            aiCaravanHook(colour)                        // 0x4838e0
+            aiCaravans(colour)                           // 0x4838e0 (Caravans.swift: every 5th day)
         }
-    }
-
-    /// CARAVAN HOOK (0x4838e0, every 5th day): the computer's dwelling caravans live on the
-    /// `caravans` branch (Caravans.swift `aiCaravans`); wire it here after that branch is merged.
-    func aiCaravanHook(_ colour: Int) {
-        // TODO(caravans merge): `aiCaravans(colour)`
     }
 
     /// A computer hero's moves for the day: the best target by value per day of travel, walked
@@ -197,6 +192,7 @@ extension GameState {
             if r.attackerWon {
                 let lost = towns[i].owned
                 towns[i].owner = h.owner; towns[i].owned = false; towns[i].garrison = []
+                caravansAtCapture(town: i, newOwner: h.owner)
                 if lost { log.append(text("town_lost_town.misc", "The enemy has taken the town of %town_name.").replacingOccurrences(of: "%town_name", with: towns[i].name)) }
             } else { removeEnemy(h) }
             return

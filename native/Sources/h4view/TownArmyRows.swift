@@ -35,7 +35,7 @@ extension Renderer {
     }
     func townPress(x: Float, y: Float) {
         townDragAt = nil
-        guard townDialog == nil, let r = townRing(at: x, y), let rows = townRows(), rows[r.row][r.k] != nil else { townDrag = nil; return }
+        guard townDialog == nil, caravanUI == nil, let r = townRing(at: x, y), let rows = townRows(), rows[r.row][r.k] != nil else { townDrag = nil; return }
         townDrag = r
     }
     /// The pointer moved with the button down: the lifted stack follows it (the system pointer hides).

@@ -4,7 +4,8 @@ import Foundation
 /// a table of states ("wait", "fidget", "prewalk", "walk", "postwalk", "attack"), each naming
 /// the actor_sequence to play for the eight facings ne, e, se, s, sw, w, nw, n.
 ///
-/// Layout: u16 3, u8 1, u16, u16 32, u16, u16 nstates; per state: string16 name, u8 speed,
+/// Layout: u16 version 3, u8 depth 1, u16 prewalk / walk-loop / postwalk distances (v >= 2,
+/// else 16 / 32 / 16; 0x42cfc0, re/adventure_walk_spec.md), u16 nstates; per state: string16 name, u8 speed,
 /// 8 x string16 sequence names; then (t_adv_actor_model_definition reader 0x42cfc0) v >= 1 the
 /// model offset i32 x, y (added to every sequence frame's box, 0x429e8c) and v >= 3 the owner
 /// flag's point i32 x, y (def +0x4c0, used by 0x403ec0), both from the actor's position.
@@ -20,11 +21,13 @@ public struct AdvActor {
     public let offset: (x: Int, y: Int)
     /// Where the owner's flag stands (def +0x4c0), relative to the actor's position like `offset`.
     public let flagPoint: (x: Int, y: Int)?
+    /// The distances the prewalk, one walk loop and the postwalk cover (a straight step 32).
+    public let prewalk: Int, walkLoop: Int, postwalk: Int
 
     public init(data d: Data) throws {
         var r = ByteReader(d)
         guard d.count > 11, r.u16() == 3 else { throw H4Error.corrupt("adv_actor: bad header") }
-        _ = r.u8(); _ = r.u16(); _ = r.u16(); _ = r.u16()
+        _ = r.u8(); prewalk = Int(r.u16()); walkLoop = Int(r.u16()); postwalk = Int(r.u16())
         let n = Int(r.u16())
         var list: [State] = []
         for _ in 0..<n {

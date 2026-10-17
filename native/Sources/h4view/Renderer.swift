@@ -95,6 +95,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     var frameTimes: [Double] = []
     var game: GameState?
     var resolver: RandomResolver?
+    /// A battle was waiting at the last frame, drawn once with the armies' attack pose.
+    var battlePoseShown = false
     var actorSprites: [String: Sprite] = [:]
     lazy var dot: MTLTexture = {   // path marker
         var bm = Bitmap(width: 8, height: 8)
@@ -904,29 +906,55 @@ final class Renderer: NSObject, MTKViewDelegate {
         ((y - x) * 32 + Float(scene.map.size * 32 + 32), (x + y) * 16 + 32)
     }
 
+    /// A loaded actor sequence by entry name.
+    func actorSprite(_ entry: String) -> Sprite? {
+        if actorSprites[entry] == nil, let r = resolver {
+            do { actorSprites[entry] = try Sprite(data: r.archive.payload(entry)) } catch { print("actor: \(entry): \(error)") }
+        }
+        return actorSprites[entry]
+    }
+    var gaits: [String: ArmyGait] = [:]
+    /// The walk model of an adv_actor (re/adventure_walk_spec.md §2): the distances in its header,
+    /// the frames of its walk sequences (+0x60) and the states' speed bytes.
+    func gait(_ model: String) -> ArmyGait {
+        if let g = gaits[model] { return g }
+        var g = ArmyGait()
+        if let r = resolver, let e = r.entry("adv_actor.\(model).h4d"), let a = try? AdvActor(data: r.archive.payload(e)) {
+            var frames: [String: Int] = [:], speed: [String: Int] = [:]
+            for st in ["prewalk", "walk", "postwalk", "attack"] {
+                speed[st] = a.state(st)?.speed
+                if let seq = r.sequence(actor: model, state: st, facing: "sw"), let sp = actorSprite(seq) { frames[st] = max(1, sp.timeline.count) }
+            }
+            g = ArmyGait(pre: a.prewalk, loop: a.walkLoop, post: a.postwalk, frames: frames, speed: speed)
+        }
+        gaits[model] = g
+        return g
+    }
+    /// The frame of an actor sequence to draw: a walk state's own frame, else by the file's speed.
+    func actorFrame(_ s: Sprite, state: String?, frame: Int, at t: Double) -> (SpriteImage?, SpriteImage?) {
+        var f = s.frames.first, sh = f.flatMap { s.shadow(for: $0) }
+        let tl = s.timeline
+        guard !tl.isEmpty else { return (f, sh) }
+        let index: Int
+        if let st = state, st != "wait" { index = min(max(0, frame), tl.count - 1) }
+        else { index = Int(t / (tl[0].frame.speed > 0 ? Double(tl[0].frame.speed) / 60.0 : 0.125)) % tl.count }
+        f = tl[index].frame; sh = tl[index].shadow
+        return (f, sh)
+    }
+
     /// The pieces of one army at time t (heroes4.exe t_abstract_adv_actor): the selection ring
     /// under it, its shadow (drawn with the other shadows), the current sequence frame, and the
     /// owner's flag.
     func heroParts(_ h: Hero, at t: Double) -> (ring: Quad?, shadow: Quad?, body: Quad?, flag: Quad?) {
         guard let r = resolver else { print("hero: no resolver"); return (nil, nil, nil, nil) }
-        let state = h.isWalking ? "walk" : "wait"
+        // the state the walk or the meeting set (prewalk / walk / postwalk / attack), else wait;
         // at sea the army is drawn as its ship (adv_actor.ships.<alignment>)
-        let actorName = h.boat.map { "ships.\(["life", "order", "death", "chaos", "nature", "might"].contains($0) ? $0 : "generic")" } ?? h.actor
+        let actorName = h.model
+        var state = h.animState ?? "wait"
+        if r.sequence(actor: actorName, state: state, facing: h.facing) == nil { state = h.isWalking ? "walk" : "wait" }
         guard let entry = r.sequence(actor: actorName, state: state, facing: h.facing) else { print("hero: no sequence for \(h.actor) \(state) \(h.facing)"); return (nil, nil, nil, nil) }
-        if actorSprites[entry] == nil {
-            do { actorSprites[entry] = try Sprite(data: r.archive.payload(entry)) } catch { print("hero: \(entry): \(error)") }
-        }
-        guard let s = actorSprites[entry] else { return (nil, nil, nil, nil) }
-        let tl = s.timeline
-        var frame = s.frames.first, shadow = frame.flatMap { s.shadow(for: $0) }
-        if !tl.isEmpty {
-            // walking: one full cycle per cell so the gait matches the ground; otherwise by the file's speed
-            let index: Int
-            if h.isWalking { index = Int(h.distance * Float(tl.count)) % tl.count }
-            else { index = Int(t / (tl[0].frame.speed > 0 ? Double(tl[0].frame.speed) / 60.0 : 0.125)) % tl.count }
-            let e = tl[index]
-            frame = e.frame; shadow = e.shadow
-        }
+        guard let s = actorSprite(entry) else { return (nil, nil, nil, nil) }
+        let (frame, shadow) = actorFrame(s, state: state, frame: h.animFrame, at: t)
         let (px, py) = h.position
         let (sx, sy0) = screen(px, py)
         let sy = sy0 - (game.map { h.elevation(in: $0.passability) } ?? 0)   // raised on bridges
@@ -1087,15 +1115,26 @@ final class Renderer: NSObject, MTKViewDelegate {
                 let f = r.frames[Int(t / 0.08) % r.frames.count]
                 ring = Quad(texture: texture(for: f, of: "highlight_ring"), x: p.anchorX - f.bitmap.width / 2, y: p.anchorY - 2 - f.bitmap.height / 2, w: f.bitmap.width, h: f.bitmap.height)
             }
-            let (f, sh) = frame(of: p, at: t)
+            var (f, sh) = frame(of: p, at: t)
             var ax = p.anchorX, ay = p.anchorY, cell = (x: p.cellX, y: p.cellY)
-            // a wandering stack walking up to a hero: drawn where it has got to, sorted as an army is
-            if let g = game, let cp = g.chargePosition, g.monster(for: p) == cp.monster {
-                let (sx, sy) = screen(cp.x, cp.y)
-                ax = Int(sx); ay = Int(sy) - 16
-                if let c = g.chargeDrawCell { cell = c }
+            var origin = p.sprite.origin
+            // a wandering stack walking up to a hero: drawn where it has got to in its walk
+            // sequences, sorted as an army is; one turned toward an army: its wait sequence that way
+            if let g = game, let i = g.monster(for: p), let model = g.monsters[i].model {
+                var seq: (state: String, facing: String, frame: Int)? = g.monsters[i].facing.map { ("wait", $0, 0) }
+                if let c = g.charge, c.monster == i, let cp = g.chargePosition {
+                    let (sx, sy) = screen(cp.x, cp.y)
+                    ax = Int(sx); ay = Int(sy) - 16
+                    if let dc = g.chargeDrawCell { cell = dc }
+                    seq = (c.animState, c.facing, c.animFrame)
+                }
+                if let q = seq, let r = resolver, let e = r.sequence(actor: model, state: q.state, facing: q.facing) ?? r.sequence(actor: model, state: "wait", facing: q.facing),
+                   let sp = actorSprite(e), let first = sp.frames.first {
+                    let (af, ash) = actorFrame(sp, state: q.state, frame: q.frame, at: t)
+                    f = af ?? first; sh = ash ?? sp.shadow(for: f); origin = sp.origin
+                }
             }
-            let ox = ax + Int(p.sprite.origin.x), oy = ay + Int(p.sprite.origin.y)
+            let ox = ax + Int(origin.x), oy = ay + Int(origin.y)
             var qs: [Quad] = []
             if let base = p.sprite.baseFrame, f.name != base.name {   // animated towns: frames are deltas over base_frame
                 qs.append(Quad(texture: texture(for: base, of: p.name), x: ox + base.box.left, y: oy + base.box.top, w: base.bitmap.width, h: base.bitmap.height))
@@ -1140,6 +1179,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         frameTimes.append(dt)
         lastFrame = now
         if let g = game {
+            g.battleUnderway = inCombat   // the battle is modal in the exe: the map waits (guard checks too)
             g.update(dt: Float(min(dt, 0.1)))
             for line in g.log { print(line); toasts.append((line, now.addingTimeInterval(5))) }
             for name in g.sounds { sound?.play(name) }
@@ -1181,7 +1221,12 @@ final class Renderer: NSObject, MTKViewDelegate {
     func encode(rpd: MTLRenderPassDescriptor, present: MTLDrawable?, time: Double) {
         if !inCombat, townOpen == nil { clampPan() }
         if let g = game, let t = g.enteredTown { townOpen = t; g.enteredTown = nil }
-        if let g = game, let cs = combat, let pb = g.pendingBattle, cs.battle == nil {
+        // an army reaching an army is drawn once in its attack pose before the battle (0x522560's
+        // flip, re/adventure_walk_spec.md §6): the battle starts on the next frame
+        let battleWaiting = game.map { $0.pendingBattle != nil || $0.pendingHeroBattle != nil } ?? false
+        let battleShown = battleWaiting && battlePoseShown
+        battlePoseShown = battleWaiting && !battleShown
+        if battleShown, let g = game, let cs = combat, let pb = g.pendingBattle, cs.battle == nil {
             let cell = g.map.cells[g.level][pb.hero.x * g.map.size + pb.hero.y]
             cs.start(game: g, hero: pb.hero, monsterAt: pb.monster, pb.placed, terrain: cell?.type ?? 1, variant: cell?.variant ?? 0)
             g.pendingBattle = nil
@@ -1191,7 +1236,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             cs.startSiege(game: g, hero: ps.hero, town: ps.town, terrain: tw.terrain)
             g.pendingSiege = nil
         }
-        if let g = game, let cs = combat, let pb = g.pendingHeroBattle, cs.battle == nil {
+        if battleShown, let g = game, let cs = combat, let pb = g.pendingHeroBattle, cs.battle == nil {
             let cell = g.map.cells[g.level][pb.enemy.x * g.map.size + pb.enemy.y]
             cs.start(game: g, hero: pb.hero, enemy: pb.enemy, terrain: cell?.type ?? 1, variant: cell?.variant ?? 0)
             g.pendingHeroBattle = nil

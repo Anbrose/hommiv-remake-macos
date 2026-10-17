@@ -22,7 +22,9 @@ extension GameState {
     /// route leads to goes -- next to it too (0x4f5c80: its route is the one step onto it).
     func attack(_ e: Hero, with hero: Hero) {
         if GameState.adjacent((hero.x, hero.y), (e.x, e.y)) {
-            if hero.attackTarget === e, hero.plan.isEmpty { hero.attackTarget = nil; pendingHeroBattle = (hero, e); moveEnded(hero) }
+            if hero.attackTarget === e, hero.plan.isEmpty {   // an empty walk list: face it, then the attack (0x544ce0, 0x522560)
+                hero.attackTarget = nil; face(hero, toward: (e.x, e.y)); armyReached(hero, enemy: e); pendingHeroBattle = (hero, e); moveEnded(hero)
+            }
             else { hero.plan = []; hero.attackTarget = e; hero.target = nil; hero.tradeTarget = nil }
             return
         }

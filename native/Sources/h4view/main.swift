@@ -340,6 +340,7 @@ if let out = snapshot {
     let renderer = try Renderer(device: device, scenes: scenes, pixelFormat: .rgba8Unorm)
     renderer.game = game
     renderer.resolver = resolver
+    game.gaitProvider = { [unowned renderer] in renderer.gait($0) }
     renderer.showBlocked = showBlocked
     renderer.ui = ui
     renderer.town = townScreen
@@ -347,7 +348,8 @@ if let out = snapshot {
     renderer.movies = movies
     if let m = ProcessInfo.processInfo.environment["H4SAVEDIALOG"] { renderer.openSaveDialog(m == "load" ? .load : .save) }   // snapshot the save / load dialog
     if let m = ProcessInfo.processInfo.environment["H4MENU"] { if m == "game" { renderer.openGameMenu() } else if m == "info" { Renderer.scenarioInfoOpen = true } else { renderer.openSystemMenu() } }   // snapshot the system menu (game: the game menu, info: scenario information)
-    if walk != nil { game.quickCombatOnly = true }   // --walk snapshots resolve fights at once
+    // --walk snapshots resolve fights at once (H4WALKBATTLE=1: the battle waits, the map shows the meeting)
+    if walk != nil, ProcessInfo.processInfo.environment["H4WALKBATTLE"] == nil { game.quickCombatOnly = true }
     if let a = ProcessInfo.processInfo.environment["H4ARMY"], let h = game.heroes.first {   // debugging: the hero's army, "devil:5,imp:20"
         h.army = a.split(separator: ",").compactMap { p in let q = p.split(separator: ":"); return q.count == 2 ? Int(q[1]).map { Hero.Stack(creature: String(q[0]), count: $0) } : nil }
     }
@@ -541,6 +543,7 @@ if let out = snapshot {
         } }
     }
     if let target = walk, let hero = game.heroes.first {
+        if let c = heroAt { hero.x = c.0; hero.y = c.1 }   // (--hero also moves a map's own first hero)
         if let p = scene.placed.first(where: { $0.cellX == target.0 && $0.cellY == target.1 && game.isVisitable($0) }) {
             game.click(hero: hero, pickup: p)
             print("path to pickup \(p.name): \(hero.plan.map { "(\($0.x),\($0.y))" }.joined(separator: " "))")
@@ -552,7 +555,9 @@ if let out = snapshot {
         }
         var frames = 0
         let stopAt = ProcessInfo.processInfo.environment["H4WALKDIST"].flatMap { Float($0) }   // debugging: stop mid-walk after that many cells
+        let stopTime = ProcessInfo.processInfo.environment["H4WALKTIME"].flatMap { Double($0) }   // debugging: stop that many seconds into the walk
         func going() -> Bool {
+            if let s = stopTime { return Double(frames) / 60 < s }
             if let d = stopAt, let h = game.heroes.first { return h.isWalking && h.distance < d }
             return game.heroes.first?.isWalking == true || game.charge != nil || frames < 90
         }
@@ -1018,6 +1023,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if loadFile != nil { renderer.lastAutosaveDay = game.day }   // a loaded game: its day is saved already (no new autosave until the next day)
         renderer.game = game
         renderer.resolver = resolver
+        game.gaitProvider = { [unowned renderer] in renderer.gait($0) }
         renderer.showBlocked = showBlocked
         renderer.ui = ui
         renderer.town = townScreen

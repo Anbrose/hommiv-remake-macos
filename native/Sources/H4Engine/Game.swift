@@ -308,8 +308,18 @@ public final class Hero {
     /// The cell the player clicked for the planned route (it may end short, at a gateway).
     public var planGoal: (Int, Int)? = nil
     public var progress: Float = 0
-    /// Cells walked so far (fractional); drives the walk animation so the legs match the ground.
+    /// Cells walked so far (fractional; the --walk snapshot hook stops on it).
     public var distance: Float = 0
+    /// The walk's animation while walking (heroes4.exe t_army_mover, re/adventure_walk_spec.md).
+    public var walkAnim: ArmyWalk? = nil
+    /// The actor state to draw and its frame: "prewalk" / "walk" / "postwalk" while walking,
+    /// "attack" held as the army reaches an enemy army (0x522560); nil standing ("wait").
+    public var animState: String? = nil
+    public var animFrame = 0
+    /// The adv_actor model the army is drawn with: its ship at sea (adv_actor.ships.<alignment>).
+    public var model: String {
+        boat.map { "ships.\(["life", "order", "death", "chaos", "nature", "might"].contains($0) ? $0 : "generic")" } ?? actor
+    }
     /// A path shown but not yet confirmed (HoMM style: click once to see, again to go).
     public var plan: [(x: Int, y: Int)] = []
     /// The object the current plan/path leads to (a pickup taken on arrival), by cell and name.
@@ -518,6 +528,14 @@ public final class GameState {
         /// What a month-spawned stack carries over from its spawn record (t_army +0xec..+0xf8,
         /// +0xb4, +0xb8); nil for every other stack (the exe's -1s, re/month_events_spec.md).
         public var origin: MonthOrigin? = nil
+        /// The way the stack was turned on the map (0x41ac80, an army reaching it); nil: as placed.
+        public var facing: String? = nil
+        /// Its adv_actor model, from the placed sequence's name ("actor_sequence.<model>.<state>.<facing>.h4d").
+        public var model: String? {
+            guard name.hasPrefix("actor_sequence.") else { return nil }
+            let parts = name.dropFirst("actor_sequence.".count).replacingOccurrences(of: ".h4d", with: "").split(separator: ".")
+            return parts.count > 2 ? parts.dropLast(2).joined(separator: ".") : nil
+        }
         public init(x: Int, y: Int, name: String, creature: String, count: Int, extra: [(creature: String, count: Int)] = []) {
             self.x = x; self.y = y; self.name = name; self.creature = creature; self.count = count; self.extra = extra
         }
@@ -657,7 +675,14 @@ public final class GameState {
     public var week: Int { (day - 1) / 7 % 4 + 1 }
     public var month: Int { (day - 1) / 28 + 1 }
     public var dayOfWeek: Int { (day - 1) % 7 + 1 }
-    public static var cellsPerSecond: Float = 4
+    /// Walk speeds in percent (heroes4.exe 0x7c91d0 defaults): the player's armies 150
+    /// ([0xa75648]), the others 200 ([0xa75654]); a frame lasts 100 x (1000 / speed byte) / percent ms.
+    public static var armySpeedPercent = 150, otherArmySpeedPercent = 200
+    /// The walk model of an adv_actor model (the renderer reads the files); defaults without it.
+    public var gaitProvider: ((String) -> ArmyGait)? = nil
+    func gait(_ model: String?) -> ArmyGait { model.flatMap { gaitProvider?($0) } ?? ArmyGait() }
+    /// The combat screen is open: the map waits (the exe's battle is modal, 0x521780).
+    public var battleUnderway = false
 
     public convenience init(map: MapFile, level: Int, scene: MapScene) {
         self.init(map: map, level: level, scenes: [scene])
@@ -1186,7 +1211,7 @@ public final class GameState {
     func interact(hero: Hero, _ p: MapScene.Placed) {
         if isPickup(p) { take(hero: hero, p); return }
         if visitObject(hero: hero, p) { return }
-        if let i = monster(for: p) { fight(hero: hero, monsterAt: i, p); return }
+        if let i = monster(for: p) { armyReached(hero, monster: i); fight(hero: hero, monsterAt: i, p); return }
         if let i = town(for: p) {
             if !towns[i].owned, !towns[i].garrison.isEmpty {   // a garrison defends it: a siege (0x896480)
                 runTownEvent(i, slot: 0, hero: hero)                            // "attacked"
@@ -1296,6 +1321,7 @@ public final class GameState {
         if let t = hero.target, t.x == p.cellX, t.y == p.cellY {   // the destination the route has: go
             if !hero.plan.isEmpty { hero.path = hero.plan; hero.plan = []; hero.progress = 0; return }
             if cells.isEmpty ? candidates.contains(where: { $0 == from }) && canUse(from: from, p) : canUse(from: from, p) {
+                face(hero, toward: entryCell(of: p, for: hero))   // an empty walk list still ends facing it (0x544ce0)
                 hero.target = nil; hero.targetCell = nil
                 interact(hero: hero, p)
                 moveEnded(hero)
@@ -1425,6 +1451,7 @@ public final class GameState {
         }
         if let g = hero.planGoal, g == (x, y), !hero.plan.isEmpty || hero.target != nil {
             if hero.plan.isEmpty, let t = hero.target, let p = scene.placed.first(where: { $0.cellX == t.x && $0.cellY == t.y && $0.name == t.name }), canUse(from: (hero.x, hero.y), p) {
+                face(hero, toward: entryCell(of: p, for: hero))
                 interact(hero: hero, p); moveEnded(hero); return
             }
             hero.path = hero.plan
@@ -1441,10 +1468,22 @@ public final class GameState {
         h.path = h.plan; h.plan = []; h.progress = 0
     }
 
-    /// A wandering stack walking up to a hero it fell on (t_enemy_army_attack, 0x5472c0): its own
-    /// route up to the cell before the hero (GameState.guardAttack); the battle starts when it
-    /// gets there.
-    public var charge: (monster: Int, hero: Hero, path: [(x: Int, y: Int)], progress: Float)?
+    /// A wandering stack walking up to a hero it fell on (t_enemy_army_attack, 0x5472c0): a mover
+    /// for the stack, walking its own route up to the cell before the hero with the prewalk /
+    /// walk / postwalk fitting at the other armies' speed (re/adventure_walk_spec.md §6); the
+    /// battle starts when it gets there.
+    public struct Charge {
+        public let monster: Int
+        public let hero: Hero
+        /// The cells it walks onto, up to the one before the army.
+        public let path: [(x: Int, y: Int)]
+        var walk: ArmyWalk
+        /// Steps finished.
+        var walked = 0
+        public var facing = "s"
+        public var animState = "prewalk", animFrame = 0
+    }
+    public var charge: Charge?
     func finishCharge() {
         guard let c = charge else { return }
         charge = nil
@@ -1457,6 +1496,8 @@ public final class GameState {
             placed = scene.relocate(p, toX: end.x, y: end.y)
             dangerCache = nil; zoneCache = [:]
         }
+        // the end of its walk faces the army it steps toward (0x544ce0), then the attack (0x5474d0)
+        armyReached(c.hero, monster: c.monster)
         fight(hero: c.hero, monsterAt: c.monster, placed)
     }
     /// Where a charging stack is drawn now (fractional cell), for the renderer.
@@ -1464,10 +1505,8 @@ public final class GameState {
         guard let c = charge, c.monster < monsters.count else { return nil }
         let m = monsters[c.monster]
         let pts = [(x: m.x, y: m.y)] + c.path
-        let t = min(Float(pts.count - 1), c.progress)
-        let k = min(pts.count - 2, Int(t)), f = t - Float(max(0, k))
-        guard pts.count > 1 else { return (c.monster, Float(m.x), Float(m.y)) }
-        let a = pts[max(0, k)], b = pts[max(0, k) + 1]
+        guard c.walked < pts.count - 1 else { let e = pts[pts.count - 1]; return (c.monster, Float(e.x), Float(e.y)) }
+        let a = pts[c.walked], b = pts[c.walked + 1], f = c.walk.stepProgress
         return (c.monster, Float(a.x) + Float(b.x - a.x) * f, Float(a.y) + Float(b.y - a.y) * f)
     }
     /// The cell a charging stack is sorted by: like a walking army (Hero.drawCell), the next cell
@@ -1476,70 +1515,143 @@ public final class GameState {
         guard let c = charge, c.monster < monsters.count else { return nil }
         let m = monsters[c.monster]
         let pts = [(x: m.x, y: m.y)] + c.path
-        guard pts.count > 1 else { return (m.x, m.y) }
-        let t = min(Float(pts.count - 1), c.progress)
-        let k = min(pts.count - 2, Int(t)), f = t - Float(max(0, k))
-        let a = pts[max(0, k)], b = pts[max(0, k) + 1]
-        return f >= 0.5 ? (b.x, b.y) : (a.x, a.y)
+        guard c.walked < pts.count - 1 else { return pts[pts.count - 1] }
+        return c.walk.stepProgress >= 0.5 ? pts[c.walked + 1] : pts[c.walked]
+    }
+
+    /// An army reached an enemy army (0x522560): the arriving army takes its attack state, the
+    /// one reached turns to face it; that frame is drawn once before the battle.
+    func armyReached(_ h: Hero, monster i: Int) {
+        guard i < monsters.count else { return }
+        h.animState = "attack"; h.animFrame = 0
+        monsters[i].facing = GameState.facing(from: (monsters[i].x, monsters[i].y), toward: (h.x, h.y))
+    }
+    func armyReached(_ h: Hero, enemy e: Hero) {
+        h.animState = "attack"; h.animFrame = 0
+        e.facing = GameState.facing(from: (e.x, e.y), toward: (h.x, h.y))
+    }
+    /// 0x51ee70 / 0x51edd0: round(atan2(to.y - from.y, from.x - to.x) / 45 degrees) & 7, in the
+    /// facing order ne e se s sw w nw n.
+    static func facing(from a: (Int, Int), toward b: (Int, Int)) -> String {
+        let deg = atan2(Double(b.1 - a.1), Double(a.0 - b.0)) * 180 / Double.pi
+        let d = Int((deg + 360 + 22.5) / 45) & 7
+        return AdvActor.facings[d]
+    }
+    /// The end of a walk that enters an object (0x544ce0): the army turns toward it.
+    func face(_ h: Hero, toward c: (Int, Int)) {
+        guard c != (h.x, h.y) else { return }
+        h.facing = Hero.facing(dx: c.0 - h.x, dy: c.1 - h.y)
+    }
+    /// The cell an object is entered by from where the hero stands (the route's last cell).
+    func entryCell(of p: MapScene.Placed, for h: Hero) -> (Int, Int) {
+        if let c = h.targetCell, GameState.adjacent((h.x, h.y), (c.x, c.y)) { return (c.x, c.y) }
+        var best = (p.cellX, p.cellY), bestD = Int.max
+        for i in 0..<p.sprite.footprint.w { for j in 0..<p.sprite.footprint.h {
+            let d = max(abs(p.cellX + i - h.x), abs(p.cellY + j - h.y))
+            if d < bestD { bestD = d; best = (p.cellX + i, p.cellY + j) }
+        } }
+        return best
+    }
+
+    /// The walk list's animation when a walk starts: the steps the army will take (it stops where
+    /// its movement runs out, at sea before the landing step), 32 straight and 48 diagonal.
+    func startWalk(_ h: Hero) {
+        var left = h.movement, px = h.x, py = h.y
+        var steps: [Int] = []
+        passability.relief = GameState.terrainRelief(h)
+        for c in h.path {
+            let cost = passability.stepCost(from: px, py, to: c.x, c.y)
+            if left + 0.001 < cost { break }
+            if h.boat != nil, !passability.isWater(c.x, c.y) { break }
+            left -= cost
+            steps.append(ArmyWalk.distance(px, py, c.x, c.y))
+            px = c.x; py = c.y
+        }
+        h.walkAnim = steps.isEmpty ? nil : ArmyWalk(steps: steps, gait: gait(h.model))
+        h.animState = steps.isEmpty ? nil : "prewalk"; h.animFrame = 0
+        h.progress = 0
     }
 
     /// Advance walking heroes by dt seconds.
     public func update(dt: Float) {
         if var c = charge {   // a stack walking up to a hero: nothing else moves meanwhile
-            c.progress += dt * GameState.cellsPerSecond
+            let g = gait(c.monster < monsters.count ? monsters[c.monster].model : nil)
+            c.walked += c.walk.advance(dt, gait: g, percent: GameState.otherArmySpeedPercent)
+            if c.monster < monsters.count, c.walked < c.path.count {
+                let m = monsters[c.monster], a = c.walked == 0 ? (x: m.x, y: m.y) : c.path[c.walked - 1], b = c.path[c.walked]
+                c.facing = Hero.facing(dx: b.x - a.x, dy: b.y - a.y)
+            }
+            c.animState = c.walk.state; c.animFrame = c.walk.frame(g)
             charge = c
-            if c.progress >= Float(c.path.count) { finishCharge() }
+            if c.walk.done { finishCharge() }
             return
         }
         runGuardChecks()
         if charge != nil { return }
-        for h in heroes where !h.isWalking { h.walkChecked = false }
+        if !adventureBusy { for h in heroes where !h.isWalking && h.animState != nil { h.animState = nil } }   // the attack pose ends with the battle
+        for h in heroes where !h.isWalking {
+            h.walkChecked = false
+            if h.walkAnim != nil { h.walkAnim = nil; if h.animState != "attack" { h.animState = nil } }   // a walk ended elsewhere (a teleport, boarding)
+        }
         for h in heroes where h.isWalking && h.z == level {
             if !h.walkChecked {
                 // the mover cuts the walk as it starts (0x5439e0, GuardZones.cutWalk)
                 h.walkChecked = true; h.walkCut = false
                 cutWalk(h)
                 if h.path.isEmpty { moveEnded(h); continue }
+                startWalk(h)
             }
-            let next = h.path[0]
-            passability.relief = GameState.terrainRelief(h)
-            let stepCost = passability.stepCost(from: h.x, h.y, to: next.x, next.y)
-            // out of movement: stop here, keeping the rest of the route (red) to go on with later
-            if h.movement + 0.001 < stepCost { h.plan = h.path + h.plan; h.path = []; h.walkCut = true; moveEnded(h); continue }
-            // at sea, the last step onto land is the landing
-            if h.boat != nil, !passability.isWater(next.x, next.y) {
-                land(h, at: (next.x, next.y)); moveEnded(h); continue
+            let g = gait(h.model)
+            if var w = h.walkAnim, !w.done {
+                if let next = h.path.first { h.facing = Hero.facing(dx: next.x - h.x, dy: next.y - h.y) }
+                var finished = w.advance(dt, gait: g, percent: GameState.armySpeedPercent)
+                h.walkAnim = w
+                h.animState = w.state; h.animFrame = w.frame(g)
+                h.progress = finished > 0 ? 0 : w.stepProgress
+                // each step finished: the army is on the next cell, pays for the step
+                while finished > 0, let next = h.path.first {
+                    finished -= 1
+                    passability.relief = GameState.terrainRelief(h)
+                    h.movement -= passability.stepCost(from: h.x, h.y, to: next.x, next.y)
+                    h.x = next.x; h.y = next.y
+                    h.path.removeFirst()
+                    h.distance = Float(Int(h.distance) + 1)
+                    stepped(h, onto: h.x, h.y)
+                    if let n = h.path.first { h.facing = Hero.facing(dx: n.x - h.x, dy: n.y - h.y) }
+                }
+                if !w.done { h.progress = w.stepProgress; h.distance = Float(Int(h.distance)) + h.progress; continue }
             }
-            h.facing = Hero.facing(dx: next.x - h.x, dy: next.y - h.y)
-            h.progress += dt * GameState.cellsPerSecond
-            h.distance += dt * GameState.cellsPerSecond
-            if h.progress >= 1 {
-                h.x = next.x; h.y = next.y
-                h.movement -= stepCost
-                h.path.removeFirst()
-                h.progress = 0
-                stepped(h, onto: h.x, h.y)
-                // no stack falls on the hero while he walks; the end of the move decides (0x546d50)
-                guard h.path.isEmpty else { continue }
-                defer { moveEnded(h) }
-                if h.walkCut { continue }   // cut or stopped short: what the route led to is not used
-                if let bt = h.boardTarget {
-                    h.boardTarget = nil
-                    if let b = boat(at: bt.0, bt.1), GameState.adjacent((h.x, h.y), bt) { board(h, b); continue }
-                }
-                if let f = h.tradeTarget {
-                    h.tradeTarget = nil
-                    if GameState.adjacent((h.x, h.y), (f.x, f.y)), heroes.contains(where: { $0 === f }) { pendingTrade = (h, f); continue }
-                }
-                if let e = h.attackTarget, GameState.adjacent((h.x, h.y), (e.x, e.y)) {
-                    h.attackTarget = nil
-                    pendingHeroBattle = (h, e)
-                    continue
-                }
-                if let t = h.target,
-                   let p = scene.placed.first(where: { $0.cellX == t.x && $0.cellY == t.y && $0.name == t.name }), canUse(from: (h.x, h.y), p) {
-                    interact(hero: h, p)
-                }
+            // the walk's animation is over (0x5469d0): the army stands
+            h.walkAnim = nil; h.animState = nil; h.progress = 0
+            if let next = h.path.first {
+                // at sea, the step onto land is the landing; else the movement ran out: the rest
+                // of the route stays (red) to go on with later
+                if h.boat != nil, !passability.isWater(next.x, next.y) { land(h, at: (next.x, next.y)); moveEnded(h); continue }
+                h.plan = h.path + h.plan; h.path = []; h.walkCut = true; moveEnded(h); continue
+            }
+            // no stack falls on the hero while he walks; the end of the move decides (0x546d50)
+            defer { moveEnded(h) }
+            if h.walkCut { continue }   // cut or stopped short: what the route led to is not used
+            // the walk entered an object (0x544ce0): the army turns to face it, then uses it
+            if let bt = h.boardTarget {
+                h.boardTarget = nil
+                if let b = boat(at: bt.0, bt.1), GameState.adjacent((h.x, h.y), bt) { face(h, toward: bt); board(h, b); continue }
+            }
+            if let f = h.tradeTarget {
+                h.tradeTarget = nil
+                if GameState.adjacent((h.x, h.y), (f.x, f.y)), heroes.contains(where: { $0 === f }) { face(h, toward: (f.x, f.y)); pendingTrade = (h, f); continue }
+            }
+            if let e = h.attackTarget, GameState.adjacent((h.x, h.y), (e.x, e.y)) {
+                h.attackTarget = nil
+                face(h, toward: (e.x, e.y))
+                armyReached(h, enemy: e)
+                pendingHeroBattle = (h, e)
+                continue
+            }
+            if let t = h.target,
+               let p = scene.placed.first(where: { $0.cellX == t.x && $0.cellY == t.y && $0.name == t.name }), canUse(from: (h.x, h.y), p) {
+                face(h, toward: entryCell(of: p, for: h))
+                interact(hero: h, p)
             }
         }
         runGuardChecks()

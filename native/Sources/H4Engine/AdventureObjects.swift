@@ -415,8 +415,8 @@ extension GameState {
         case "trading_post":
             marketOpen = 2; dialogueSound(9)
         case "teacher", "random_teacher", "school", "shrine", "random_shrine", "subterranean_gate", "gateway", "teleporter_entrance", "ferry",
-             "teleporter_exit", "whirlpool", "keymaster_tent", "border_gate", "border_guard", "tower", "cartographer", "obelisk", "lighthouse",
-             "creature_bank", "sign", "ocean_bottle", "prison", "pandoras_box", "seers_hut", "quest_gate", "quest_guard", "tavern", "shipyard":
+             "teleporter_exit", "whirlpool", "keymaster_tent", "border_gate", "border_guard", "tower", "cartographer", "hut_of_the_magi", "obelisk",
+             "lighthouse", "creature_bank", "sign", "ocean_bottle", "prison", "pandoras_box", "seers_hut", "quest_gate", "quest_guard", "tavern", "shipyard":
             return visitMore(hero, p, &st)
         default:
             return false

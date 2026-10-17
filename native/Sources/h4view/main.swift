@@ -658,6 +658,8 @@ final class GameCursors {
 final class MapView: MTKView {
     var renderer: Renderer!
     var dragged: Float = 0
+    /// A press that ended a Window of the Magi's playback: its release does nothing else.
+    var swallowMouseUp = false
     var cursors: GameCursors?
     var cursorName = "normal"
     var cursorFrame = 0
@@ -753,6 +755,7 @@ final class MapView: MTKView {
     }
     override func mouseExited(with e: NSEvent) { NSCursor.arrow.set(); cursorName = ""; renderer.hover = nil; hoverPending = nil }
     override func mouseDown(with e: NSEvent) {
+        if renderer.skipMagiView() { swallowMouseUp = true; return }   // a Window of the Magi playing: any press ends it
         dragged = 0; renderer.hover = nil; hoverPending = nil
         renderer.abilityPopup = nil   // an ability's help goes with any left press (0x7e6180)
         let p = convert(e.locationInWindow, from: nil)
@@ -794,6 +797,7 @@ final class MapView: MTKView {
         renderer.pan -= SIMD2(Float(e.deltaX), Float(e.deltaY)) / renderer.zoom
     }
     override func mouseUp(with e: NSEvent) {
+        if swallowMouseUp { swallowMouseUp = false; return }
         let p0 = convert(e.locationInWindow, from: nil), sc = Float(window?.backingScaleFactor ?? 1)
         renderer.clickCount = e.clickCount
         if armySession != nil, splitDialog == nil, renderer.armyScreenRelease(x: Float(p0.x) * sc / renderer.uiScale, y: Float(bounds.height - p0.y) * sc / renderer.uiScale, shift: e.modifierFlags.contains(.shift)) { return }
@@ -909,6 +913,7 @@ final class MapView: MTKView {
     /// click lands outside it (as in the game).
     override func rightMouseUp(with e: NSEvent) { renderer.messageItemHelp = nil; renderer.abilityPopup = nil; heldHelp = nil }
     override func rightMouseDown(with e: NSEvent) {
+        if renderer.skipMagiView() { return }
         let p = convert(e.locationInWindow, from: nil)
         let scale = Float(window?.backingScaleFactor ?? 1)
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
@@ -968,6 +973,7 @@ final class MapView: MTKView {
         renderer.zoom = z
     }
     override func keyDown(with e: NSEvent) {
+        if renderer.skipMagiView() { return }
         if renderer.cheatBoxKey(e) { return }   // Tab opens the cheat box; while it is active it takes the keys
         if renderer.saveDialogKey(e) { return }
         if renderer.armyScreenKey(e.keyCode, chars: e.charactersIgnoringModifiers ?? "") { return }   // the army screen: S split, Enter / Esc done

@@ -65,6 +65,7 @@ extension Renderer {
         if let o = g.sanctuaryOpen { sanctuary = o; g.sanctuaryOpen = nil }
         if let c = g.puzzleOpen, g.scripts.messages.isEmpty { puzzle = c; g.puzzleOpen = nil }
         if g.jumped, let h = g.heroes.first { g.jumped = false; centre(onCell: (h.x, h.y)) }
+        playMagiView(now: now)
     }
     /// The floating "+N wood" of a picked-up pile (t_timed_window 0x88c930): font(25) white with the
     /// black halo, its top-left at the tile's top corner, 1 px left and 1 px up every 100 ms, gone

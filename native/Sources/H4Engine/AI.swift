@@ -157,6 +157,7 @@ extension GameState {
                 case "windmill", "weekly_material_generator", "random_weekly_material_generator": v = st?.owner == h.owner ? 0 : 900
                 case "academy", "arena", "training_grounds", "mercenary_camp", "sacred_grove", "sphinx": v = h.visitedObjects.contains(objectKey(p)) ? 0 : 700
                 case "magic_gem": v = 800
+                case "tower", "cartographer", "hut_of_the_magi": v = shroudRemoverValue(p, for: h.owner)   // (0x842120)
                 case "creature_bank": if let s = st, s.guardCounts.contains(where: { $0 > 0 }) { v = ours > Float(s.worth) * 2 ? Float(s.worth) : 0 }
                 default: v = 0
                 }

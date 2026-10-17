@@ -31,6 +31,7 @@ public struct SaveGame: Codable {
     public var mineOwners: [Int?]? = nil
     public var boats: [Boat]? = nil
     public var obeliskVisits: [String: Int]? = nil, digSites: [String: [Int]]? = nil, dug: [String]? = nil
+    public var shroudVisits: [String: [Int]]? = nil
     public var usedArtifacts: [Int]? = nil
     public var sanctuaryGuests: [String: HeroState]? = nil, sanctuaryPaid: [String]? = nil
     /// The shroud per level (one byte a cell, base64).
@@ -158,6 +159,7 @@ extension GameState {
         s.mineOwners = mines.map { $0.owner }
         s.boats = boats
         s.obeliskVisits = obeliskVisits; s.digSites = digSites; s.dug = Array(dug).sorted()
+        s.shroudVisits = shroudVisits
         s.sanctuaryGuests = sanctuaryGuests.mapValues { SaveGame.state(of: $0) }; s.sanctuaryPaid = Array(sanctuaryPaid).sorted()
         s.fog = fog.map { Data($0).base64EncodedString() }
         s.monthCreature = monthCreature; s.nextMonthCreature = nextMonthCreature; s.monthSpawns = monthSpawns
@@ -241,6 +243,7 @@ extension GameState {
         if let d = s.difficulty { difficulty = d }
         if let k = s.keys { keys = Set(k) }
         if let o = s.obeliskVisits { obeliskVisits = o }
+        if let v = s.shroudVisits { shroudVisits = v }
         if let d = s.digSites { digSites = d }
         if let d = s.dug { dug = Set(d) }
         sanctuaryGuests = (s.sanctuaryGuests ?? [:]).mapValues { SaveGame.hero(from: $0) }

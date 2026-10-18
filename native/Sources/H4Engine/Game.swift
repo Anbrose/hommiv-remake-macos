@@ -706,6 +706,8 @@ public final class GameState {
         self.map = map
         self.scenes = scenes
         self.level = min(level, scenes.count - 1)
+        // (event triggers add nothing: no blocked cell, and their trigger cells neither stop routes nor
+        // are entered -- 0x4cbc10 / 0x4d7580 ask vtable +0x18 / +0x4c, false for them)
         passabilities = scenes.map { Passability(map: map, level: $0.level, objects: $0.placed) }
     }
 

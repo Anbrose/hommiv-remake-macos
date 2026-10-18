@@ -4,6 +4,8 @@ import Foundation
 /// node follows the editor's descriptions (campaign_editor strings.*) and the exe's targets.
 public final class ScriptState {
     public var mapEvents: [MapEvent] = []
+    /// The map's placed events (what event triggers and Pandora's boxes run, by name), as play changed them.
+    public var placedEvents: [MapEvent] = []
     /// Town events by town index.
     public var townEvents: [Int: [MapEvent]] = [:]
     public var numbers: [String: Int] = [:]
@@ -37,6 +39,7 @@ extension GameState {
     /// Take the map's and the towns' events.
     public func loadScripts() {
         scripts.mapEvents = map.events
+        scripts.placedEvents = map.placedEvents
         for (i, t) in towns.enumerated() {
             if let o = map.objects.first(where: { ($0.type == "town" || $0.type == "random_town") && $0.x == t.x && $0.y == t.y && $0.level == level }),
                let ev = o.town?.events, !ev.isEmpty { scripts.townEvents[i] = ev }
@@ -57,6 +60,20 @@ extension GameState {
         }
     }
     func applies(_ e: MapEvent, to p: Int) -> Bool { e.players == 0 || e.players & (1 << p) != 0 }
+
+    /// An army set off a placed event by name (0x4de2e0): every placed event of that name (names
+    /// compare without case, 0x879620) whose filter takes the player whose turn it is (0x726960:
+    /// the human or computer flag, flags bit 0 / bit 1, and the colour's bit in the mask) runs.
+    /// One that ran a "remove event" action (0x835f70 sets 0xa8d9a0) is replaced by an empty
+    /// event, so it never does anything again; the others run every time.
+    func runPlacedEvents(named name: String, hero: Hero) {
+        let colour = actingColour, human = isHumanActing
+        for i in scripts.placedEvents.indices where scripts.placedEvents[i].name.caseInsensitiveCompare(name) == .orderedSame {
+            let e = scripts.placedEvents[i]
+            guard e.enabled, e.flags & (human ? 1 : 2) != 0, colour >= 0, colour < 6, e.players & (1 << colour) != 0 else { continue }
+            run(event: &scripts.placedEvents[i], ScriptContext(current: colour, hero: hero))
+        }
+    }
 
     // MARK: triggers
 
@@ -171,7 +188,7 @@ extension GameState {
             m.z = h.z; m.bank = "script"
             monsters.append(m)
             scriptBattle = (n.node(2), n.node(3), c)
-            if let p = scene.placed.first(where: { $0.cellX == h.x && $0.cellY == h.y }) ?? scene.placed.first { fight(hero: h, monsterAt: monsters.count - 1, p) }
+            if let p = scene.placed.first(where: { $0.cellX == h.x && $0.cellY == h.y }) ?? scene.triggers.first(where: { $0.cellX == h.x && $0.cellY == h.y }) ?? scene.placed.first { fight(hero: h, monsterAt: monsters.count - 1, p) }
         case "give_artifact":
             guard let h = c.hero ?? heroes.first else { return }
             for a in n.ints(1) { give(artifact: a, to: h) }

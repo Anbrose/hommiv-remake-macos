@@ -115,6 +115,7 @@ public struct SaveGame: Codable {
         public var victoryText: String?, lossText: String?, standardVictoryOn: Bool
         public var mapEventsEnabled: [Bool]
         public var townEventsEnabled: [String: [Bool]]
+        public var placedEventsEnabled: [Bool]? = nil
     }
 
     public func write(to url: URL) throws {
@@ -150,7 +151,8 @@ extension GameState {
         for (k, v) in scripts.townEvents { townEv["\(k)"] = v.map { $0.enabled } }
         let sc = SaveGame.ScriptSave(numbers: scripts.numbers, flags: scripts.flags, messages: scripts.messages,
                                      victoryText: scripts.victoryText, lossText: scripts.lossText, standardVictoryOn: scripts.standardVictoryOn,
-                                     mapEventsEnabled: scripts.mapEvents.map { $0.enabled }, townEventsEnabled: townEv)
+                                     mapEventsEnabled: scripts.mapEvents.map { $0.enabled }, townEventsEnabled: townEv,
+                                     placedEventsEnabled: scripts.placedEvents.map { $0.enabled })
         var s = SaveGame(mapPath: mapPath, day: day, resources: resources, heroes: heroStates, towns: townStates, mines: mineFlags,
                          dwellings: dwellingCounts, monsters: monsterStates, removed: scene.removed, moved: scene.moved, scripts: sc,
                          outcome: outcome, victoryDays: victoryDays)
@@ -223,6 +225,7 @@ extension GameState {
         scripts.victoryText = s.scripts.victoryText; scripts.lossText = s.scripts.lossText
         scripts.standardVictoryOn = s.scripts.standardVictoryOn
         for (i, e) in s.scripts.mapEventsEnabled.enumerated() where i < scripts.mapEvents.count { scripts.mapEvents[i].enabled = e }
+        for (i, e) in (s.scripts.placedEventsEnabled ?? []).enumerated() where i < scripts.placedEvents.count { scripts.placedEvents[i].enabled = e }
         for (k, list) in s.scripts.townEventsEnabled {
             guard let t = Int(k), var evs = scripts.townEvents[t] else { continue }
             for (i, e) in list.enumerated() where i < evs.count { evs[i].enabled = e }

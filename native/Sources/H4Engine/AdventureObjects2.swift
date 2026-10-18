@@ -163,9 +163,7 @@ extension GameState {
             remove(p)
         case "pandoras_box":
             // the map's placed event of that name: its message, question, guards and rewards
-            if let name = record(for: p)?.text, var e = map.placedEvents.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
-                run(event: &e, ScriptContext(current: actingColour, hero: hero))
-            }
+            if let name = record(for: p)?.text { runPlacedEvents(named: name, hero: hero) }
             remove(p)
         case "shipyard":
             visitShipyard(hero, p)
@@ -331,13 +329,19 @@ extension GameState {
             scripts.messages.append(r.questTexts[3])
         }
     }
-    /// An event trigger on a cell the army stepped onto: its placed event runs once.
+    /// An army arrived on a cell (each step of a walk, 0x546e80 / 0x545090 -> 0x5265a0): every
+    /// event trigger with a trigger cell there (its model's mask; all cells of the 1x1, 2x1 and
+    /// 1x2 models) sets off its placed event, for an army that has a player (0x7dc390). Triggers
+    /// neither stop nor end a route (vtable +0x18 / +0x4c are false), and nothing makes them
+    /// one-shot except the event removing itself (runPlacedEvents).
     func stepped(_ hero: Hero, onto x: Int, _ y: Int) {
-        guard let p = scene.placed.first(where: { $0.type == "event_trigger" && $0.cellX == x && $0.cellY == y }),
-              let name = record(for: p)?.text, objectStates[objectKey(p)]?.used != true,
-              var e = map.placedEvents.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else { return }
-        objectStates[objectKey(p), default: ObjectState()].used = true
-        run(event: &e, ScriptContext(current: actingColour, hero: hero))
+        guard hero.owner >= 0, hero.owner < 6 else { return }
+        for p in scene.triggers {
+            let dx = x - p.cellX, dy = y - p.cellY
+            guard dx >= 0, dy >= 0, let e = p.sprite.entryEdges, dx < e.w, dy < e.h, e.isTrigger(dx, dy),
+                  let name = record(for: p)?.text else { continue }
+            runPlacedEvents(named: name, hero: hero)
+        }
     }
 
     // MARK: obelisks and digging (0x4495c0, 0x449c60, 0x4ac160)
@@ -359,13 +363,9 @@ extension GameState {
     }
     /// The treasure's place: a free land cell (not lava, not river) within a marker's radius, or 4 around the obelisk.
     func chooseDigSite(_ c: String, near p: MapScene.Placed) {
-        var centres: [(x: Int, y: Int, z: Int, r: Int)] = []
-        for (l, sc) in scenes.enumerated() {
-            for q in sc.placed where q.type == "obelisk_marker" && q.subtype == c {
-                let r = map.objects.first { $0.type == "obelisk_marker" && $0.x == q.cellX && $0.y == q.cellY && $0.level == l }?.markerRadius ?? 4
-                centres.append((q.cellX, q.cellY, l, r))
-            }
-        }
+        // the markers are not map objects: each only added (point, radius) to its colour's list (0x7c6b30)
+        var centres: [(x: Int, y: Int, z: Int, r: Int)] = map.objects.filter { $0.type == "obelisk_marker" && $0.subtype == c && $0.level < scenes.count }
+            .map { ($0.x, $0.y, $0.level, $0.markerRadius ?? 4) }
         if centres.isEmpty { centres = [(p.cellX, p.cellY, level, 4)] }
         var cands: [(Int, Int, Int)] = []
         for ce in centres {

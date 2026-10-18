@@ -30,7 +30,10 @@ public final class MapScene {
     public let level: Int
     public let width: Int, height: Int
     public private(set) var chunks: [Chunk] = []
+    /// The objects that show: drawn, hovered, clicked, heard (re/hidden_objects_spec.md).
     public private(set) var placed: [Placed] = []
+    /// Event triggers: on the map (their trigger cells work) but without a single picture.
+    public private(set) var triggers: [Placed] = []
     public private(set) var spriteCache: [String: Sprite] = [:]
 
     /// Terrain types with two variants (dry/lush grass, shallow/deep water, ...) have patches
@@ -194,9 +197,32 @@ public final class MapScene {
         chunks = list
     }
 
+    /// How an object of a map record's type is on the adventure map (re/hidden_objects_spec.md).
+    /// The type name picks the object's class (0x463630 name table, 0x7c7b20 factories):
+    public enum Presence {
+        /// Placed with its model's pictures (vtable +0x70 = 0x4f9590 or a wrapper of it).
+        case drawn
+        /// t_placed_event_trigger (event_trigger = 25, factory 0x7dc530): placed by 0x4f9590, so its
+        /// trigger cells work, but its drawable interface has no subimages (count 0x40f470 = 0) and
+        /// empty boxes (0x7dc460 / 0x7dc440): no picture, no shadow, nothing to point at.
+        case pictureless
+        /// Never added to the map: t_adv_object_deletion_marker (23) only records its point under
+        /// its name with the map (0x44a730 -> 0x4df2f0); t_adv_obelisk_marker (48) only adds
+        /// (point, radius) to its colour's dig-area list (0x7c6b30).
+        case notPlaced
+    }
+    public static func presence(ofType type: String) -> Presence {
+        switch type {
+        case "event_trigger": return .pictureless
+        case "deletion_marker", "obelisk_marker": return .notPlaced
+        default: return .drawn
+        }
+    }
+
     private func placeObjects(archive: H4Archive) throws {
         let n = map.size
         var out: [Placed] = []
+        var pictureless: [Placed] = []
         var objs: [(seq: Int, o: MapObject)] = []
         for (i, o) in map.objects.enumerated() where o.level == level && o.x >= -2 && o.x < n + 2 && o.y >= -2 && o.y < n + 2 { objs.append((i, o)) }
         let resolver = RandomResolver(archive: archive)
@@ -205,6 +231,8 @@ public final class MapScene {
         let records: [MapObject] = objs.map { $0.o }
         let townOrder = records.filter { $0.type == "random_town" }.sorted { (($0.owner ?? 99), $0.y - $0.x, $0.x + $0.y) < (($1.owner ?? 99), $1.y - $1.x, $1.x + $1.y) }
         for (seq, o) in objs {
+            let presence = MapScene.presence(ofType: o.type)
+            if presence == .notPlaced { continue }
             var key = "adv_object.\(o.name).h4d"
             let ordinal = townOrder.firstIndex { $0.x == o.x && $0.y == o.y && $0.level == o.level } ?? 0
             let candidates = resolver.resolve(o, townOrdinal: ordinal)
@@ -237,13 +265,15 @@ public final class MapScene {
                     }
                 }
             }
-            out.append(Placed(name: key, sprite: s, image: img, shadow: s.shadow(for: img),
-                              x: sx + Int(s.origin.x) + img.box.left, y: sy + Int(s.origin.y) + img.box.top,
-                              anchorX: sx, anchorY: sy, cellX: o.x, cellY: o.y,
-                              category: String(o.name.split(separator: ".").first ?? ""), depth: depth,
-                              type: o.type, subtype: o.subtype, seq: seq))
+            let p = Placed(name: key, sprite: s, image: img, shadow: s.shadow(for: img),
+                           x: sx + Int(s.origin.x) + img.box.left, y: sy + Int(s.origin.y) + img.box.top,
+                           anchorX: sx, anchorY: sy, cellX: o.x, cellY: o.y,
+                           category: String(o.name.split(separator: ".").first ?? ""), depth: depth,
+                           type: o.type, subtype: o.subtype, seq: seq)
+            if presence == .pictureless { pictureless.append(p) } else { out.append(p) }
         }
         placed = out.sorted { $0.depth < $1.depth }
+        triggers = pictureless
     }
 
     /// Move an object to another cell (a wandering stack that walked up to a hero); returns it as placed there.

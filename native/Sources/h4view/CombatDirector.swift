@@ -51,7 +51,7 @@ extension CombatScreen {
         }
         if holds == 0, queue.isEmpty, aftermathQueue.isEmpty { pump(); if !queue.isEmpty { update(now: now); return } }
         if holds == 0, queue.isEmpty, aftermathQueue.isEmpty {
-            shownPos.removeAll(); shownCount.removeAll(); acting = nil; lastBlow = nil
+            shownPos.removeAll(); shownCount.removeAll(); acting = nil; lastBlow = nil; shownGateHP = nil
             for u in b.units { lastCount[u.id] = u.stats.count }
             // the icy tint lasts while the stack is frozen (removing effect 186 resets it, 0x5f24c7)
             for (id, t) in tints where t.kind == .freeze && b.unit(id).frozen == 0 { tints[id] = nil }
@@ -71,7 +71,21 @@ extension CombatScreen {
         if CombatScreen.trace { print(String(format: "  [%.3f] begin ", now.timeIntervalSince(traceStart)) + "\(e)".prefix(90)) }
         switch e {
         case .move(let id, let path, let start, let flying):
-            beginMove(id, path: path, start: start, flying: flying, now: now)
+            // a defender walking through its closed gate: the drawbridge lowers first (t_open_gate_animation,
+            // 0x56bc30 -> 0x577ba0), the walk follows, and the bridge rises when it ends (0x577c30)
+            if !flying, crossesClosedGate(b.unit(id), path: path, start: start) {
+                let open = 0.1 * Double(max(0, gateFrameCount - 1))
+                gateOpen = (now, nil)
+                after(now.addingTimeInterval(open)) { [weak self] t in
+                    guard let self = self else { return }
+                    self.beginMove(id, path: path, start: start, flying: flying, now: t)
+                    let m = self.moving[id]?.move
+                    let end = t.addingTimeInterval((m?.preTime ?? 0) + (m?.walkTime ?? 0) + (m?.postTime ?? 0))
+                    self.gateOpen = (now, end)
+                }
+            } else {
+                beginMove(id, path: path, start: start, flying: flying, now: now)
+            }
         case .melee, .shoot:
             beginSwings(e, now: now)
         case .together, .newRound, .castAt, .blocked:
@@ -100,13 +114,20 @@ extension CombatScreen {
             beginCast(id, spell, targets: targets, now: now)
         case .resisted(let id, _):
             resist(id, at: now)
-        case .gateHit(let id, let dmg, _):
+        case .gateHit(let id, let dmg, let broken):
+            // a blow on the gate (0x56e680 with a target that is no creature): the striker turns to it
+            // and plays melee_up (state 7; melee where the actor has none); the gate never strikes back.
+            // At the hit the gate takes the damage, shows the picture for what it has left, and a
+            // broken gate collapses (its destroyed model, once); the number is white, without an icon
             let u = b.unit(id)
             if let c = b.field.gateCells.first { face(u, toward: ((c / Battlefield.size + 1) * 16, (c % Battlefield.size + 5) * 16)) }
-            let ranged = u.stats.shooter && !b.nextToGate(u)
-            play(id, ranged ? "ranged" : "melee", at: now, hit: { [weak self] t in
-                guard let self = self, self.showOtherNumbers, let c = b.field.gateCells.first else { return }
-                // wall / gate damage: white, no icon (t_castle_gate 0x5bff70)
+            if shownGateHP == nil { shownGateHP = b.field.gateHP + pendingGateDamage(after: e) + dmg }
+            let state = frameCount(u.actor, "melee_up", u.facing) > 0 ? "melee_up" : "melee"
+            play(id, state, at: now, hit: { [weak self] t in
+                guard let self = self else { return }
+                self.shownGateHP = max(0, (self.shownGateHP ?? dmg) - dmg)
+                if broken { self.gateBrokenAt = t; self.gateOpen = nil }
+                guard self.showOtherNumbers, let c = b.field.gateCells.first else { return }
                 let gx = Float(c / Battlefield.size) + 1, gy = Float(c % Battlefield.size) + 5
                 self.floaters.append(Floater(lines: [("-\(dmg)", nil)], world: (gx, gy), height: 80, since: t, colour: (255, 255, 255)))
             })
@@ -743,4 +764,24 @@ extension CombatScreen {
 
 extension CombatScreen {
     struct MoveAnim { let path: [(Int, Int)]; let start: (Int, Int); let flying: Bool; let since: Date; let move: Move }
+
+    // MARK: the castle gate
+
+    /// Damage of the gate blows still queued after `e` (the gate's hit points before the first
+    /// blow played are what it has now plus everything the queue still holds).
+    func pendingGateDamage(after e: Battle.Event) -> Int {
+        queue.reduce(0) { n, q in if case .gateHit(_, let d, _) = q { return n + d }; return n }
+    }
+    /// The closed picture's frame count (the drawbridge's lowering).
+    var gateFrameCount: Int {
+        guard let b = battle, let s = obstacleSprite(b.field.gateName) else { return 1 }
+        return max(1, s.timeline.isEmpty ? s.frames.count : s.timeline.count)
+    }
+    /// Does a walk take the stack's footprint over the gate while it stands closed (as shown)?
+    func crossesClosedGate(_ u: Battle.Unit, path: [(Int, Int)], start: (Int, Int)) -> Bool {
+        guard let b = battle, !b.field.gateCells.isEmpty, (shownGateHP ?? b.field.gateHP) > 0 else { return false }
+        let gate = Set(b.field.gateCells)
+        for p in [start] + path { for i in 0..<u.size { for j in 0..<u.size where gate.contains(Battlefield.key(p.0 + i, p.1 + j)) { return true } } }
+        return false
+    }
 }

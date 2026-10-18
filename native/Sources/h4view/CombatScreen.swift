@@ -75,6 +75,13 @@ final class CombatScreen {
     /// `x`, `y` the footprint's top cell), shown from `since`, fading in over 15 x 75 ms when `fadeIn`.
     struct SpellObstacle { let name: String; let x: Int, y: Int; let w: Int, h: Int; let since: Date; let fadeIn: Bool }
     var spellObstacles: [SpellObstacle] = []
+    /// The castle gate as the screen shows it: its hit points as of the blows played so far (its
+    /// picture, t_castle_gate 0x5bff70 -> 0x5c0780), when it was broken (the destroyed model's
+    /// collapse plays once from then), and the drawbridge lowering for a defender who walks through
+    /// it (t_open_gate_animation, 0x56bc30 -> 0x577ba0; raised again when the walk ends, 0x577c30).
+    var shownGateHP: Int?
+    var gateBrokenAt: Date?
+    var gateOpen: (since: Date, closeAt: Date?)?
     /// Each stack's count when the playback was last idle (what a stack killed outright had).
     var lastCount: [Int: Int] = [:]
     var unitPos: [Int: (Float, Float)] = [:]     // visual lattice positions while moving
@@ -484,6 +491,7 @@ final class CombatScreen {
     func resetPlayback() {
         queue = []; timers = []; missiles = []; waitingOnUnit = [:]; windows = []; windowBusy = []; windowWaiting = [:]
         fades = [:]; alphaLevel = [:]; tints = [:]; slides = [:]; fieldActors = []; moving = [:]; hidden = []
+        shownGateHP = nil; gateBrokenAt = nil; gateOpen = nil
         pendingLuck = [:]; waitingDeath = [:]; spellObstacles = []; pendingHits = [:]; swingEnds = [:]; aftermathQueue = []
         unitPos = [:]; unitState = [:]; lastCount = Dictionary(uniqueKeysWithValues: (battle?.units ?? []).map { ($0.id, $0.stats.count) }); dead = []; dying = []; pendingDeaths = []; shownPos = [:]; shownCount = [:]; lastBlow = nil; acting = nil
     }

@@ -410,6 +410,7 @@ if let out = snapshot {
         cs.startSiege(game: game, hero: h, town: tn, terrain: 1)
         if let b = cs.battle {
             print("siege of \(game.towns[tn].name) level \(game.towns[tn].castleLevel): walls \(b.field.walls.count) gate \(b.field.gateCells.count) hp \(b.field.gateHP) towers \(b.field.towers.count) moat \(b.field.moat.count); units \(b.units.map { "\($0.side):\($0.stats.name)@\($0.x),\($0.y)" })")
+            if let hp = ProcessInfo.processInfo.environment["H4SIEGEGATE"].flatMap({ Int($0) }) { b.setGate(hp: hp) }   // snapshot: the gate with hp left
             if ProcessInfo.processInfo.environment["H4SIEGEAUTO"] != nil { b.autoResolve(); print("resolved: attacker won \(b.finished ?? false) in \(b.round) rounds, gate \(b.field.gateHP)") }
             _ = b.takeEvents(); cs.resetPlayback()
         }

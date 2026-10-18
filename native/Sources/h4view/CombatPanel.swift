@@ -154,10 +154,12 @@ extension Renderer {
         }
         guard x < Float(cs.hotspot("battle_scene")?.width ?? 885) else { return }
         let mode = cs.shownMode(cur)
-        if mode != 4, onGate(b, x: x, y: y), b.nextToGate(cur) || b.canShoot(cur) { b.attackGate(); cs.pump(); return }
         if mode != 4, let target = enemyUnder(b, x: x, y: y) {
             if mode == 3 { openCombatBook(); return }
             if b.canShoot(cur), mode == 0 { _ = b.shoot(target.id) } else { _ = b.attack(target.id) }
+        } else if onGate(b, x: x, y: y), b.turnsToStrikeGate(cur) != nil {
+            // the gate: walk next to it (where the pointer aims, 0x56f600) and strike it
+            _ = b.attackGate(from: gateStrikePosition(b, cur, x: x, y: y))
         } else {
             let c = footprintAt(cur, x: x, y: y)
             _ = b.move(to: c.0, c.1)

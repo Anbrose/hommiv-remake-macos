@@ -212,7 +212,8 @@ public struct ScriptReader {
         let v = try u16()
         guard v <= 1 else { throw ScriptError(message: "placed event \(v)") }
         let s = try script()
-        let players = v >= 1 ? try u8() : 0, flags = v >= 1 ? try u8() : 0
+        // v0 has no filter: everyone (inferred; the exe's cleared event is the same 0x3f, human and computer, 0x4de4fc)
+        let players = v >= 1 ? try u8() : 0x3f, flags = v >= 1 ? try u8() : 3
         let name = try str()
         var e = MapEvent(kind: .triggerable, name: name, action: s.action, players: players, flags: flags)
         e.message = s.message

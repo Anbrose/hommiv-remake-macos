@@ -78,6 +78,8 @@ extension GameState {
                 if h.movement + 0.001 < cost { break }
                 if !isVacant((c.x, c.y), for: h) || enemyAt(c.x, c.y) != nil { break }
                 h.movement -= cost; h.x = c.x; h.y = c.y; moved = true
+                aiStepped(h)
+                if pendingHeroBattle != nil || (h.x, h.y) != (c.x, c.y) { break }   // a fight, or the event moved it
             }
             passability.block(h.x, h.y)
             if (h.x, h.y) == (goal.stand.0, goal.stand.1) || GameState.adjacent((h.x, h.y), goal.at) {
@@ -178,6 +180,19 @@ extension GameState {
             }
         }
         return best.map { ($0.path, $0.stand, $0.at, $0.use) }
+    }
+
+    /// A computer army's step lands on a cell: its event triggers fire as for anyone (0x5265a0),
+    /// the questions answered yes and nothing of it shown on the player's screen.
+    func aiStepped(_ h: Hero) {
+        let msgs = scripts.messages.count, fl = floaters.count, snd = sounds.count, lg = log.count
+        stepped(h, onto: h.x, h.y)
+        if let q = question { question = nil; q.yes() }
+        if let c = choice { choice = nil; c.pick(0) }
+        if scripts.messages.count > msgs { scripts.messages.removeSubrange(msgs...) }
+        if floaters.count > fl { floaters.removeSubrange(fl...) }
+        if sounds.count > snd { sounds.removeSubrange(snd...) }
+        if log.count > lg { log.removeSubrange(lg...) }
     }
 
     /// A computer hero uses an object: at once, with no questions (yes to buying, the gold from

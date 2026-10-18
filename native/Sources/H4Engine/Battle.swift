@@ -1274,19 +1274,9 @@ public final class Battle {
             if canShoot(u), let t = enemies.filter({ shotOverWallOK(u, $0) }).max(by: { QuickCombat.threat($0.stats) < QuickCombat.threat($1.stats) }) { _ = shoot(t.id); return }
             if let t = enemies.filter({ attackPosition(u, $0) != nil }).max(by: { QuickCombat.threat($0.stats) < QuickCombat.threat($1.stats) }) { _ = attack(t.id); return }
             if side(of: u) == 1 { defend(); return }   // the garrison holds the walls
-            if !field.gateDestroyed {   // the attacker breaks in through the gate
-                if nextToGate(u) { attackGate(); return }
-                if let g = field.gateCells.first {
-                    let gx = g / Battlefield.size + 2, gy = g % Battlefield.size + 4
-                    var best: (Int, Int)? = nil, bestD = Float.infinity
-                    for (k, _) in reachable(u) {
-                        let x = k / Battlefield.size, y = k % Battlefield.size
-                        let d = Float((x - gx) * (x - gx) + (y - gy) * (y - gy))
-                        if d < bestD { bestD = d; best = (x, y) }
-                    }
-                    if let b = best, !(b.0 == u.x && b.1 == u.y) { _ = move(to: b.0, b.1); return }
-                }
-            }
+            // the attacker breaks in through the gate: strikes it from where it can this turn, else walks
+            // towards it (the computer's siege choices themselves were not traced)
+            if mayStrikeGate(u), attackGate() { return }
         }
         if canShoot(u), let t = enemies.filter({ shotOverWallOK(u, $0) }).max(by: { QuickCombat.threat($0.stats) < QuickCombat.threat($1.stats) }) { _ = shoot(t.id); return }
         if let t = enemies.filter({ attackPosition(u, $0) != nil }).max(by: { QuickCombat.threat($0.stats) < QuickCombat.threat($1.stats) }) { _ = attack(t.id); return }
@@ -1343,6 +1333,8 @@ public final class Battle {
     }
 
     public func takeEvents() -> [Event] { let e = events; events.removeAll(); return e }
+    /// Tests and debugging: the gate with `hp` hit points left.
+    public func setGate(hp: Int) { while field.gateHP > max(0, hp) { _ = field.damageGate(field.gateHP - max(0, hp)) } }
     /// Tests and debugging: the stack acts next.
     public func putFirst(_ id: Int) { order.removeAll { $0 == id }; order.insert(id, at: 0) }
 
@@ -1360,27 +1352,120 @@ public final class Battle {
         guard field.castleLevel > 0, !onTower(a), let w = field.wallSteps(a.centre, b.centre) else { return true }
         return a.x > b.x ? w.total - w.last <= 4 + b.size / 2 : w.first <= 4 + a.size / 2
     }
-    /// Is the unit next to the unbroken gate?
-    public func nextToGate(_ u: Unit) -> Bool {
-        guard field.castleLevel > 0, !field.gateDestroyed else { return false }
-        for c in field.gateCells {
-            let gx = c / Battlefield.size, gy = c % Battlefield.size
-            if gx >= u.x - 1, gx <= u.x + u.size, gy >= u.y - 1, gy <= u.y + u.size { return true }
-        }
-        return false
+    /// The unbroken gate's footprint (t_castle_gate, combat_object castle.<alignment>.<level>.gate.*,
+    /// 2 x 10 cells in every layout): top corner and far corner, or nil without a gate to strike.
+    public var gateRect: (x0: Int, y0: Int, x1: Int, y1: Int)? {
+        guard field.castleLevel > 0, !field.gateDestroyed, !field.gateCells.isEmpty else { return nil }
+        let xs = field.gateCells.map { $0 / Battlefield.size }, ys = field.gateCells.map { $0 % Battlefield.size }
+        return (xs.min()!, ys.min()!, xs.max()!, ys.max()!)
     }
-    /// Strike the gate (t_castle_gate 0x5bfe60): an ordinary blow against a defense of 10, at most
-    /// 50 hit points off it.
+    /// The gate's centre in cells (the point blows and the wall test aim at).
+    public var gateCentre: (Float, Float)? {
+        gateRect.map { (Float($0.x0 + $0.x1 + 1) / 2, Float($0.y0 + $0.y1 + 1) / 2) }
+    }
+    /// May a size x size footprint at (x, y) strike the gate? It must touch the footprint (an
+    /// adjacent cell, corners included). Long Weapon does not reach further: the gate's +0x3c slot
+    /// (0x40f390, true where t_attackable_obstacle has false) zeroes the reach in 0x50c4e0. [I]
+    public func touchesGate(_ x: Int, _ y: Int, size: Int) -> Bool {
+        guard let g = gateRect else { return false }
+        return x <= g.x1 + 1 && g.x0 <= x + size && y <= g.y1 + 1 && g.y0 <= y + size
+    }
+    /// Is the unit next to the unbroken gate?
+    public func nextToGate(_ u: Unit) -> Bool { touchesGate(u.x, u.y, size: u.size) }
+    /// Can the unit strike the gate at all (t_combat_user_action_melee against the gate object,
+    /// 0x627350): only the attacking side (0x40cef0, the gate belongs to the town's army), and not
+    /// while it may not attack (Song of Peace).
+    public func mayStrikeGate(_ u: Unit) -> Bool {
+        gateRect != nil && side(of: u) == 0 && !u.stats.under(144)
+    }
+    /// The places the unit can strike the gate from this turn, with their move cost (the attack
+    /// positions 0x50c4e0 lists for the gate's footprint; its own place first when it is next to it).
+    public func gateAttackPositions(_ u: Unit) -> [(x: Int, y: Int, cost: Float)] {
+        guard mayStrikeGate(u) else { return [] }
+        var out: [(x: Int, y: Int, cost: Float)] = []
+        if nextToGate(u) { out.append((u.x, u.y, 0)) }
+        for (k, c) in reachable(u) {
+            let x = k / Battlefield.size, y = k % Battlefield.size
+            if (x, y) != (u.x, u.y), touchesGate(x, y, size: u.size) { out.append((x, y, c)) }
+        }
+        return out.sorted { $0.cost != $1.cost ? $0.cost < $1.cost : ($0.x, $0.y) < ($1.x, $1.y) }
+    }
+    /// Turns the unit needs before it strikes the gate (1 = now), for the melee pointer's frame; nil: no way.
+    public func turnsToStrikeGate(_ u: Unit) -> Int? {
+        guard mayStrikeGate(u) else { return nil }
+        if nextToGate(u) { return 1 }
+        var best = Float.infinity
+        for (k, c) in explore(u, budget: moveBudget(u) * 12) where c < best {
+            let x = k / Battlefield.size, y = k % Battlefield.size
+            if touchesGate(x, y, size: u.size), field.fits(x, y, size: u.size) || u.stats.has("flying"), !overlaps(x, y, u.size, except: u.id) { best = c }
+        }
+        guard best < .infinity else { return nil }
+        return max(1, Int((best / max(1, moveBudget(u))).rounded(.up)))
+    }
+    /// A blow on the gate: the attacker's ordinary melee damage (0x575fe0 -> 0x5ee690 / 0x5ee380)
+    /// against the gate's defense factor of 1.0 (its stats slots 0x5c12f0 -> 0x63d8f0 return 1.0
+    /// for melee and ranged), so the attack / defense ratio is the attack itself, at most 20; the blow
+    /// counts as one over the wall (0x570350 meets the closed gate, kind 0x22): an attacker outside
+    /// does 1 / F of it, F = 1.25 / 1.5 / 2 (0x57ba30). The gate then takes at most 50 of it and no
+    /// more than it has left (0x5bff70, table 0x97ec30).
+    func gateBlow(_ u: Unit, moved: Int) -> Int {
+        var gate = Combatant(hero: "gate", level: 1)
+        gate.defense = 1; gate.abilities = []
+        u.stats.onQuicksand = onQuicksand(u.x, u.y, u.size)
+        var dmg = QuickCombat.damage(u.stats, gate, rng: &rng, ranged: false, moved: moved)
+        if let c = gateCentre {
+            let f = [1.0, 1.25, 1.5, 2.0][min(3, field.castleLevel)]
+            dmg = max(1, Int((Double(dmg) * (c.0 >= u.centre.0 ? f : 1 / f)).rounded()))
+        }
+        return field.damageGate(dmg)
+    }
+    /// The damage a blow on the gate would do (the "Attack gate for N - M damage" text, 0x56f900 with
+    /// 0x5ee810 / 0x5ee7d0: not cut to the 50 the gate takes).
+    public func gateDamageRange(_ u: Unit) -> (Int, Int) {
+        var gate = Combatant(hero: "gate", level: 1)
+        gate.defense = 1; gate.abilities = []
+        var (lo, hi) = QuickCombat.damageRange(u.stats, gate, ranged: false)
+        if let c = gateCentre {
+            let f = [1.0, 1.25, 1.5, 2.0][min(3, field.castleLevel)]
+            let m = c.0 >= u.centre.0 ? f : 1 / f
+            lo = max(1, Int((Double(lo) * m).rounded())); hi = max(1, Int((Double(hi) * m).rounded()))
+        }
+        return (lo, hi)
+    }
+    /// Strike the gate (t_combat_user_action_melee on the gate, 0x6261b0 -> 0x56b9b0 -> 0x56ef40): walk
+    /// to `position` (or the cheapest place next to it) and strike, each blow of the attack (0x5f2160)
+    /// one after the other; the gate never strikes back. Out of reach this turn: walk towards it.
+    /// Shots never aim at the gate (0x627700 builds a ranged action only on a creature).
     @discardableResult
-    public func attackGate() -> Bool {
-        guard finished == nil, let u = current, nextToGate(u) || canShoot(u) else { return false }
-        var gate = Combatant(hero: "Gate", level: 1)
-        gate.defense = 10; gate.abilities = ["mechanical"]
-        let ranged = !nextToGate(u) && canShoot(u)
-        var dmg = QuickCombat.damage(u.stats, gate, rng: &rng, ranged: ranged)
-        if ranged { spendShot(u); dmg = max(1, dmg / 2) }
-        let done = field.damageGate(dmg)
-        events.append(.gateHit(unit: u.id, damage: done, broken: field.gateDestroyed))
+    public func attackGate(from position: (Int, Int)? = nil) -> Bool {
+        guard finished == nil, let u = current, mayStrikeGate(u) else { return false }
+        let options = gateAttackPositions(u)
+        let pos: (Int, Int)
+        if let p = position, options.contains(where: { $0.x == p.0 && $0.y == p.1 }) { pos = p }
+        else if let first = options.first { pos = (first.x, first.y) }
+        else {
+            var best: (Int, Int)? = nil, bestCost = Float.infinity
+            for (k, c) in explore(u, budget: moveBudget(u) * 12) where c < bestCost {
+                let x = k / Battlefield.size, y = k % Battlefield.size
+                if touchesGate(x, y, size: u.size), !u.stats.has("flying") || field.fits(x, y, size: u.size), !overlaps(x, y, u.size, except: u.id) { best = (x, y); bestCost = c }
+            }
+            guard let b = best else { return false }
+            return move(to: b.0, b.1)
+        }
+        beginAction(u)
+        var movedPoints: Float = 0
+        if pos != (u.x, u.y), let p = path(u, to: pos.0, pos.1) {
+            movedPoints = reachable(u)[Battle.key(pos.0, pos.1)] ?? 0
+            u.moved += movedPoints
+            events.append(.move(unit: u.id, path: p, from: (u.x, u.y), flying: u.stats.has("flying"))); u.x = pos.0; u.y = pos.1
+            release(by: u)
+        }
+        if let c = gateCentre { u.facing = Battle.facing(dx: c.0 - u.centre.0, dy: c.1 - u.centre.1) }
+        for _ in 0..<strikes(u, ranged: false) where !field.gateDestroyed {
+            let done = gateBlow(u, moved: Int(u.moved))
+            events.append(.gateHit(unit: u.id, damage: done, broken: field.gateDestroyed))
+        }
+        if u.stats.under(6) { remove(6, from: u) }
         endAction(u)
         return true
     }

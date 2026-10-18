@@ -140,15 +140,13 @@ extension Renderer {
             q.append(Quad(texture: texture(for: fr, of: o.name), x: Int(px + Float(s.origin.x + Int32(fr.box.left)) * sc), y: Int(py + Float(s.origin.y + Int32(fr.box.top)) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc), alpha: alpha))
             drawn.append((CombatScreen.point(Float(o.x) + Float(o.w) / 2, Float(o.y) + Float(o.h) / 2).1, q))
         }
-        // the castle gate, in its state (intact, light_damage, heavy_damage, destroyed)
-        if !f.gateCells.isEmpty {
-            let gx = f.gateCells.map { $0 / Battlefield.size }.min() ?? 0, gy = f.gateCells.map { $0 % Battlefield.size }.min() ?? 0
-            let name = f.gateName.replacingOccurrences(of: ".intact.", with: ".\(b.field.gateState).")
-            if let s = cs.obstacleSprite(name) ?? cs.obstacleSprite(f.gateName), let fr = s.frames.first {
-                let (px, py) = CombatScreen.point(Float(gx), Float(gy))
-                let q = [Quad(texture: texture(for: fr, of: name), x: Int(px + Float(s.origin.x + Int32(fr.box.left)) * sc), y: Int(py + Float(s.origin.y + Int32(fr.box.top)) * sc), w: Int(Float(fr.bitmap.width) * sc), h: Int(Float(fr.bitmap.height) * sc))]
-                drawn.append((CombatScreen.point(Float(gx) + 1, Float(gy) + 5).1, q))
-            }
+        // the castle gate, in its state (intact, light_damage, heavy_damage, destroyed), lowered for a
+        // defender walking through, or collapsing once broken
+        if let g = gateFrame(cs, b, now: now) {
+            var q: [Quad] = []
+            if let sh = g.shadow { q.append(Quad(texture: texture(for: sh, of: g.name), x: Int(g.px + Float(g.sprite.origin.x + Int32(sh.box.left)) * sc), y: Int(g.py + Float(g.sprite.origin.y + Int32(sh.box.top)) * sc), w: Int(Float(sh.bitmap.width) * sc), h: Int(Float(sh.bitmap.height) * sc))) }
+            if g.frame.bitmap.width > 0 { q.append(Quad(texture: texture(for: g.frame, of: g.name), x: Int(g.px + Float(g.sprite.origin.x + Int32(g.frame.box.left)) * sc), y: Int(g.py + Float(g.sprite.origin.y + Int32(g.frame.box.top)) * sc), w: Int(Float(g.frame.bitmap.width) * sc), h: Int(Float(g.frame.bitmap.height) * sc))) }
+            drawn.append((g.depth, q))
         }
         let labels = combatLabels(cs, b, now: now)
         // the area spell being aimed: every stack it would take in gets its target shadow (0x717b40)
@@ -409,7 +407,16 @@ extension Renderer {
     /// attack.combat and text_damage_range texts), the range from the damage rules.
     func combatStatusText(x: Float, y: Float) -> String? {
         guard let cs = combat, let b = cs.battle, !cs.busy, cs.result == nil, let cur = b.current, cur.side == 0, x < 885, let t = game?.tables else { return nil }
-        guard let target = enemyUnder(b, x: x, y: y) else { return nil }
+        func range(_ lo: Int, _ hi: Int) -> String {
+            lo == hi ? (t.strings["text_damage_range_1"] ?? "%damage damage").replacingOccurrences(of: "%damage", with: "\(lo)")
+                     : (t.strings["text_damage_range_2"] ?? "%damage_low - %damage_high damage").replacingOccurrences(of: "%damage_low", with: "\(lo)").replacingOccurrences(of: "%damage_high", with: "\(hi)")
+        }
+        guard let target = enemyUnder(b, x: x, y: y) else {
+            // the gate: "Attack gate for N - M damage" (0x56f900, the gate's name gate.misc)
+            guard onGate(b, x: x, y: y), b.turnsToStrikeGate(cur) != nil else { return nil }
+            let (lo, hi) = b.gateDamageRange(cur)
+            return (t.strings["attack.combat"] ?? "Attack %creature_name\nfor %damage").replacingOccurrences(of: "%creature_name", with: t.strings["gate.misc"] ?? "gate").replacingOccurrences(of: "%damage", with: range(lo, hi)).replacingOccurrences(of: "\n", with: " ")
+        }
         let mode = cs.shownMode(cur)
         guard mode != 4 else { return nil }
         let ranged = b.canShoot(cur) && mode == 0
@@ -436,7 +443,6 @@ extension Renderer {
             return "combat.no_cast"
         }
         let mode = cs.shownMode(cur)
-        if mode != 4, onGate(b, x: x, y: y), b.nextToGate(cur) || b.canShoot(cur) { return "combat.attack_Gate" }
         if mode != 4, let t = enemyUnder(b, x: x, y: y) {
             combatTarget = t.id
             if mode == 3 { return "combat.cast_spell" }
@@ -451,6 +457,17 @@ extension Renderer {
             let dir = Battle.facing(dx: t.centre.0 - cur.centre.0, dy: t.centre.1 - cur.centre.1)
             return "combat.melee.\(names[dir] ?? "east")"
         }
+        // the castle gate (no stack under the pointer, 0x627350 -> 0x5650d0): a melee attack on it,
+        // whatever the stack's mode (a shot or a walk there fails and the default chain reaches the
+        // melee action), with the melee pointers like any blow (0x56f900); the exe never uses
+        // cursor.combat.attack_Gate
+        if onGate(b, x: x, y: y), let turns = b.turnsToStrikeGate(cur) {
+            cursorFrameIndex = min(4, turns) - 1
+            let from = gateStrikePosition(b, cur, x: x, y: y).map { (Float($0.0) + Float(cur.size) / 2, Float($0.1) + Float(cur.size) / 2) } ?? cur.centre
+            let names = ["e": "east", "w": "west", "n": "north", "s": "south", "ne": "northeast", "nw": "northwest", "se": "southeast", "sw": "southwest"]
+            let g = b.gateCentre ?? from
+            return "combat.melee.\(names[Battle.facing(dx: g.0 - from.0, dy: g.1 - from.1)] ?? "east")"
+        }
         // walking: the number beside the pointer is the turns needed to get there
         let c = footprintAt(cur, x: x, y: y)
         guard let cost = b.cost(cur, to: c.0, c.1) else { return "combat.normal" }
@@ -458,11 +475,54 @@ extension Renderer {
         return cur.stats.has("flying") ? "combat.fly" : "combat.walk"
     }
 
-    /// Is the pointer on the unbroken castle gate?
+    /// The gate's picture now: the model for the hit points the playback has shown (intact,
+    /// light_damage, heavy_damage, destroyed), its frame (1 closed; 1...7 the drawbridge lowering and
+    /// back for a defender walking through; the destroyed model's collapse once, ending on its empty
+    /// last frame), and where it is drawn. The frames take 100 ms each [I].
+    func gateFrame(_ cs: CombatScreen, _ b: Battle, now: Date) -> (name: String, sprite: Sprite, frame: SpriteImage, shadow: SpriteImage?, px: Float, py: Float, depth: Float)? {
+        let f = b.field
+        guard !f.gateCells.isEmpty else { return nil }
+        let gx = f.gateCells.map { $0 / Battlefield.size }.min() ?? 0, gy = f.gateCells.map { $0 % Battlefield.size }.min() ?? 0
+        let gx1 = f.gateCells.map { $0 / Battlefield.size }.max() ?? 0, gy1 = f.gateCells.map { $0 % Battlefield.size }.max() ?? 0
+        let state = f.gateState(hp: cs.shownGateHP ?? f.gateHP)
+        let name = f.gateName.replacingOccurrences(of: ".intact.", with: ".\(state).")
+        guard let s = cs.obstacleSprite(name) ?? cs.obstacleSprite(f.gateName) else { return nil }
+        let tl: [(frame: SpriteImage, shadow: SpriteImage?)] = s.timeline.isEmpty ? s.frames.map { ($0, s.shadow(for: $0)) } : s.timeline
+        guard !tl.isEmpty else { return nil }
+        let step = 0.1
+        var k = 0
+        if state == "destroyed" {
+            k = cs.gateBrokenAt.map { min(tl.count - 1, Int(max(0, now.timeIntervalSince($0)) / step)) } ?? tl.count - 1
+        } else if let o = cs.gateOpen {
+            let opened = min(tl.count - 1, Int(max(0, now.timeIntervalSince(o.since)) / step))
+            if let c = o.closeAt, now >= c { k = max(0, opened - Int(now.timeIntervalSince(c) / step)) } else { k = opened }
+        }
+        let (px, py) = CombatScreen.point(Float(gx), Float(gy))
+        return (name, s, tl[k].frame, tl[k].shadow, px, py, CombatScreen.point(Float(gx + gx1 + 1) / 2, Float(gy + gy1 + 1) / 2).1)
+    }
+    /// Is the pointer on the unbroken castle gate (0x5650d0: the object on the cell under the pointer,
+    /// else the object whose picture is under it)? Its cells, or its closed picture's box [I: the exe
+    /// tests the picture's pixels].
     func onGate(_ b: Battle, x: Float, y: Float) -> Bool {
-        guard !b.field.gateCells.isEmpty, !b.field.gateDestroyed else { return false }
+        guard b.gateRect != nil, let cs = combat else { return false }
         let c = CombatScreen.cell(at: x, y)
-        for d in 0...4 where b.field.gateCells.contains(Battlefield.key(c.0 - d, c.1 - d)) { return true }
-        return false
+        if b.field.gateCells.contains(Battlefield.key(c.0, c.1)) { return true }
+        guard let g = gateFrame(cs, b, now: Date()), g.frame.bitmap.width > 0 else { return false }
+        let sc = CombatScreen.sceneScale
+        let x0 = g.px + Float(g.sprite.origin.x + Int32(g.frame.box.left)) * sc, y0 = g.py + Float(g.sprite.origin.y + Int32(g.frame.box.top)) * sc
+        return x >= x0 && x < x0 + Float(g.frame.bitmap.width) * sc && y >= y0 && y < y0 + Float(g.frame.bitmap.height) * sc
+    }
+    /// Where a click on the gate makes the stack strike from (0x56f600): of the places it can reach
+    /// this turn next to the gate, the one whose direction from the gate's centre is nearest the
+    /// pointer's (0x51eda0 angle difference); nil when none is in reach this turn.
+    func gateStrikePosition(_ b: Battle, _ u: Battle.Unit, x: Float, y: Float) -> (Int, Int)? {
+        let options = b.gateAttackPositions(u)
+        guard let g = b.gateCentre, !options.isEmpty else { return nil }
+        let (wx, wy) = Battlefield.world(x / CombatScreen.sceneScale, y / CombatScreen.sceneScale)
+        let aim = atan2(wy - g.1, wx - g.0)
+        func diff(_ a: Float) -> Float { let d = abs(a - aim).truncatingRemainder(dividingBy: 2 * .pi); return min(d, 2 * .pi - d) }
+        return options.min { a, c in
+            diff(atan2(Float(a.y) + Float(u.size) / 2 - g.1, Float(a.x) + Float(u.size) / 2 - g.0)) < diff(atan2(Float(c.y) + Float(u.size) / 2 - g.1, Float(c.x) + Float(u.size) / 2 - g.0))
+        }.map { ($0.x, $0.y) }
     }
 }

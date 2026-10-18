@@ -230,7 +230,8 @@ public struct Battlefield {
     public var castleLevel = 0
     public var walls: Set<Int> = [], towers: Set<Int> = [], moat: Set<Int> = [], gateCells: [Int] = []
     public var gateName = ""
-    /// The gate's hit points (fort 50, citadel 100, castle 150).
+    /// The gate's hit points (fort 50, citadel 100, castle 150: table 0x97ec20 by castle level, set by
+    /// the t_castle_gate constructor 0x5bfe60).
     public var gateHP = 0, gateMax = 0
     public var gateDestroyed: Bool { gateMax > 0 && gateHP <= 0 }
     public static func key(_ x: Int, _ y: Int) -> Int { x * size + y }
@@ -286,18 +287,24 @@ public struct Battlefield {
         for c in gateCells { blocked[c] = true }
         if level >= 2 { for x in 50...53 { for y in 0..<Battlefield.size { moat.insert(Battlefield.key(x, y)) } } }
     }
-    /// The gate lost hit points (at most 50 a blow); broken it lets everyone through.
+    /// The gate takes a blow (t_castle_gate 0x5bff70): at most 50 of it (table 0x97ec30, the same
+    /// for every level) and no more than it has left. Broken (0x5c0970: taken >= its hit points) it
+    /// is open for good and lets everyone through; the cells it shares with the gate posts (wall
+    /// pieces) stay blocked.
     public mutating func damageGate(_ n: Int) -> Int {
-        let d = min(n, 50, gateHP)
+        let d = max(0, min(n, 50, gateHP))
         gateHP -= d
-        if gateHP <= 0 { for c in gateCells { blocked[c] = false } }
+        if gateHP <= 0 { for c in gateCells where !walls.contains(c) { blocked[c] = false } }
         return d
     }
     /// The gate's picture now: intact, light_damage, heavy_damage, destroyed (0x5bfffd).
-    public var gateState: String {
+    public var gateState: String { gateState(hp: gateHP) }
+    /// The picture for `hp` left: (4 max - 3 taken - 1) / max -> 3 intact, 2 light_damage, 1
+    /// heavy_damage, 0 destroyed (0x5bfffd / 0x5c0034, model name 0x5c0140).
+    public func gateState(hp: Int) -> String {
         guard gateMax > 0 else { return "intact" }
-        let k = (4 * gateMax - 3 * (gateMax - gateHP) - 1) / gateMax
-        return gateHP <= 0 ? "destroyed" : ["destroyed", "heavy_damage", "light_damage", "intact"][max(0, min(3, k))]
+        let k = (4 * gateMax - 3 * (gateMax - hp) - 1) / gateMax
+        return hp <= 0 ? "destroyed" : ["destroyed", "heavy_damage", "light_damage", "intact"][max(0, min(3, k))]
     }
     /// Does the straight line between two cell points cross a wall or the unbroken gate (0x570350)?
     public func crossesWall(_ a: (Float, Float), _ b: (Float, Float)) -> Bool {

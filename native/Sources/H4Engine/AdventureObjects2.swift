@@ -176,7 +176,15 @@ extension GameState {
         case "seers_hut", "quest_gate", "quest_guard":
             visitQuest(hero, p, &st)
         case "lighthouse":
-            if st.owner == actingColour { say(p, "empty") } else { st.owner = actingColour; st.countdown = -1; say(p, "initial") }
+            // 0x75bf60: the visitor's own says `empty`, an ally's `refused_ally`, a heroless army
+            // `no_heroes`; else it is claimed with `initial`. A human sees the box titled with the
+            // name above the army (0x844b80(text, x, y, name)); no sound.
+            let key: String
+            if st.owner == actingColour { key = "empty" }
+            else if let o = st.owner, let team = map.teams[actingColour], map.teams[o] == team { key = "refused_ally" }
+            else if hero.members.isEmpty { key = "no_heroes" }
+            else { st.owner = actingColour; st.countdown = -1; key = "initial" }
+            if isHumanActing, let t = objectText(p, key) { scripts.messages.append(t); messageTitles[t] = objectText(p, "name") }
         default:
             return false
         }

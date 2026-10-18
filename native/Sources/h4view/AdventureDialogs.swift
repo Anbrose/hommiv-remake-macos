@@ -57,7 +57,11 @@ extension Renderer {
         if let t = g.pendingTrade, adventureDialog == nil { g.pendingTrade = nil; if g.heroes.contains(where: { $0 === t.other }) { openTrade(t.hero, t.other) } }
         if g.chestOffer != nil, adventureDialog == nil { adventureDialog = .chest; chestChoice = true }   // gold is on at opening (0x5a2c00(0))
         // an object's yes/no question (a vein, the Tree of Knowledge) in the message box
-        if let q = g.question, prompt == nil { prompt = (q.text, true, q.yes); promptAnchor = g.questionAnchor; g.question = nil; g.questionAnchor = nil }
+        if let q = g.question, prompt == nil {
+            prompt = (q.text, true, q.yes); promptAnchor = g.questionAnchor
+            if let t = g.questionTitle { promptDecor = (q.text, t, []) }
+            g.question = nil; g.questionAnchor = nil; g.questionTitle = nil
+        }
         if let k = g.marketOpen { market = MarketState(k: k); g.marketOpen = nil }
         if let o = g.hireOpen { hire = o; g.hireOpen = nil }
         if let o = g.dwellingOpen, prompt == nil, g.scripts.messages.isEmpty { openMapRecruit(o.dwelling, o.hero); g.dwellingOpen = nil }
@@ -204,9 +208,27 @@ extension Renderer {
             if let hi = dLayer(sel, "hero_icon"), let pt = ui?.portrait(keyword: h.keyword, alignment: h.alignment, size: 52) { parts.append((pt, hi.x, hi.y)) }
             parts.append((ring, ring.x, ring.y))
             return (compose("msghero.\(h.keyword)", parts), h.name)
-        case .material(let m, let n):
+        case .material(let m, let n, let perDay):
             let name = GameState.materialNames[m]
-            return (materialIcon(name, size: 32), String(format: "%+d %@", n, name.lowercased()))
+            let day = perDay ? "/" + (game?.tables?.strings["day.text"] ?? "day") : ""
+            return (materialIcon(name, size: 32), String(format: "%+d %@", n, name.lowercased()) + day)
+        case .heroExperience(let h, let n):
+            // 0x55a850: the portrait at (0, 0); the drag_border of layers.creature_rings in a window
+            // moved by minus the file's `portrait` box, so it lies around the portrait; the
+            // Experience icon at x = that window's left (the whole file's left, 0x58e7d0) + (border
+            // width - icon width) / 2, y = border height + 5 -- 6 px left of the border's centre
+            let rings = dFile("creature_rings")
+            var parts: [(UILayer, Int, Int)] = []
+            let box = dRect(rings, "portrait") ?? DRect(15, 15, 52, 52)
+            if let pt = ui?.portrait(keyword: h.keyword, alignment: h.alignment, size: 52) { parts.append((pt, 0, 0)) }
+            let border = dLayer(rings, "drag_border")
+            if let b = border { parts.append((b, b.x - box.x, b.y - box.y)) }
+            if let e = iconSheet("stats.44")["experience"] {
+                let bw = border?.width ?? 62, bh = border?.height ?? 62
+                let left = (rings?.layers.map(\.x).min() ?? 0) - box.x
+                parts.append((e, left + (bw - e.width) / 2, bh + 5))
+            }
+            return (compose("msghxp.\(h.keyword)", parts), String(format: "%+d", n))
         case .spell(let sp):
             return (spellIcon(id: sp), sp < RuleTables.spells.count ? RuleTables.spells[sp].name : "")
         case .artifact(let a, let framed):

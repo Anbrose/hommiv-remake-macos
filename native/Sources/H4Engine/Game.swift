@@ -281,6 +281,12 @@ public final class Hero {
     public var manaRestoredToday = 0
     /// Once-per-hero objects this hero has used ("z|x|y" keys).
     public var visitedObjects: Set<String> = []
+    /// The wandering armies the hero has sneaked past and been paid for (hero +0x620, a set of
+    /// t_army +0x2c ids: 0x733e20), by Monster.uid.
+    public var eluded: Set<Int> = []
+    /// What the heroes of this army gained by sneaking past armies on the move under way (the
+    /// mover's list +0x9c, 0x546050), shown and cleared when the move ends (0x546720).
+    public var eludedGains: [(hero: Hero, amount: Int)] = []
     /// What the hero took at a university, by "z|x|y|slot": [skill, level] (hero+0x7c4, 0x840770).
     public var universitySlots: [String: [Int]] = [:]
     /// Until the next battle: fountain effects on the hero ("strength", "speed", "vigor").
@@ -517,6 +523,8 @@ public final class GameState {
         public let x: Int, y: Int, name: String, resource: String, amount: Int; public var owned: Bool; public var z = 0
         /// The player (colour) the mine works for, nil unflagged.
         public var owner: Int? = nil
+        /// The troops left in it (t_mine +0x54, the map record's creature array, 0x7d3fb0).
+        public var guards: [Hero.Stack] = []
     }
     /// A creature dwelling on the map: a week's growth waits at the start; once owned it grows by
     /// the weekly growth in fourteenths each day (heroes4.exe 0x43cdb0: half a week's growth a week).
@@ -550,8 +558,13 @@ public final class GameState {
             let parts = name.dropFirst("actor_sequence.".count).replacingOccurrences(of: ".h4d", with: "").split(separator: ".")
             return parts.count > 2 ? parts.dropLast(2).joined(separator: ".") : nil
         }
+        /// The army's identity (t_army +0x2c): what a hero who sneaked past it remembers (Hero.eluded).
+        public var uid: Int
+        /// The last identity handed out; a load moves it past the saved ones.
+        public static var lastUID = 0
         public init(x: Int, y: Int, name: String, creature: String, count: Int, extra: [(creature: String, count: Int)] = []) {
             self.x = x; self.y = y; self.name = name; self.creature = creature; self.count = count; self.extra = extra
+            Monster.lastUID += 1; uid = Monster.lastUID
         }
     }
 
@@ -747,6 +760,8 @@ public final class GameState {
     /// messages without one are centred. The same for the object's yes / no question.
     public var messageAnchors: [String: (x: Int, y: Int)] = [:]
     public var questionAnchor: (x: Int, y: Int)? = nil
+    /// The question's title banner (a guarded mine's name), nil none.
+    public var questionTitle: String? = nil
     /// The campaign being played (its standard id and this scenario's index).
     public var campaign: (id: Int, index: Int)?
     /// The army that walked into the town now on screen (it is the visiting row, 0x8ac0c0's army).
@@ -1006,6 +1021,11 @@ public final class GameState {
                 dwellings[d].guards = max(1, monstersLeft)
                 hero.x = hero.home.x; hero.y = hero.home.y; hero.movement = 0; hero.path = []; hero.plan = []
             }
+        } else if let key = monsters[i].bank, key.hasPrefix(GameState.minePrefix), let k = Int(key.dropFirst(GameState.minePrefix.count)) {
+            monsters.remove(at: i)   // a mine's guards (0x79cdf0): claimed with `defeat`, or what is left holds it
+            if won { giveExperience(experience, to: hero) }
+            else { hero.x = hero.home.x; hero.y = hero.home.y; hero.movement = 0; hero.path = []; hero.plan = [] }
+            mineBattleOver(hero, k, p, won: won, leadLeft: monstersLeft)
         } else if let key = monsters[i].bank, key.hasPrefix(GameState.garrisonPrefix) {   // a garrison: taken, or it holds
             let real = String(key.dropFirst(GameState.garrisonPrefix.count))
             if won { giveExperience(experience, to: hero); takeGarrison(real) }
@@ -1174,7 +1194,11 @@ public final class GameState {
                 if let (res, amount) = RuleTables.mineIncome[short] {
                     // a mine the map gives a player (its record's owner byte)
                     let rec = map.objects.first { $0.type == "mine" && $0.x == p.cellX && $0.y == p.cellY && $0.level == level }
-                    mines.append(Mine(x: p.cellX, y: p.cellY, name: p.name, resource: res, amount: amount, owned: rec?.owner == map.humanColour, owner: rec?.owner))
+                    var mine = Mine(x: p.cellX, y: p.cellY, name: p.name, resource: res, amount: amount, owned: rec?.owner == map.humanColour, owner: rec?.owner)
+                    for case let (id, n)? in rec?.army ?? [] where n > 0 && id < RuleTables.creatureIds.count {
+                        mine.guards.append(Hero.Stack(creature: RuleTables.creatureIds[id], count: n))
+                    }
+                    mines.append(mine)
                 }
             } else if p.category == "Random creatures", let t = tables, p.name.hasPrefix("actor_sequence.") {
                 // "actor_sequence.<creature>.wait.<facing>.h4d" -> the creature; the stack size follows its level
@@ -1254,14 +1278,7 @@ public final class GameState {
             hero.target = nil
             return
         }
-        if let i = mine(for: p) {
-            if mines[i].owner == actingColour { if isHumanActing { log.append("\(mines[i].resource) mine already yours") } }
-            else {
-                mines[i].owner = actingColour; mines[i].owned = isHumanActing
-                if isHumanActing { sounds.append("miscellaneous.flag_mine"); log.append("captured a mine: +\(mines[i].amount) \(mines[i].resource) per day") }
-            }
-            hero.target = nil
-        }
+        if let i = mine(for: p) { visitMine(hero, i, p) }
         if let i = dwelling(for: p) { visitDwelling(hero: hero, i, p) }
     }
 
@@ -1611,7 +1628,7 @@ public final class GameState {
         if !adventureBusy { for h in heroes where !h.isWalking && h.animState != nil { h.animState = nil } }   // the attack pose ends with the battle
         for h in heroes where !h.isWalking {
             h.walkChecked = false
-            if h.walkAnim != nil { h.walkAnim = nil; if h.animState != "attack" { h.animState = nil } }   // a walk ended elsewhere (a teleport, boarding)
+            if h.walkAnim != nil { h.walkAnim = nil; if h.animState != "attack" { h.animState = nil }; finishEluded(h) }   // a walk ended elsewhere (a teleport, boarding)
         }
         for h in heroes where h.isWalking && h.z == level {
             if !h.walkChecked {
@@ -1637,12 +1654,15 @@ public final class GameState {
                     h.path.removeFirst()
                     h.distance = Float(Int(h.distance) + 1)
                     stepped(h, onto: h.x, h.y)
+                    markEluded(h)   // the mover's vtable +0x10 after each step (0x546300)
                     if let n = h.path.first { h.facing = Hero.facing(dx: n.x - h.x, dy: n.y - h.y) }
                 }
                 if !w.done { h.progress = w.stepProgress; h.distance = Float(Int(h.distance)) + h.progress; continue }
             }
-            // the walk's animation is over (0x5469d0): the army stands
+            // the walk's animation is over (0x5469d0): the army stands; end_move tells what
+            // sneaking past armies earned before anything the route led to is used (0x546720)
             h.walkAnim = nil; h.animState = nil; h.progress = 0
+            finishEluded(h)
             if let next = h.path.first {
                 // at sea, the step onto land is the landing; else the movement ran out: the rest
                 // of the route stays (red) to go on with later

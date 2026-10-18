@@ -78,9 +78,11 @@ extension GameState {
                 if h.movement + 0.001 < cost { break }
                 if !isVacant((c.x, c.y), for: h) || enemyAt(c.x, c.y) != nil { break }
                 h.movement -= cost; h.x = c.x; h.y = c.y; moved = true
+                markEluded(h)   // 0x546300 after each step, the computer's armies too
                 aiStepped(h)
                 if pendingHeroBattle != nil || (h.x, h.y) != (c.x, c.y) { break }   // a fight, or the event moved it
             }
+            finishEluded(h)     // end_move: the levels taken at once (0x642970)
             passability.block(h.x, h.y)
             if (h.x, h.y) == (goal.stand.0, goal.stand.1) || GameState.adjacent((h.x, h.y), goal.at) {
                 goal.use()

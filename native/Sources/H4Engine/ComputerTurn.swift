@@ -63,7 +63,7 @@ extension GameState {
 
     /// The new day after the computer players' turns.
     func newDay() {
-        defer { runDayEvents(); checkScenario(newDay: true) }
+        defer { runDayEvents(); checkScenario() }
         day += 1
         for h in heroes { h.maxMovement = armyMovement(h); h.movement = h.maxMovement; h.path = []; h.plan = [] }
         for (res, amount) in income { resources[res, default: 0] += amount }
@@ -74,7 +74,9 @@ extension GameState {
         dwellingsNewDay()
         townsNewDay()    // town dwellings grow a seventh of their week every day (0x899960)
         for i in towns.indices { towns[i].builtToday = false; if towns[i].tavernDays > 0 { towns[i].tavernDays -= 1 } }
-        caravanArrivals(for: map.humanColour)   // the human's turn starts (0x4b3710 -> 0x4b1010)
+        victoryNewDay()  // 0x4e5b00: after the new day, a hold of every town loses a day
+        victoryTurnStart()   // the human's turn starts (0x4b3710): the hold's days, or its win
+        caravanArrivals(for: map.humanColour)   // (0x4b3710 -> 0x4b1010)
     }
 
     /// Run the queued steps until a walk is shown, something waits for the player (a battle the

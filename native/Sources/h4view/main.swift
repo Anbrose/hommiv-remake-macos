@@ -113,7 +113,7 @@ if args[2] == "--dump" {   // h4view <h4r> --dump <entry>...: describe sprite en
         guard let e = archive.byName[name] else { print("\(name): not in archive"); continue }
         print("\(name): size \(e.size) unpacked \(e.unpackedSize) type \(e.type) alias '\(e.alias)'")
         if let s = try? Sprite(data: archive.payload(name)) {
-            print("  \(s.images.count) images \(s.images.prefix(4).map { "\($0.name) \($0.box)" }) origin \(s.origin) footprint \(s.footprint)")
+            print("  \(s.images.count) images \(s.images.prefix(ProcessInfo.processInfo.environment["H4DUMP_ALL"] != nil ? 999 : 4).map { "\($0.name) \($0.box)" }) origin \(s.origin) footprint \(s.footprint)")
             if let dir = ProcessInfo.processInfo.environment["H4DUMP_DIR"] {
                 for img in s.images { writePNG(img.bitmap, to: "\(dir)/\(name).\(img.name).png") }
             }
@@ -264,6 +264,7 @@ if let ref = campaignRef {
     game.campaign = ref
     let carry = carryFile.flatMap { try? Data(contentsOf: URL(fileURLWithPath: $0)) }.flatMap { try? JSONDecoder().decode(Carryover.self, from: $0) } ?? Carryover()
     game.placeCarried(carry)
+    game.carriedIn = carry   // the earlier scenarios' scores go on to the campaign's results
     lap("campaign \(ref.id) scenario \(ref.index + 1): \(game.heroes.map { "\($0.name)@\($0.x),\($0.y) lv\($0.level)" }) carried in")
     if let out = ProcessInfo.processInfo.environment["H4CARRYOUT"] {   // debugging: write what this scenario would hand on, and stop
         try? JSONEncoder().encode(game.carryOut()).write(to: URL(fileURLWithPath: out)); print("carry-out written"); exit(0)
@@ -788,6 +789,7 @@ final class MapView: MTKView {
     override func mouseExited(with e: NSEvent) { NSCursor.arrow.set(); cursorName = ""; renderer.hover = nil; hoverPending = nil }
     override func mouseDown(with e: NSEvent) {
         if renderer.skipMagiView() { swallowMouseUp = true; return }   // a Window of the Magi playing: any press ends it
+        if renderer.endGameClick(e, in: self) { swallowMouseUp = true; return }   // the win / lose window and what follows it
         dragged = 0; renderer.hover = nil; hoverPending = nil
         renderer.abilityPopup = nil   // an ability's help goes with any left press (0x7e6180)
         let p = convert(e.locationInWindow, from: nil)
@@ -948,6 +950,7 @@ final class MapView: MTKView {
     override func rightMouseUp(with e: NSEvent) { renderer.messageItemHelp = nil; renderer.abilityPopup = nil; heldHelp = nil }
     override func rightMouseDown(with e: NSEvent) {
         if renderer.skipMagiView() { return }
+        if renderer.endGame != nil { _ = renderer.endGameClick(e, in: self); return }
         if renderer.computerTurnBusy { return }
         let p = convert(e.locationInWindow, from: nil)
         let scale = Float(window?.backingScaleFactor ?? 1)
@@ -1009,6 +1012,7 @@ final class MapView: MTKView {
     }
     override func keyDown(with e: NSEvent) {
         if renderer.skipMagiView() { return }
+        if renderer.endGameKey(e) { return }
         if renderer.computerTurnBusy { return }
         if renderer.cheatBoxKey(e) { return }   // Tab opens the cheat box; while it is active it takes the keys
         if renderer.saveDialogKey(e) { return }

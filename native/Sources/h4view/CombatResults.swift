@@ -72,13 +72,13 @@ extension Renderer {
             let t = Date().timeIntervalSince(since)
             var frame: (Movie, Int, String)? = nil
             let intro = o.intro.flatMap { movies.movie($0) }
-            if let m = intro, Int(t * m.fps) < m.frames.count { frame = (m, Int(t * m.fps), o.intro!) }
-            else if let loop = movies.movie(o.loop), !loop.frames.isEmpty {
-                let start = intro.map { Double($0.frames.count) / $0.fps } ?? 0
-                frame = (loop, Int((t - start) * loop.fps) % loop.frames.count, o.loop)
-            } else if let m = intro { frame = (m, m.frames.count - 1, o.intro!) }
+            if let m = intro, Int(t * m.fps) < m.count { frame = (m, Int(t * m.fps), o.intro!) }
+            else if let loop = movies.movie(o.loop), loop.count > 0 {
+                let start = intro.map { $0.duration } ?? 0
+                frame = (loop, Int((t - start) * loop.fps) % loop.count, o.loop)
+            } else if let m = intro { frame = (m, m.count - 1, o.intro!) }
             if let (m, i, name) = frame {
-                out.append(Quad(texture: uiTexture("movie|\(name)|\(i)", { m.frames[i] }), x: ox + slot.x, y: oy + slot.y, w: m.width, h: m.height))
+                out.append(Quad(texture: uiTexture("movie|\(name)|\(i)", { m.frame(i) }), x: ox + slot.x, y: oy + slot.y, w: m.width, h: m.height))
             }
         }
         // the armies' portraits under their frames

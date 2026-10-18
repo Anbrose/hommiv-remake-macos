@@ -85,6 +85,8 @@ final class GameSound: NSObject, AVAudioPlayerDelegate {
         loops[key] = p
     }
     func stopLoop(_ key: String) { loops.removeValue(forKey: key)?.stop() }
+    /// Every repeating sound (0x503bd0, as the scenario ends).
+    func stopAllLoops() { for k in Array(loops.keys) { stopLoop(k) } }
     /// Keep exactly these ambient loops going (key -> sound, volume); others under the prefix stop.
     func setAmbient(_ wanted: [String: (name: String, volume: Float)], prefix: String = "ambient|") {
         for k in loops.keys where k.hasPrefix(prefix) && wanted[k] == nil { stopLoop(k) }

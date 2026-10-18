@@ -328,6 +328,7 @@ extension GameState {
         if first, !r.questTexts[2].isEmpty { scripts.messages.append(r.questTexts[2]) }
         if let cond = r.questCondition, truth(cond, c) {
             st.questDone.append(colour)
+            questsCompleted[colour, default: 0] += 1   // player +0x150 (0x7ee98d)
             if r.questTexts.count > 4, !r.questTexts[4].isEmpty { scripts.messages.append(r.questTexts[4]) }
             var removed = false
             if let a = r.questAction2 { exec(a, c, &removed) }

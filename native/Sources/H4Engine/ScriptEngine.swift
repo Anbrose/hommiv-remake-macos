@@ -140,16 +140,10 @@ extension GameState {
         case "text":
             if !n.text(0).isEmpty { scripts.messages.append(n.text(0)) }
             for a in n.nodes(1) { exec(a, c, &removed) }
-        case "win", "lose":
-            guard let p = player(n.int(0), c) else { return }
-            let mine = p == human || map.teams[p] != nil && map.teams[p] == map.teams[human]
-            if mine == (n.keyword == "win") {
-                outcome = true
-                log.append(scripts.victoryText ?? map.victoryText ?? text("default_victory_condition", "Victory!"))
-            } else {
-                outcome = false
-                log.append(scripts.lossText ?? map.lossText ?? text("default_loss_condition", "Defeat."))
-            }
+        case "win":   // 0x837990: the player's team wins
+            if let p = player(n.int(0), c) { scriptWin(p) }
+        case "lose":  // 0x837a30: the player is marked lost, then the end check
+            if let p = player(n.int(0), c) { scriptLose(p) }
         case "set_vc_text": scripts.victoryText = n.text(1)
         case "set_lc_text": scripts.lossText = n.text(1)
         case "clear_vc_text": scripts.victoryText = ""
@@ -233,10 +227,8 @@ extension GameState {
         case "is_color": return player(n.int(0), c) == n.int(1)
         case "is_human": return player(n.int(0), c) == human
         case "is_computer": return player(n.int(0), c).map { $0 != human } ?? false
-        case "is_eliminated":
-            guard let p = player(n.int(0), c) else { return false }
-            let hasTown = towns.contains { $0.owner == p }
-            return p == human ? (!hasTown && heroes.isEmpty) : !hasTown
+        case "is_eliminated":   // player +0xa8 (0x830f80)
+            return player(n.int(0), c).map { isEliminated($0) } ?? false
         case "owns_town":
             guard let p = player(n.int(0), c) else { return false }
             return towns.contains { $0.owner == p && $0.name.caseInsensitiveCompare(n.text(1)) == .orderedSame }

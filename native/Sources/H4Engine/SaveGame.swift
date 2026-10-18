@@ -20,6 +20,11 @@ public struct SaveGame: Codable {
     public var scripts: ScriptSave
     public var outcome: Bool?
     public var victoryDays: Int?
+    /// The end of the scenario (EndSequence.swift).
+    public var victoryTeam: Int? = nil, winningTeam: Int? = nil
+    public var eliminatedPlayers: [Int]? = nil, lostPlayers: [Int]? = nil
+    public var battlesWon: [Int: Int]? = nil, battlePoints: [Int: Int]? = nil, questsCompleted: [Int: Int]? = nil
+    public var carriedIn: Carryover? = nil
     /// Per map level (saves from before the underground: nil, the surface's are `removed`/`moved`).
     public var removedByLevel: [[MapScene.SavedObject]]? = nil
     public var movedByLevel: [[MapScene.MovedObject]]? = nil
@@ -161,6 +166,9 @@ extension GameState {
                          dwellings: dwellingCounts, monsters: monsterStates, removed: scene.removed, moved: scene.moved, scripts: sc,
                          outcome: outcome, victoryDays: victoryDays)
         s.removedByLevel = scenes.map { $0.removed }; s.movedByLevel = scenes.map { $0.moved }; s.level = level
+        s.victoryTeam = victoryTeam; s.winningTeam = winningTeam
+        s.eliminatedPlayers = eliminatedPlayers.sorted(); s.lostPlayers = lostPlayers.sorted()
+        s.battlesWon = battlesWon; s.battlePoints = battlePoints; s.questsCompleted = questsCompleted; s.carriedIn = carriedIn
         s.objectStates = objectStates; s.usedArtifacts = Array(usedArtifacts).sorted()
         s.enemyHeroes = enemyHeroes.map { SaveGame.state(of: $0) }; s.aiResources = aiResources; s.difficulty = difficulty; s.keys = Array(keys).sorted()
         s.mineOwners = mines.map { $0.owner }
@@ -239,6 +247,12 @@ extension GameState {
             scripts.townEvents[t] = evs
         }
         outcome = s.outcome; victoryDays = s.victoryDays
+        // a save from before the teams: a running hold was the human's
+        victoryTeam = s.victoryTeam ?? (s.victoryDays != nil ? team(of: map.humanColour) : nil)
+        winningTeam = s.winningTeam
+        eliminatedPlayers = Set(s.eliminatedPlayers ?? []); lostPlayers = Set(s.lostPlayers ?? [])
+        battlesWon = s.battlesWon ?? [:]; battlePoints = s.battlePoints ?? [:]; questsCompleted = s.questsCompleted ?? [:]
+        carriedIn = s.carriedIn
         cheated = s.cheated ?? false
         if let c = s.monthCreature { monthCreature = c }
         if let c = s.nextMonthCreature { nextMonthCreature = c }

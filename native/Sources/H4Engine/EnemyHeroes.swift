@@ -54,6 +54,8 @@ extension GameState {
     public func finishHeroBattle(hero: Hero, enemy: Hero, won: Bool, army: [Hero.Stack], enemyArmy: [Hero.Stack], value: Int) {
         clearBattleEffects(hero)
         let mine = hero.members, theirs = enemy.members
+        if won { recordBattleWin(colour: map.humanColour, winnerValue: armyValue(hero), loserValue: armyValue(enemy)) }
+        else { recordBattleWin(colour: enemy.owner, winnerValue: armyValue(enemy), loserValue: armyValue(hero)) }
         if won {
             hero.army = army
             share(value + theirs.reduce(0) { $0 + ($1.level + 1) * 100 }, among: mine)
@@ -72,13 +74,16 @@ extension GameState {
         }
         refreshMovement(hero)
         pendingHeroBattle = nil
-        checkScenario(newDay: false)
+        checkScenario()
     }
 
     /// A siege is over (0x8965e0): won, the town is the player's (a hero is needed, and there is
     /// one), its garrison gone; lost, the defenders keep their survivors and the army is beaten.
     public func finishSiege(hero: Hero, town i: Int, won: Bool, army: [Hero.Stack], garrison: [Hero.Stack], value: Int) {
         clearBattleEffects(hero)
+        let defenders = armyValue(towns[i].garrison) + towns[i].garrisonHeroes.reduce(0) { $0 + 100 * ($1.level + 1) }
+        if won { recordBattleWin(colour: map.humanColour, winnerValue: armyValue(hero), loserValue: defenders) }
+        else if let o = townOwner(towns[i]) { recordBattleWin(colour: o, winnerValue: defenders, loserValue: armyValue(hero)) }
         if won {
             hero.army = army
             share(value, among: hero.members)
@@ -96,6 +101,6 @@ extension GameState {
         }
         refreshMovement(hero)
         pendingSiege = nil
-        checkScenario(newDay: false)
+        checkScenario()
     }
 }

@@ -29,6 +29,8 @@ public struct SaveGame: Codable {
     public var aiResources: [Int: [String: Int]]? = nil
     public var keys: [String]? = nil
     public var mineOwners: [Int?]? = nil
+    /// Each mine's guards (nil: none anywhere, an older save).
+    public var mineGuards: [[Stack]]? = nil
     public var boats: [Boat]? = nil
     public var obeliskVisits: [String: Int]? = nil, digSites: [String: [Int]]? = nil, dug: [String]? = nil
     public var shroudVisits: [String: [Int]]? = nil
@@ -78,6 +80,7 @@ public struct SaveGame: Codable {
         public var z: Int?
         public var bonuses: [Int]?          // attack, defense, speed, spell points, dream teachers, spell points now (-1 full), mana today
         public var visitedObjects: [String]?, fountainEffects: [String]?, timedEffects: [String: Int]?
+        public var eluded: [Int]? = nil
         public var universitySlots: [String: [Int]]?
         public var armyLuck: [String: Int]?, armyMorale: [String: Int]?, templeAlignment: String?
         public var spells: [Int]?
@@ -109,6 +112,7 @@ public struct SaveGame: Codable {
         public var extra: [Stack]
         public var z: Int? = nil
         public var origin: MonthOrigin? = nil
+        public var uid: Int? = nil
     }
     public struct ScriptSave: Codable {
         public var numbers: [String: Int], flags: [String: Bool], messages: [String]
@@ -144,7 +148,7 @@ extension GameState {
         var monsterStates: [SaveGame.MonsterState] = []
         for m in monsters {
             let extra: [SaveGame.Stack] = m.extra.map { SaveGame.Stack(creature: $0.creature, count: $0.count) }
-            monsterStates.append(SaveGame.MonsterState(x: m.x, y: m.y, name: m.name, creature: m.creature, count: m.count, extra: extra, z: m.z, origin: m.origin))
+            monsterStates.append(SaveGame.MonsterState(x: m.x, y: m.y, name: m.name, creature: m.creature, count: m.count, extra: extra, z: m.z, origin: m.origin, uid: m.uid))
         }
         var townEv: [String: [Bool]] = [:]
         for (k, v) in scripts.townEvents { townEv["\(k)"] = v.map { $0.enabled } }
@@ -158,6 +162,7 @@ extension GameState {
         s.objectStates = objectStates; s.usedArtifacts = Array(usedArtifacts).sorted()
         s.enemyHeroes = enemyHeroes.map { SaveGame.state(of: $0) }; s.aiResources = aiResources; s.difficulty = difficulty; s.keys = Array(keys).sorted()
         s.mineOwners = mines.map { $0.owner }
+        if mines.contains(where: { !$0.guards.isEmpty }) { s.mineGuards = mines.map { $0.guards.map { SaveGame.Stack(creature: $0.creature, count: $0.count) } } }
         s.boats = boats
         s.obeliskVisits = obeliskVisits; s.digSites = digSites; s.dug = Array(dug).sorted()
         s.shroudVisits = shroudVisits
@@ -217,8 +222,10 @@ extension GameState {
         monsters = s.monsters.map { st in
             var m = Monster(x: st.x, y: st.y, name: st.name, creature: st.creature, count: st.count, extra: st.extra.map { ($0.creature, $0.count) })
             m.z = st.z ?? 0; m.origin = st.origin
+            if let u = st.uid { m.uid = u }
             return m
         }
+        Monster.lastUID = max(Monster.lastUID, monsters.map(\.uid).max() ?? 0)
         scripts.numbers = s.scripts.numbers; scripts.flags = s.scripts.flags; scripts.messages = s.scripts.messages
         scripts.victoryText = s.scripts.victoryText; scripts.lossText = s.scripts.lossText
         scripts.standardVictoryOn = s.scripts.standardVictoryOn
@@ -263,6 +270,8 @@ extension GameState {
         }
         nextCaravanId = s.nextCaravanId ?? ((caravans.map(\.id).max() ?? 0) + 1)
         if let mo = s.mineOwners { for (i, o) in mo.enumerated() where i < mines.count { mines[i].owner = o } }
+        if let mg = s.mineGuards { for (i, g) in mg.enumerated() where i < mines.count { mines[i].guards = g.map { Hero.Stack(creature: $0.creature, count: $0.count) } } }
+        else { for i in mines.indices { mines[i].guards = [] } }
     }
 }
 
@@ -282,7 +291,7 @@ extension SaveGame {
         st.boat = h.boat
         st.heroless = h.heroless ? true : nil; st.listRank = h.listRank
         st.bonuses = [h.attackBonus, h.defenseBonus, h.speedBonus, h.spellPointBonus, h.dreamTeachers, h.spellPoints ?? -1, h.manaRestoredToday]
-        st.visitedObjects = Array(h.visitedObjects).sorted(); st.fountainEffects = Array(h.fountainEffects).sorted(); st.timedEffects = h.timedEffects; st.universitySlots = h.universitySlots.isEmpty ? nil : h.universitySlots
+        st.visitedObjects = Array(h.visitedObjects).sorted(); st.eluded = h.eluded.isEmpty ? nil : h.eluded.sorted(); st.fountainEffects = Array(h.fountainEffects).sorted(); st.timedEffects = h.timedEffects; st.universitySlots = h.universitySlots.isEmpty ? nil : h.universitySlots
         st.armyLuck = h.armyLuck; st.armyMorale = h.armyMorale; st.templeAlignment = h.templeAlignment
         st.spells = Array(h.spells).sorted()
         return st
@@ -305,7 +314,7 @@ extension SaveGame {
             h.attackBonus = b[0]; h.defenseBonus = b[1]; h.speedBonus = b[2]; h.spellPointBonus = b[3]; h.dreamTeachers = b[4]
             h.spellPoints = b[5] < 0 ? nil : b[5]; h.manaRestoredToday = b[6]
         }
-        h.visitedObjects = Set(st.visitedObjects ?? []); h.fountainEffects = Set(st.fountainEffects ?? []); h.timedEffects = st.timedEffects ?? [:]; h.universitySlots = st.universitySlots ?? [:]
+        h.visitedObjects = Set(st.visitedObjects ?? []); h.eluded = Set(st.eluded ?? []); h.fountainEffects = Set(st.fountainEffects ?? []); h.timedEffects = st.timedEffects ?? [:]; h.universitySlots = st.universitySlots ?? [:]
         h.armyLuck = st.armyLuck ?? [:]; h.armyMorale = st.armyMorale ?? [:]; h.templeAlignment = st.templeAlignment
         h.spells = Set(st.spells ?? [])
         h.facing = st.facing; h.movement = st.movement; h.maxMovement = st.maxMovement

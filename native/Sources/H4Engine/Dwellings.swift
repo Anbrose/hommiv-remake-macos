@@ -116,8 +116,7 @@ extension GameState {
         guard let c = tables?.creature(dwellings[i].creature) else { return }
         let me = actingColour
         if dwellings[i].owner != me {
-            dwellings[i].owner = me; dwellings[i].owned = isHumanActing
-            if isHumanActing { sounds.append("miscellaneous.flag_mine") }
+            dwellings[i].owner = me; dwellings[i].owned = isHumanActing   // (silent: flag_mine is the mine's alone, re/mine_capture_spec.md)
         }
         if dwellings[i].available < 1 {
             if isHumanActing, let t = dwellingText(p, i, "empty") { scripts.messages.append(t) }

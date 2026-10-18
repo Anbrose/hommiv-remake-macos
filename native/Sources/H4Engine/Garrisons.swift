@@ -61,7 +61,6 @@ extension GameState {
         objectStates[key] = st
         let c = key.split(separator: "|").compactMap { Int($0) }
         if c.count == 3, c[0] < passabilities.count { for g in st.gate { passabilities[c[0]].free(g / map.size, g % map.size) } }
-        sounds.append("miscellaneous.flag_mine")
         visionChanged = true
     }
     /// A lost attack: what is left of the lead stack stays (the others as they were).

@@ -445,11 +445,14 @@ if let out = snapshot {
         game.giveExperience(n, to: h); renderer.levelUpChoice = 0
     }
     if ProcessInfo.processInfo.environment["H4MARKET"] != nil { renderer.market = MarketState(k: 3, sell: 1, buy: 0, lots: 5) }   // snapshot: the marketplace
+    if let n = ProcessInfo.processInfo.environment["H4ELUDE"].flatMap({ Int($0) }), let h = game.heroes.first {   // snapshot: the hero (and n - 1 companions) sneaked past the nearest stack
+        game.debugElude(h, heroes: n)
+    }
     if let t = ProcessInfo.processInfo.environment["H4VISIT"], let h = game.heroes.first {   // snapshot: the first object of a type visited
         let guarded = ProcessInfo.processInfo.environment["H4GUARDED"] != nil   // with H4VISIT: a dwelling that has guards
-        if let p = scene.placed.first(where: { ($0.type == t || "\($0.type).\($0.subtype)" == t || "\($0.type).\($0.subtype)".hasPrefix(t + "_")) && (!guarded || game.dwelling(for: $0).map { game.dwellings[$0].guards > 0 } == true) }) {
+        if let p = scene.placed.first(where: { ($0.type == t || "\($0.type).\($0.subtype)" == t || "\($0.type).\($0.subtype)".hasPrefix(t + "_")) && (!guarded || game.dwelling(for: $0).map { game.dwellings[$0].guards > 0 } ?? (game.mine(for: $0) != nil)) }) {
             if let i = game.dwelling(for: p) { let d = game.dwellings[i]; print("dwelling \(d.creature): available \(d.available) guards \(d.guards) owner \(String(describing: d.owner))") }
-            if !game.debugVisitDwelling(hero: h, p) { _ = game.debugVisit(hero: h, p) }
+            if !game.debugVisitDwelling(hero: h, p) && !game.debugVisitMine(hero: h, p) { _ = game.debugVisit(hero: h, p) }
             if ProcessInfo.processInfo.environment["H4AIM"] != nil { aim(renderer, at: (p.cellX, p.cellY)) }
             if let c = game.choice { print("choice: \(c.text.prefix(60)) \(c.options)") }
             if let hp = game.heroPick {
@@ -462,7 +465,7 @@ if let out = snapshot {
                 if let k = ProcessInfo.processInfo.environment["H4CHOICE"].flatMap({ Int($0) }) { game.skillDialogChoose(d, k) }   // with H4VISIT: the school's / university's skill
                 if ProcessInfo.processInfo.environment["H4PICKOK"] != nil { game.resources["Gold", default: 0] += 10000; game.skillDialogLearn(d) }   // with H4VISIT: Learn / Buy
             }
-            if let q = game.question { print("question: \(q.text)") }
+            if let q = game.question { print("question: \(q.text)"); renderer.collectFloaters(now: Date()) }   // (the question becomes the prompt)
             if let o = game.dwellingOpen, let d = game.dwellingOffer(o.dwelling, for: o.hero) {
                 print("recruit \(d.creature.keyword): \(d.available) available, cost \(d.cost), most \(game.recruitMost(available: d.available, cost: d.cost))")
                 renderer.openMapRecruit(o.dwelling, o.hero); game.dwellingOpen = nil

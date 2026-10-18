@@ -24,8 +24,12 @@ public enum MessagePicture {
     case skill(Int, level: Int)
     /// A hero's portrait in its ring, captioned with the name (0x64ddb0).
     case hero(Hero)
-    /// A material gained: layers.icons.materials.32 captioned "+300 gold" (0x55a040, "%+i %s").
-    case material(Int, amount: Int)
+    /// A material gained: layers.icons.materials.32 captioned "+300 gold" (0x55a040, "%+i %s"),
+    /// "+2 wood/day" for an income (its perDay argument appends "/" + strings.Text day.text).
+    case material(Int, amount: Int, perDay: Bool = false)
+    /// Experience a hero gained: the 52-px portrait in layers.creature_rings' drag_border, the
+    /// layers.icons.stats.44 Experience icon under it, captioned "+125" (0x55a850, "%+d").
+    case heroExperience(Hero, amount: Int)
     /// An artifact: its icon captioned with its name, bare or in button.frame_52 (0x55c300).
     case artifact(Int, framed: Bool)
     /// A spell's icon captioned with its name (0x55d350).

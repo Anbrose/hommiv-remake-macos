@@ -90,7 +90,10 @@ extension GameState {
     public func isVisible(_ h: Hero) -> Bool {
         guard fogEnabled else { return true }
         guard fogState(h.x, h.y, level: h.z) == GameState.fogSeen else { return false }
-        return stealth(of: h) <= Int(fogLevel[h.z][h.x * map.size + h.y])
+        // (no vision levels yet, before the first updateVision: none)
+        let k = h.x * map.size + h.y
+        let seen = fogLevel.indices.contains(h.z) && fogLevel[h.z].indices.contains(k) ? Int(fogLevel[h.z][k]) : -1
+        return stealth(of: h) <= seen
     }
 
     func footprint(level l: Int, x: Int, y: Int) -> (Int, Int) {

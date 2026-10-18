@@ -752,9 +752,9 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// A wandering stack (or a garrison's troops): a neutral army at level 0 -- size words, no numbers.
     func creatureDialogQuads() -> [Quad] {
         guard let cd = creatureDialog else { return [] }
-        let members: [ArmyMember] = [.stack(cd.creature, cd.count)] + cd.extra.map { .stack($0.creature, $0.count) }
+        let members: [ArmyMember?] = [.stack(cd.creature, cd.count)] + cd.extra.map { .stack($0.creature, $0.count) }
         let title = game?.tables?.strings["right_click_title.neutral_army"] ?? "Neutral Army"
-        return armyInfoQuads(members: members, level: 0, title: title, selected: 0, owner: nil)
+        return armyInfoQuads(slots: members, level: 0, title: title, selected: 0, army: nil, moraleAlignment: nil, button: nil)
     }
 
     /// Which of the game's cursors fits what is under a map point: attack over a wandering
@@ -825,21 +825,25 @@ final class Renderer: NSObject, MTKViewDelegate {
         guard let g = game, let ui = ui else { return }
         let c = cell(at: m)
         var text: (title: String, body: [String])?
-        if let i = g.heroes.firstIndex(where: { $0.z == g.level && Int($0.position.x.rounded()) == c.0 && Int($0.position.y.rounded()) == c.1 }) {
-            armyPopup = ArmyPopup(hero: i); return   // an own army: its right-click window
+        // an army on the cell (0x4d7300 before the objects): its right-click window -- the
+        // player's, or another colour's one the player sees
+        if let h = g.heroes.first(where: { $0.z == g.level && Int($0.position.x.rounded()) == c.0 && Int($0.position.y.rounded()) == c.1 })
+            ?? g.enemyHeroes.first(where: { $0.z == g.level && $0.x == c.0 && $0.y == c.1 && g.isVisible($0) }) {
+            armyPopup = ArmyPopup(army: h); return
         }
         else if let p = scene.placed.last(where: { underCursor($0, m) || onFootprint($0, c) }) {
-            if let i = g.monster(for: p), !g.monsterSeen(i) { text = g.describe(cellX: c.0, cellY: c.1) }   // an unseen stack is not there for the player
+            // a town (t_town vt+0x94 = 0x442a60): the army window of its garrison, whoever owns it
+            if let i = g.town(for: p) { armyPopup = ArmyPopup(town: i); return }
+            // a quest hut, gate or guard (0x7ee020): one text, no title
+            if ["seers_hut", "quest_gate", "quest_guard"].contains(p.type), let t = g.questHelp(p) { text = ("", [t]) }
+            else if let i = g.monster(for: p), !g.monsterSeen(i) { text = g.describe(cellX: c.0, cellY: c.1) }   // an unseen stack is not there for the player
             else if let i = g.monster(for: p), let def = g.tables?.creature(g.monsters[i].creature) {   // a wandering stack gets the creature dialog
                 creatureDialog = (def, g.monsters[i].count, g.monsters[i].extra.compactMap { e in g.tables?.creature(e.creature).map { ($0, e.count) } })
                 return
             }
-            // a garrison: its troops in the creature dialog (the lead stack and the rest)
-            if p.type == "garrison", let st = g.objectStates["\(g.level)|\(p.cellX)|\(p.cellY)"] {
-                let stacks = zip(st.troopCreatures, st.troopCounts).filter { $0.1 > 0 }.compactMap { c, k in g.tables?.creature(c).map { ($0, k) } }
-                if let lead = stacks.first { creatureDialog = (lead.0, lead.1, Array(stacks.dropFirst())); return }
-            }
-            if !(g.monster(for: p).map { !g.monsterSeen($0) } ?? false) { text = g.describe(p) }
+            // a garrison (t_adv_garrison vt+0x94 = 0x442a60, as a town): the army window of its troops
+            else if p.type == "garrison", g.objectStates["\(g.level)|\(p.cellX)|\(p.cellY)"]?.isGarrison == true { armyPopup = ArmyPopup(garrison: p); return }
+            else if !(g.monster(for: p).map { !g.monsterSeen($0) } ?? false) { text = g.describe(p) }
         }
         else { text = g.describe(cellX: c.0, cellY: c.1) }
         guard let t = text else { return }

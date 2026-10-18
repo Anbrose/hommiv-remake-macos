@@ -306,19 +306,22 @@ extension GameState {
     func record(for p: MapScene.Placed) -> MapObject? {
         map.objects.first { $0.x == p.cellX && $0.y == p.cellY && $0.level == level && $0.type == p.type }
     }
-    /// A quest (0x7ee2a0): the first visit shows the proposal; when the condition holds the quest is
-    /// done -- a gate or guard lets the army through (it is gone), a hut gives its reward -- else
-    /// the "not yet" text. Texts: name, objective, proposal, not yet; then the completion text.
+    /// A quest (0x7ee2a0): the first visit of a colour shows the proposal; when the condition holds
+    /// the quest is done for that colour -- a gate or guard lets the army through (it is gone), a
+    /// hut gives its reward -- else the "not yet" text. Visited and completed are per colour
+    /// (bit sets +0x94, set at 0x7ee8f3, and +0x80, set at 0x7ee97a). Texts: name (+0x84),
+    /// objective (+0x70), proposal (+0x60), not yet (+0x50); then the completion text.
     func visitQuest(_ hero: Hero, _ p: MapScene.Placed, _ st: inout ObjectState) {
         guard let r = record(for: p), r.questTexts.count >= 4 else { say(p, "help"); return }
         dialogueSound(17)
-        if st.used { scripts.messages.append(r.questTexts.count > 5 ? r.questTexts[5] : (objectText(p, "completed") ?? r.questTexts[1])); return }
-        let c = ScriptContext(current: actingColour, hero: hero)
-        let first = st.countdown == 0
-        st.countdown = 1
+        let colour = actingColour
+        if st.questDone.contains(colour) { scripts.messages.append(r.questTexts.count > 5 ? r.questTexts[5] : (objectText(p, "completed") ?? r.questTexts[1])); return }
+        let c = ScriptContext(current: colour, hero: hero)
+        let first = !st.questVisited.contains(colour)
+        if first { st.questVisited.append(colour) }
         if first, !r.questTexts[2].isEmpty { scripts.messages.append(r.questTexts[2]) }
         if let cond = r.questCondition, truth(cond, c) {
-            st.used = true
+            st.questDone.append(colour)
             if r.questTexts.count > 4, !r.questTexts[4].isEmpty { scripts.messages.append(r.questTexts[4]) }
             var removed = false
             if let a = r.questAction2 { exec(a, c, &removed) }

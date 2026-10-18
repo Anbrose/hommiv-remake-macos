@@ -1,12 +1,14 @@
 import Foundation
 import H4Engine
 
-/// t_army_info_window (heroes4.exe 0x53a1c0; dialogs_spec.md §4): one window for every army's
-/// right click, the content gated by the information level L (4 own, else the Scouting of a hero
-/// in range; a neutral army normally −1/0): layers.dialog.army_right_click's Background, the stat
-/// icons, morale/luck (icons.morale.34), the skill or ability icons at Skill_k's corner under
-/// Skills_Frame, the texts, OK (button.ok at Close_Button's corner), Army only for L ≥ 4, and the
-/// ring row of style 0 (Left, Middle ×5, Right from (13,51)) with the counts in number_text.
+/// t_army_info_window (heroes4.exe 0x53a1c0; re/town_popup_spec.md §3): one window for the right
+/// click of every creature array -- armies, town garrisons, garrisons, wandering stacks -- the
+/// content gated by the information level L (GameState.infoLevel, 0x4faf40: 4 own or allied,
+/// else the Scouting of a hero in range, -1 none): layers.dialog.army_right_click's Background,
+/// the stat icons, morale/luck (icons.morale.34), the skill or ability icons at Skill_k's corner
+/// under Skills_Frame, the texts (numbers from L 3), OK (button.ok at Close_Button's corner),
+/// Army or Town only for L 4, and the ring row of style 0 (Left, Middle ×5, Right from (13,51))
+/// with the array's seven places and their counts in number_text (exact from L 1, else words).
 extension Renderer {
     enum ArmyMember { case hero(Hero), stack(CreatureDef, Int) }
     static let armyInfoOrigin = ((AdventureUI.width - 464) / 2, (AdventureUI.height - 494) / 2)
@@ -27,19 +29,28 @@ extension Renderer {
         return out
     }
 
-    func armyInfoQuads(members: [ArmyMember], level L: Int, title: String, selected: Int, owner: Hero?) -> [Quad] {
+    /// `slots`: the array's seven places (nil = empty); `selected`: the place shown below;
+    /// `army`: the army whose movement is shown; `button`: Army_Released / Town_Released (level 4).
+    func armyInfoQuads(slots members: [ArmyMember?], level L: Int, title: String, selected: Int?, army owner: Hero?, moraleAlignment: String?, button: String?) -> [Quad] {
         guard let ui = ui, let g = game, let d = ui.dialog("army_right_click") else { return [] }
         let (ox, oy) = Renderer.armyInfoOrigin
         var out = layoutImage(d, "Background", ox, oy)
         for n in ["Damage", "Melee_Attack", "Melee_Defense", "Hit_Points"] { out += layoutImage(d, n, ox, oy) }
-        let sel = members.indices.contains(selected) ? members[selected] : members.first
+        let sel = selected.flatMap { members.indices.contains($0) ? members[$0] : nil }
         // morale and luck (values only from L 3)
         var morale = 0, luck = 0
-        if L >= 3, let lead = owner {
-            let heroes = lead.members
-            let army: [(alignment: String, undead: Bool)] = heroes.map { ($0.alignment, false) } + lead.army.compactMap { st in
-                g.tables?.creature(st.creature).map { ($0.alignment, Combatant(creature: $0, count: 1).has("undead")) } }
-            morale = max(-10, min(10, Battle.armyMorale(own: lead.alignment, army: army)))
+        // (the army's leader's alignment; a heroless array: the shown member's own [I])
+        let shownAlignment: String? = { switch sel { case .hero(let h)?: return h.alignment; case .stack(let c, _)?: return c.alignment; case nil: return nil } }()
+        if L >= 3, let own = moraleAlignment ?? shownAlignment {
+            var heroes: [Hero] = [], army: [(alignment: String, undead: Bool)] = []
+            for m in members {
+                switch m {
+                case .hero(let h)?: heroes.append(h); army.append((h.alignment, false))
+                case .stack(let c, _)?: army.append((c.alignment, Combatant(creature: c, count: 1).has("undead")))
+                case nil: break
+                }
+            }
+            morale = max(-10, min(10, Battle.armyMorale(own: own, army: army)))
             luck = max(-10, min(10, ArmyBonuses(heroes: heroes).luck))
         }
         let icons = iconSheet("morale.34")
@@ -96,7 +107,7 @@ extension Renderer {
         }
         // buttons
         out += buttonAt("ok", "Released", d["Close_Button"], ox, oy)
-        if L >= 4 { out += layoutImage(d, "Army_Released", ox, oy) }
+        if let b = button { out += layoutImage(d, b, ox, oy) }
         // the ring row: portrait, piece (or its highlight) over it, the count
         let strings = g.tables?.strings ?? [:]
         var cursor = 13
@@ -106,8 +117,8 @@ extension Renderer {
             let wx = ox + cursor - p.x, wy = oy + 51 - p.y   // the piece's window origin
             let (px, py) = Renderer.armyInfoPortraits[k]
             var count = ""
-            if k < members.count {
-                switch members[k] {
+            if k < members.count, let m = members[k] {
+                switch m {
                 case .hero(let h):
                     if let pic = ui.portrait(keyword: h.keyword, alignment: h.alignment) { out.append(Quad(texture: uiTexture("icon|\(pic.name)", { pic.bitmap }), x: ox + px, y: oy + py, w: pic.width, h: pic.height)) }
                 case .stack(let c, let n):

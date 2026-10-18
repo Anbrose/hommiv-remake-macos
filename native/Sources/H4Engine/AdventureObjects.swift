@@ -28,11 +28,15 @@ public struct ObjectState: Codable {
     public var garrisonOwner: Int? = nil
     public var troopCreatures: [String] = [], troopCounts: [Int] = []
     public var gate: [Int] = []
+    /// A quest (t_quest_site +0x94 / +0x80): the colours that have visited it (seen the
+    /// proposal) and the colours that have completed it.
+    public var questVisited: [Int] = [], questDone: [Int] = []
 
     public init() {}
     enum CodingKeys: String, CodingKey {
         case gold, material, amount, artifacts, owner, countdown, price, used, baseMaterial, skills, spell, partner
         case guardCreatures, guardCounts, guardFractions, worth, initialWorth, isGarrison, garrisonOwner, troopCreatures, troopCounts, gate
+        case questVisited, questDone
     }
     /// (every field may be missing: a save from before it existed keeps its default)
     public init(from d: Decoder) throws {
@@ -44,6 +48,7 @@ public struct ObjectState: Codable {
         guardCreatures = v(.guardCreatures, []); guardCounts = v(.guardCounts, []); guardFractions = v(.guardFractions, [])
         worth = v(.worth, 0); initialWorth = v(.initialWorth, 0); isGarrison = v(.isGarrison, false); garrisonOwner = v(.garrisonOwner, Int?.none)
         troopCreatures = v(.troopCreatures, []); troopCounts = v(.troopCounts, []); gate = v(.gate, [])
+        questVisited = v(.questVisited, []); questDone = v(.questDone, [])
     }
 }
 

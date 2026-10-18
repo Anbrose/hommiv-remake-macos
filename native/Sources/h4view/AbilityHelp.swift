@@ -75,12 +75,9 @@ extension Renderer {
         guard let d = ui.dialog("army_right_click") else { return [] }
         let (ox, oy) = Renderer.armyInfoOrigin
         var shown: String? = nil
-        if let ap = armyPopup, ap.hero < g.heroes.count {
-            // the members are the heroes, then the stacks; one out of range shows the first (armyInfoQuads)
-            let leader = g.heroes[ap.hero]
-            let n = leader.members.count + leader.army.count
-            let k = (0..<n).contains(ap.selected) ? ap.selected : 0
-            if k >= leader.members.count, k - leader.members.count < leader.army.count { shown = leader.army[k - leader.members.count].creature }
+        if let ap = armyPopup, let c = armyPopupContent(ap) {
+            // the place shown below (the chosen one, else the first filled one)
+            if let k = c.shown(ap.selected), case .stack(let def, _)? = c.slots[k] { shown = def.keyword }
         } else if let cd = creatureDialog { shown = cd.creature.keyword }
         guard let c = shown else { return [] }
         return slots(armyInfoAbilities(c)) { k, _ in d["Skill_\(k + 1)"].map { DRect($0).offset(ox, oy) } }

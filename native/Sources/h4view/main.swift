@@ -507,7 +507,16 @@ if let out = snapshot {
         let stacks = spec.split(separator: ",").compactMap { p -> (CreatureDef, Int)? in let q = p.split(separator: ":"); guard q.count == 2, let c = game.tables?.creature(String(q[0])), let n = Int(q[1]) else { return nil }; return (c, n) }
         if let lead = stacks.first { renderer.creatureDialog = (lead.0, lead.1, stacks.dropFirst().map { ($0.0, $0.1) }) }
     }
-    if let k = ProcessInfo.processInfo.environment["H4ARMYPOPUP"].flatMap({ Int($0) }) { renderer.armyPopup = ArmyPopup(hero: 0, selected: k) }   // snapshot: the right-click window
+    // snapshot: the other colours' towns garrisoned ("creature:n,creature:n") and the hero's Scouting (0 basic ... 4)
+    if let spec = ProcessInfo.processInfo.environment["H4GARRISON"] {
+        let stacks = spec.split(separator: ",").compactMap { p -> Hero.Stack? in let q = p.split(separator: ":"); guard q.count == 2, let n = Int(q[1]) else { return nil }; return Hero.Stack(creature: String(q[0]), count: n) }
+        for i in game.towns.indices where !game.towns[i].owned { game.towns[i].garrison = stacks; game.towns[i].rowKeys = [] }
+    }
+    if let s = ProcessInfo.processInfo.environment["H4SCOUTING"].flatMap({ Int($0) }), let h = game.heroes.first {   // (with --hero: the map's own hero moved there)
+        h.skills["scouting"] = s + 1
+        if let c = heroAt { h.x = c.0; h.y = c.1 }
+    }
+    if let k = ProcessInfo.processInfo.environment["H4ARMYPOPUP"].flatMap({ Int($0) }) { renderer.armyPopup = game.heroes.first.map { ArmyPopup(army: $0, selected: k) } }   // snapshot: the right-click window
     // snapshot: a right press at "x,y" on a creature window's ability icon (prints the icons on show)
     if let q = ProcessInfo.processInfo.environment["H4ABILITYPRESS"]?.split(separator: ",").compactMap({ Float($0) }), q.count == 2 {
         print("ability icons: \(renderer.abilitySlots().map { "\($0.keyword)@\($0.rect.x),\($0.rect.y),\($0.rect.w)x\($0.rect.h)" })")
@@ -599,7 +608,7 @@ if let out = snapshot {
         let m = SIMD2(Float(sx), Float(sy))
         let canvas = (m - renderer.pan) * renderer.zoom / renderer.uiScale
         renderer.inspect(mapPoint: m, canvas: (canvas.x, canvas.y))
-        print("inspect (\(target.0),\(target.1)): \(renderer.popup.map { "\($0.title) | " + $0.lines.joined(separator: " / ") } ?? renderer.creatureDialog.map { "dialog: \($0.count) \($0.creature.plural)" } ?? "nothing")")
+        print("inspect (\(target.0),\(target.1)): \(renderer.popup.map { "\($0.title) | " + $0.lines.joined(separator: " / ") } ?? renderer.creatureDialog.map { "dialog: \($0.count) \($0.creature.plural)" } ?? renderer.armyPopup.flatMap { renderer.armyPopupContent($0) }.map { c in "army window \"\(c.title)\" level \(c.level): " + c.slots.map { m -> String in switch m { case .hero(let h)?: return h.name; case .stack(let d, let n)?: return "\(n) \(d.plural)"; case nil: return "-" } }.joined(separator: ", ") } ?? "nothing")")
     }
     func render(to out: String) {
         let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: w, height: h, mipmapped: false)
@@ -956,7 +965,7 @@ final class MapView: MTKView {
             if let g = renderer.game, renderer.adventureDialog == nil {
                 let armies = g.armyList
                 for (i, (hx, hy)) in AdventureUI.heroSlots.enumerated() where i < armies.count && abs(cx - Float(hx)) < 30 && abs(cy - Float(hy)) < 30 {
-                    if let k = g.heroes.firstIndex(where: { $0 === armies[i] }) { renderer.armyPopup = ArmyPopup(hero: k) }
+                    renderer.armyPopup = ArmyPopup(army: armies[i])
                 }
             }
             return

@@ -260,6 +260,17 @@ final class MenuKit {
         out += image(th, "hscroll", left + Int(Float(span) * max(0, min(1, value))) - th.x, r.y)
         return out
     }
+    /// Which way a click moves a stepped horizontal scrollbar: -1 on the left arrow or the track
+    /// left of the thumb, +1 on the right arrow or the track right of it (0 on the thumb).
+    func hScrollbarSide(_ r: UIRect, _ px: Float, value: Float) -> Int {
+        let f = file("control.horizontal_scroll")
+        let uw = MenuKit.find(f, "Up_Released")?.width ?? 52, dw = MenuKit.find(f, "Down_Released")?.width ?? 56, tw = MenuKit.find(f, "Thumb")?.width ?? 28
+        let left = r.x + uw, right = r.x + r.w - dw
+        if px < Float(left) { return -1 }
+        if px >= Float(right) { return 1 }
+        let tx = Float(left + Int(Float(max(0, right - left - tw)) * max(0, min(1, value))))
+        return px < tx ? -1 : px >= tx + Float(tw) ? 1 : 0
+    }
     /// The value (0...1) a click on a horizontal scrollbar's track sets.
     func hScrollbarValue(_ r: UIRect, _ px: Float) -> Float {
         let f = file("control.horizontal_scroll")

@@ -91,15 +91,16 @@ extension Renderer {
         let f = ui.font(18), lh = f.lineHeight
         d.title = title
         let fit = Renderer.fitWrap(text, font: f, minW: 0, maxW: AdventureUI.width - 150)
-        d.lines = fit.lines; d.tw = fit.w
+        d.lines = text.isEmpty ? [] : fit.lines; d.tw = text.isEmpty ? 0 : fit.w
         d.th = min(d.lines.count * lh, AdventureUI.height - 200)
         d.fit = max(1, d.th / lh)
         d.band = d.th < 60 ? "small" : "large"
         let m = ui.popupFrame(d.band).map(sliceMargins) ?? (l: 12, t: 8, r: 13, b: 9)
-        d.bandW = d.tw + m.l + m.r; d.bandH = d.th + m.t + m.b; d.bandT = m.t
+        // no text (the computer turn's progress box): no scroll band (inferred)
+        if !text.isEmpty { d.bandW = d.tw + m.l + m.r; d.bandH = d.th + m.t + m.b; d.bandT = m.t }
         // pass 1: sizes
         let start = title != nil ? 60 : 15
-        var cursor = start + d.bandH + 10
+        var cursor = start + (text.isEmpty ? 0 : d.bandH + 10)
         d.items = items.map { it in
             if it.caption.isEmpty { return BasicDialog.Item(picture: it.picture, caption: [], captionW: 0) }
             let c = Renderer.fitWrap(it.caption, font: f, minW: 40, maxW: 160)
@@ -143,7 +144,7 @@ extension Renderer {
         guard let ui = ui, let gen = ui.dialog("generic") else { return [] }
         var out: [Quad] = []
         out.append(Quad(texture: uiTexture("generic|\(d.W)x\(d.H)", { nineSlice(gen, w: d.W, h: d.H) }), x: x, y: y, w: d.W, h: d.H))
-        if let bf = ui.popupFrame(d.band) {
+        if d.bandH > 0, let bf = ui.popupFrame(d.band) {
             out.append(Quad(texture: uiTexture("band|\(d.band)|\(d.bandW)x\(d.bandH)", { nineSlice(bf, w: d.bandW, h: d.bandH) }), x: x + d.bandX, y: y + d.bandY, w: d.bandW, h: d.bandH))
         }
         let f = ui.font(18)

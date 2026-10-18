@@ -600,6 +600,14 @@ if let out = snapshot {
     let w = ui == nil ? 1280 : AdventureUI.width, h = ui == nil ? 800 : AdventureUI.height
     renderer.viewSize = SIMD2(Float(w), Float(h))
     aim(renderer, at: center ?? game.heroes.first.map { ($0.x, $0.y) } ?? (map.size / 2, map.size / 2))
+    if let secs = ProcessInfo.processInfo.environment["H4AITURN"].flatMap({ Double($0) }) {   // snapshot: the computer players' turns that many seconds after End Turn
+        renderer.endTurn()
+        var frames = 0
+        while Double(frames) / 60 < secs, game.computerTurn != nil { game.update(dt: 1.0 / 60); renderer.followWalkingArmies(); frames += 1 }
+        snapTime = Double(frames) / 60
+        let t = game.computerTurn
+        print("computer turn: \(t == nil ? "over" : "colour \(t?.colour.map(String.init) ?? "-") \(t?.moved ?? 0)/\(t?.armies ?? 0)"), walk \(t?.walk.map { "\($0.hero.name) at (\($0.hero.x),\($0.hero.y)) shown \($0.shown) \($0.hero.animState ?? "-")" } ?? "none"), battle \(game.pendingHeroBattle != nil)")
+    }
     if let target = inspectAt {   // the status line, then a right click on that cell's centre
         let (sx, sy) = scene.screen(x: target.0, y: target.1)
         let m = SIMD2(Float(sx), Float(sy))
@@ -854,6 +862,7 @@ final class MapView: MTKView {
             renderer.combatClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale)
             return
         }
+        if renderer.computerTurnBusy { return }   // the computer players' turns: the map and the panel wait
         if renderer.menuClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale) { return }
         if renderer.saveDialogClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale, double: e.clickCount >= 2) { return }
         if renderer.messageBoxClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale) { return }   // a script message: only OK
@@ -887,7 +896,7 @@ final class MapView: MTKView {
             if renderer.townOpen != nil, armySession != nil { renderer.armyScreenClick(x: cx, y: cy); return }   // the town's army screen
             if renderer.townOpen != nil { renderer.townScreenClick(x: cx, y: cy); return }
             if cx >= Float(AdventureUI.mapViewportWidth) {
-                if ui.hit("end_turn", x: cx, y: cy) { renderer.endTurnFlip = Date(); g.endTurn() }
+                if ui.hit("end_turn", x: cx, y: cy) { renderer.endTurn() }
                 else if ui.hit("System_menu_button", x: cx, y: cy) { renderer.openSystemMenu() }
                 else if ui.hit("Game_menu_button", x: cx, y: cy) { renderer.openGameMenu() }
                 else if ui.hit("move_army_button", x: cx, y: cy) { g.continueMoving(hero) }   // the horse: go on along the kept route
@@ -938,6 +947,7 @@ final class MapView: MTKView {
     override func rightMouseUp(with e: NSEvent) { renderer.messageItemHelp = nil; renderer.abilityPopup = nil; heldHelp = nil }
     override func rightMouseDown(with e: NSEvent) {
         if renderer.skipMagiView() { return }
+        if renderer.computerTurnBusy { return }
         let p = convert(e.locationInWindow, from: nil)
         let scale = Float(window?.backingScaleFactor ?? 1)
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
@@ -998,6 +1008,7 @@ final class MapView: MTKView {
     }
     override func keyDown(with e: NSEvent) {
         if renderer.skipMagiView() { return }
+        if renderer.computerTurnBusy { return }
         if renderer.cheatBoxKey(e) { return }   // Tab opens the cheat box; while it is active it takes the keys
         if renderer.saveDialogKey(e) { return }
         if renderer.armyScreenKey(e.keyCode, chars: e.charactersIgnoringModifiers ?? "") { return }   // the army screen: S split, Enter / Esc done
@@ -1024,8 +1035,8 @@ final class MapView: MTKView {
             else { renderer.pan.x += e.keyCode == 124 ? step : -step }
         case 125: renderer.pan.y += step
         case 126: renderer.pan.y -= step
-        case 36, 76: if renderer.townOpen == nil, !renderer.inCombat { renderer.game?.endTurn() }   // Return / Enter
-        case 14: if renderer.townOpen == nil, !renderer.inCombat { renderer.game?.endTurn() }       // E
+        case 36, 76: if renderer.townOpen == nil, !renderer.inCombat { renderer.endTurn() }   // Return / Enter
+        case 14: if renderer.townOpen == nil, !renderer.inCombat { renderer.endTurn() }       // E
         // the battlefield's hot keys (0x6335c0): F10 (key 0x79) toggles the movement shadow, G
         // (combat_grid_toggle.hot_keys) the grid; each change is kept at once, as the exe's setters do
         case 109: if renderer.inCombat { renderer.settings.showMovementShading = !renderer.showMovementShading; renderer.settings.save() }

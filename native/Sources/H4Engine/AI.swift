@@ -38,56 +38,101 @@ extension GameState {
     /// weights, the budget without income, the hero count, the town plans), the moves (each garrison
     /// buying -- creatures, a building, a hero -- as it leaves its town), the emergency defence of
     /// threatened towns, the reserve and budget with tomorrow's income, the buildings, the caravans.
+    /// Queued on the computer turn (ComputerTurn.swift): the armies move one after another.
     func aiTurn(_ colour: Int) {
-        for k in passabilities.indices { passabilities[k].forcedExit = [:] }   // (the player's view of guard zones is not the computer's)
-        acting(as: colour) {
-            caravanArrivals(for: colour)   // its turn starts (0x4b2ce0 -> 0x4b1010)
-            // start_turn 0x47bd10 -> 0x7e2ee0, 0x47bfb0, 0x47c170
-            aiComputeWeights(colour)
-            aiComputeBudget(colour, withIncome: false)
-            let heroCount = aiHeroCount(colour)
-            aiTownPlans(colour)
-            // the move loop (0x47d0b0 / 0x47d340): the armies, then the garrisons that walk out
-            for h in enemyHeroes where h.owner == colour {
-                h.maxMovement = armyMovement(h); h.movement = h.maxMovement
-                aiMove(h)
-            }
-            for h in aiGarrisonDepartures(colour, heroCount: heroCount) where pendingHeroBattle == nil { aiMove(h) }
-            aiDefendTowns(colour)                        // 0x47c5e0
-            aiComputeBudget(colour, withIncome: true)    // 0x7e3440(day + 1)
-            aiBuild(colour)                              // 0x482c90
-            aiCaravans(colour)                           // 0x4838e0 (Caravans.swift: every 5th day)
-        }
+        guard let t = computerTurn else { return }
+        var heroCount = 0
+        t.next([
+            { [unowned self] in
+                t.colour = colour; t.moved = 0; t.armies = 1
+                for k in passabilities.indices { passabilities[k].forcedExit = [:] }   // (the player's view of guard zones is not the computer's)
+                playing(colour) {
+                    caravanArrivals(for: colour)   // its turn starts (0x4b2ce0 -> 0x4b1010)
+                    // start_turn 0x47bd10 -> 0x7e2ee0, 0x47bfb0, 0x47c170
+                    aiComputeWeights(colour)
+                    aiComputeBudget(colour, withIncome: false)
+                    heroCount = aiHeroCount(colour)
+                    aiTownPlans(colour)
+                }
+            },
+            { [unowned self] in
+                // the move loop (0x47d0b0 / 0x47d340): the armies, then the garrisons that walk out
+                let armies = enemyHeroes.filter { $0.owner == colour }
+                t.armies = armies.count + 1   // (0x47be32: the progress bar's range)
+                t.next(armies.map { h in { [unowned self] in
+                    playing(colour) { h.maxMovement = armyMovement(h); h.movement = h.maxMovement }
+                    aiMove(h, colour: colour) { t.moved += 1 }   // (0x47baeb: one more army moved)
+                } } + [{ [unowned self] in
+                    var leaving: [Hero] = []
+                    playing(colour) { leaving = aiGarrisonDepartures(colour, heroCount: heroCount) }
+                    t.next(leaving.map { h in { [unowned self] in if pendingHeroBattle == nil { aiMove(h, colour: colour) {} } } })
+                }, { [unowned self] in
+                    playing(colour) {
+                        aiDefendTowns(colour)                        // 0x47c5e0
+                        aiComputeBudget(colour, withIncome: true)    // 0x7e3440(day + 1)
+                        aiBuild(colour)                              // 0x482c90
+                        aiCaravans(colour)                           // 0x4838e0 (Caravans.swift: every 5th day)
+                    }
+                    t.colour = nil
+                }])
+            }])
+    }
+
+    /// A hero's moves for the day, at once (Auto Play moves the human's armies with it).
+    func aiMove(_ h: Hero) {
+        let saved = computerTurn
+        let t = ComputerTurn(animated: false)
+        computerTurn = t
+        t.tasks = [{ [unowned self] in aiMove(h, colour: nil) {} }]
+        runComputerTurn()
+        computerTurn = saved
     }
 
     /// A computer hero's moves for the day: the best target by value per day of travel, walked
     /// to with the day's movement, used when reached; again while it has movement and targets.
-    func aiMove(_ h: Hero) {
-        let back = level
-        level = h.z
-        defer { level = back }
-        var steps = 0
-        while h.movement >= 1, steps < 6, pendingHeroBattle == nil {
-            steps += 1
-            guard let goal = aiTarget(h) else { return }
-            // walk: the cells before the goal (the goal itself is the object, the army or the town gate)
+    /// `colour`: the computer player playing (nil: the human's army under Auto Play); `done` runs
+    /// when the army has finished.
+    func aiMove(_ h: Hero, colour: Int?, step iteration: Int = 0, level z: Int? = nil, then done: @escaping () -> Void) {
+        guard let t = computerTurn else { return }
+        let z = z ?? h.z
+        var goal: (path: [(x: Int, y: Int)], stand: (Int, Int), at: (Int, Int), use: () -> Void)?
+        var cells: [(x: Int, y: Int)] = []
+        playing(colour, on: z) {
+            guard h.movement >= 1, iteration < 6, pendingHeroBattle == nil, onMap(h), let g = aiTarget(h) else { return }
+            goal = g
+            // walk: the cells before the goal (the goal itself is the object, the army or the town gate),
+            // as far as the movement and the armies in the way let it (the walk list, checked again
+            // as each step is taken)
             passability.free(h.x, h.y)
-            var moved = false
-            for c in goal.path {
-                let cost = passability.stepCost(from: h.x, h.y, to: c.x, c.y)
-                if h.movement + 0.001 < cost { break }
-                if !isVacant((c.x, c.y), for: h) || enemyAt(c.x, c.y) != nil { break }
-                h.movement -= cost; h.x = c.x; h.y = c.y; moved = true
-                markEluded(h)   // 0x546300 after each step, the computer's armies too
-                aiStepped(h)
-                if pendingHeroBattle != nil || (h.x, h.y) != (c.x, c.y) { break }   // a fight, or the event moved it
+            var left = h.movement, px = h.x, py = h.y
+            for c in g.path {
+                let cost = passability.stepCost(from: px, py, to: c.x, c.y)
+                if left + 0.001 < cost || !isVacant((c.x, c.y), for: h) || enemyAt(c.x, c.y) != nil { break }
+                left -= cost; px = c.x; py = c.y
+                cells.append(c)
             }
-            finishEluded(h)     // end_move: the levels taken at once (0x642970)
-            passability.block(h.x, h.y)
-            if (h.x, h.y) == (goal.stand.0, goal.stand.1) || GameState.adjacent((h.x, h.y), goal.at) {
-                goal.use()
-            } else if !moved { return }
         }
+        guard let g = goal else { t.next([done]); return }
+        var moved = false
+        walkAI(h, colour: colour, z: z, cells: cells, step: { [unowned self] c in
+            let cost = passability.stepCost(from: h.x, h.y, to: c.x, c.y)
+            if h.movement + 0.001 < cost { return false }
+            if !isVacant((c.x, c.y), for: h) || enemyAt(c.x, c.y) != nil { return false }
+            h.movement -= cost; h.x = c.x; h.y = c.y; moved = true
+            markEluded(h)   // 0x546300 after each step, the computer's armies too
+            aiStepped(h)
+            return pendingHeroBattle == nil && (h.x, h.y) == (c.x, c.y)   // a fight, or the event moved it
+        }, finish: { [unowned self] in
+            var again = false
+            playing(colour, on: z) {
+                finishEluded(h)     // end_move: the levels taken at once (0x642970)
+                passability.block(h.x, h.y)
+                if (h.x, h.y) == (g.stand.0, g.stand.1) || GameState.adjacent((h.x, h.y), g.at) {
+                    g.use(); again = true
+                } else { again = moved }
+            }
+            if again { aiMove(h, colour: colour, step: iteration + 1, level: z, then: done) } else { t.next([done]) }
+        })
     }
 
     /// What the computer hero goes for: (path to where it stands, the target cell, what it does there).
@@ -177,7 +222,11 @@ extension GameState {
             let stand = (-1...1).flatMap { dx in (-1...1).map { (ph.x + dx, ph.y + $0) } }.filter { $0 != (ph.x, ph.y) }
             consider(4000 + theirs / 10, at: (ph.x, ph.y), stand: stand,
                      if: { [unowned self] in predictWin(ourArmy, owner: h.owner, against: combatants(of: ph), owner: ph.owner, seed: day * 17 + ph.x) }) { [weak self] in
-                if human { self?.pendingHeroBattle = (h, ph) } else { self?.pendingHeroBattle = (ph, h); self?.aiAttacking = true }
+                if human { self?.pendingHeroBattle = (h, ph) } else {
+                    // the attacker turns to the army and takes its attack pose, the army turns to it (0x522560)
+                    self?.face(h, toward: (ph.x, ph.y)); self?.armyReached(h, enemy: ph)
+                    self?.pendingHeroBattle = (ph, h); self?.aiAttacking = true
+                }
                 self?.log.append("\(h.name) attacks \(ph.name)!")
             }
         }

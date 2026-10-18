@@ -704,7 +704,12 @@ public final class GameState {
     public var dayOfWeek: Int { (day - 1) % 7 + 1 }
     /// Walk speeds in percent (heroes4.exe 0x7c91d0 defaults): the player's armies 150
     /// ([0xa75648]), the others 200 ([0xa75654]); a frame lasts 100 x (1000 / speed byte) / percent ms.
-    public static var armySpeedPercent = 150, otherArmySpeedPercent = 200
+    public static var armySpeedPercent = SpeedOption.defaultArmy, otherArmySpeedPercent = SpeedOption.defaultEnemy
+    /// show_enemy_moves ([0xa7565d], the enemy speed below "Off"): the computer players' armies
+    /// walk on the map while the player sees them (0x544c93); otherwise they move at once.
+    public static var showEnemyMoves = true
+    /// The computer players' turns under way (End Turn until the new day), ComputerTurn.swift.
+    public internal(set) var computerTurn: ComputerTurn? = nil
     /// The walk model of an adv_actor model (the renderer reads the files); defaults without it.
     public var gaitProvider: ((String) -> ArmyGait)? = nil
     func gait(_ model: String?) -> ArmyGait { model.flatMap { gaitProvider?($0) } ?? ArmyGait() }
@@ -1611,6 +1616,7 @@ public final class GameState {
 
     /// Advance walking heroes by dt seconds.
     public func update(dt: Float) {
+        if let t = computerTurn { advanceComputerTurn(t, dt: dt); return }   // the computer players' turns (ComputerTurn.swift)
         if var c = charge {   // a stack walking up to a hero: nothing else moves meanwhile
             let g = gait(c.monster < monsters.count ? monsters[c.monster].model : nil)
             c.walked += c.walk.advance(dt, gait: g, percent: GameState.otherArmySpeedPercent)
@@ -1733,22 +1739,6 @@ public final class GameState {
             victoryDays = nil
             log.append(text("victory_terminated.adventure_map", "Your opponent has taken steps to undermine your victory.  A town has been reclaimed!"))
         }
-    }
-
-    public func endTurn() {
-        defer { runDayEvents(); checkScenario(newDay: true) }
-        for c in aiPlayers { aiTurn(c) }   // the computer players move before the new day
-        day += 1
-        for h in heroes { h.maxMovement = armyMovement(h); h.movement = h.maxMovement; h.path = []; h.plan = [] }
-        for (res, amount) in income { resources[res, default: 0] += amount }
-        aiNewDay()       // the computer players' income and its difficulty handicap (0x4d8910)
-        monthsNewDay()   // 0x4d8910: the month changes before the objects' day
-        objectsNewDay()
-        sanctuariesNewDay()
-        dwellingsNewDay()
-        townsNewDay()    // town dwellings grow a seventh of their week every day (0x899960)
-        for i in towns.indices { towns[i].builtToday = false; if towns[i].tavernDays > 0 { towns[i].tavernDays -= 1 } }
-        caravanArrivals(for: map.humanColour)   // the human's turn starts (0x4b3710 -> 0x4b1010)
     }
 
     public var dateText: String { "Month \(month), Week \(week), Day \(dayOfWeek)" }

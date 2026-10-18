@@ -24,15 +24,16 @@ extension Renderer {
         var out: [Quad] = []
         let hero = g.heroes.first
         let canCast = hero.map { !$0.spells.isEmpty || !$0.artifactSpells.withSkill.isEmpty || !$0.artifactSpells.free.isEmpty } ?? false
-        let flipping = endTurnFlip.map { Date().timeIntervalSince($0) < Double(hourglassFlip?.frames.count ?? 0) * 0.1 } ?? false
+        // (the hourglass stays, at its last frame, while the computer players play: inferred)
+        let flipping = g.computerTurn?.animated == true || (endTurnFlip.map { Date().timeIntervalSince($0) < Double(hourglassFlip?.frames.count ?? 0) * 0.1 } ?? false)
         var balloon: String?
         for (hs, name, help) in Renderer.panelButtons {
             guard let slot = frameLayer(ui, hs) else { continue }
             if name == "surface" && (g.map.levels < 2 || g.level == 0) { continue }
             if name == "underground" && g.map.levels >= 2 && g.level == 1 { continue }
             if name == "end_turn" && flipping {
-                if let hg = hourglassFlip, let t0 = endTurnFlip {
-                    let fr = hg.frames[min(hg.frames.count - 1, Int(Date().timeIntervalSince(t0) / 0.1))]
+                if let hg = hourglassFlip, !hg.frames.isEmpty {
+                    let fr = hg.frames[min(hg.frames.count - 1, Int(Date().timeIntervalSince(endTurnFlip ?? .distantPast) / 0.1))]
                     out.append(Quad(texture: uiTexture("hourglass|\(fr.name)", { fr.bitmap }), x: slot.x + fr.box.left - hg.frames[0].box.left, y: slot.y + fr.box.top - hg.frames[0].box.top, w: fr.bitmap.width, h: fr.bitmap.height))
                 }
                 continue

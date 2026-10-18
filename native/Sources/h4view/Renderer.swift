@@ -533,6 +533,10 @@ final class Renderer: NSObject, MTKViewDelegate {
     var teleporterPicked: Int?
     var teleporterScroll = 0
     lazy var hourglassFlip: Sprite? = (try? resolver?.archive.payload("animation.hourglass.flip.h4d")).flatMap { try? Sprite(data: $0) }
+    /// The computer turn's progress bar (layers.icons.progress_bar: "bar", a fill per colour, the borders).
+    lazy var progressBarLayers: LayerFile? = ui?.payload("layers.icons.progress_bar.h4d").flatMap { try? LayerFile(data: $0) }
+    /// The cell each walking army was last sorted on (the camera checks it at each switch).
+    var followCells: [ObjectIdentifier: (x: Int, y: Int)] = [:]
     var abilityPopup: (text: String, rect: DRect)? = nil   // an ability's help, shown while right-clicked (AbilityHelp.swift)
     var messageItemHelp: String? = nil        // a found artifact's help, shown while right-clicked
     var pointerCanvas: (Float, Float) = (0, 0) { didSet { pointerSince = Date() } }
@@ -617,6 +621,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             out.append(Quad(texture: uiTexture("toast|\(t.text)", { ui.dateFont.render(t.text, colour: (255, 236, 200)) }), x: x, y: y, w: w, h: ui.dateFont.size))
         }
         out += panelButtonQuads()
+        out += computerTurnQuads()
         out += floaterQuads()
         out += hoverQuads()
         out += popupQuads()
@@ -1201,10 +1206,11 @@ final class Renderer: NSObject, MTKViewDelegate {
             if lastAutosaveDay != g.day, mapPath != nil { lastAutosaveDay = g.day; autosave() }   // each new day autosaves
             if let won = g.outcome, !outcomeShown, prompt == nil, !inCombat { outcomeShown = true; scenarioOver(won: won) }
             // Auto Play (nwcGoSolo): the computer plays the human's turn once nothing waits for him
-            if g.autoPlayPending, prompt == nil, !inCombat, townOpen == nil, g.levelUp == nil, g.pendingBattle == nil,
+            if g.autoPlayPending, g.computerTurn == nil, prompt == nil, !inCombat, townOpen == nil, g.levelUp == nil, g.pendingBattle == nil,
                g.pendingHeroBattle == nil, g.pendingSiege == nil, g.scripts.messages.isEmpty, cheatBox?.active != true { g.autoPlayTurn() }
             // the hero's ride: sound.hero horse.walk loops while a hero walks on the map
-            if !inCombat, townOpen == nil, g.heroes.contains(where: { $0.isWalking }) { sound?.startLoop("hero horse.walk", key: "horse") }
+            followWalkingArmies()
+            if !inCombat, townOpen == nil, g.heroes.contains(where: { $0.isWalking }) || g.computerTurn?.walk?.shown == true { sound?.startLoop("hero horse.walk", key: "horse") }
             else { sound?.stopLoop("horse") }
             updateAmbient(now)
             g.log.removeAll()

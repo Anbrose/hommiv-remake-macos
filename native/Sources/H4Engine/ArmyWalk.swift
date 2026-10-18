@@ -39,9 +39,12 @@ public struct ArmyWalk {
     private var clock = 0.0
     public private(set) var done = false
 
-    public init(steps: [Int], gait: ArmyGait) {
+    /// `walking`: the walk starts in its walk loop, without the prewalk -- a hidden army coming
+    /// into the player's sight mid-route (0x545475: state walk, 0x544720(0)).
+    public init(steps: [Int], gait: ArmyGait, walking: Bool = false) {
         self.steps = steps
         rest = Double(steps.first ?? 0)
+        if walking { state = "walk" }
         if steps.isEmpty { done = true } else { fit(gait) }
     }
     /// A step from (x0, y0) to (x1, y1): 48 across a corner, else 32 (0x544630, node +4 bit 1).

@@ -7,7 +7,10 @@ import H4Engine
 /// Kept in the user defaults between games.
 struct GameSettings: Codable {
     var quickCombat = false, showCoordinates = false, movementReminder = true, showMovementPath = true, showAnimations = true
-    var armySpeed: Float = 0.4, combatSpeed: Float = 0.5, enemySpeed: Float = 0.6, music: Float = 0.5, sound: Float = 0.8
+    var music: Float = 0.5, sound: Float = 0.8
+    /// The speeds in percent as heroes4.exe keeps them (registry army_speed / combat_speed /
+    /// enemy_speed, defaults 150 / 150 / 200; SpeedOption): nil until set.
+    var armySpeedPercent: Int? = nil, combatSpeedPercent: Int? = nil, enemySpeedPercent: Int? = nil
     var fullScreen: Bool? = nil
     /// The combat options "Show Combat Grid" (show_combat_grid) and "Show Movement Shadow"
     /// (show_combat_movement_shading): both off unless set (heroes4.exe 0x7c91d0 defaults them to 0).
@@ -17,9 +20,10 @@ struct GameSettings: Codable {
         return s
     }
     func save() { if let d = try? JSONEncoder().encode(self) { UserDefaults.standard.set(d, forKey: "h4view.settings") } }
-    var sliders: [Float] {
-        get { [armySpeed, combatSpeed, enemySpeed, music, sound] }
-        set { armySpeed = newValue[0]; combatSpeed = newValue[1]; enemySpeed = newValue[2]; music = newValue[3]; sound = newValue[4] }
+    /// The three speeds (army, combat, enemy) in percent.
+    var speeds: [Int] {
+        get { [armySpeedPercent ?? SpeedOption.defaultArmy, combatSpeedPercent ?? SpeedOption.defaultCombat, enemySpeedPercent ?? SpeedOption.defaultEnemy] }
+        set { armySpeedPercent = newValue[0]; combatSpeedPercent = newValue[1]; enemySpeedPercent = newValue[2] }
     }
 }
 
@@ -30,7 +34,7 @@ struct GameSettings: Codable {
 /// headings (PA.20 / PA.18) centred; five horizontal t_scrollbars with a title (left) and a value
 /// (right) in the same `*_Text` rect (PA.16); OK and Cancel at their hotspots' top-left.
 enum OptionsView {
-    enum Hit { case none, ok, cancel, check(Int), resolution(Int), fullScreen, slider(Int, Float) }
+    enum Hit { case none, ok, cancel, check(Int), resolution(Int), fullScreen, slider(Int, Float), speedStep(Int, Int) }
     static let boxes: [(name: String, key: String, fallback: String)] = [
         ("Quick_Combat", "options_quick_combat.misc", "Quick Combat"),
         ("Coordinates", "options_show_coordinates.misc", "Show Coordinates"),
@@ -47,13 +51,21 @@ enum OptionsView {
     static func origin(_ w: Int, _ h: Int) -> (Int, Int) { ((w - 700) / 2, (h - 560) / 2) }
 
     static func checked(_ k: Int, _ s: GameSettings) -> Bool { [s.quickCombat, s.showCoordinates, s.movementReminder, s.showMovementPath, s.showAnimations][k] }
-    /// The number shown right of a slider's title: the volumes as round(2 log2(v)) (0 at full), the
-    /// speeds as a step 1..5, the enemy speed's lowest step "Off".
-    static func value(_ k: Int, _ v: Float, _ kit: MenuKit) -> String {
-        if k >= 3 { return "\(Int((2 * log2(Double(max(v, 1.0 / 1024)))).rounded()))" }
-        let step = Int((v * 4).rounded())
-        if k == 2 && step == 0 { return kit.t("speed_off.options", "Off") }
-        return "\(step + 1)"
+    /// The number shown right of a slider's title: the volumes as round(2 log2(v)) (0 at full); a
+    /// speed as its slider position -2...6 ("%d", 0x6ebde0), the enemy speed's last one "Off"
+    /// (speed_off.options, 0x7cbde0).
+    static func value(_ k: Int, _ s: GameSettings, _ kit: MenuKit) -> String {
+        if k >= 3 { return "\(Int((2 * log2(Double(max(k == 3 ? s.music : s.sound, 1.0 / 1024)))).rounded()))" }
+        let pos = SpeedOption.position(percent: s.speeds[k])
+        if k == 2 && pos == SpeedOption.positions.upperBound { return kit.t("speed_off.options", "Off") }
+        return "\(pos)"
+    }
+    /// The thumb's place, 0...1: a speed's position in -2...6 (0x83b1da), a volume as kept.
+    static func thumb(_ k: Int, _ s: GameSettings) -> Float {
+        if k == 3 { return s.music }
+        if k == 4 { return s.sound }
+        let r = SpeedOption.positions
+        return Float(SpeedOption.position(percent: s.speeds[k]) - r.lowerBound) / Float(r.upperBound - r.lowerBound)
     }
 
     static func items(_ kit: MenuKit, _ s: GameSettings, ox: Int, oy: Int, hover: (Float, Float)?) -> [UIItem] {
@@ -85,12 +97,11 @@ enum OptionsView {
             checkbox(b.name, checked(k, s))
             label(kit.t(b.key, b.fallback), "\(b.name)_text")
         }
-        let values = s.sliders
         for (k, sl) in sliders.enumerated() {
-            if let r = l(sl.slot) { out += kit.hScrollbar(UIRect(r, ox, oy), value: values[k]) }
+            if let r = l(sl.slot) { out += kit.hScrollbar(UIRect(r, ox, oy), value: thumb(k, s)) }
             if let t = l(sl.text) {
                 out += kit.text(kit.t(sl.key, sl.fallback), UIRect(t, ox, oy), MenuKit.Style(t.height), clip: false)
-                out += kit.text(value(k, values[k], kit), UIRect(t, ox, oy), MenuKit.Style(t.height, just: 2), clip: false)
+                out += kit.text(value(k, s, kit), UIRect(t, ox, oy), MenuKit.Style(t.height, just: 2), clip: false)
             }
         }
         if let b = l("ok_button") { out += kit.button("ok", .released, ox + b.x, oy + b.y) }
@@ -98,7 +109,7 @@ enum OptionsView {
         return out
     }
 
-    static func hit(_ kit: MenuKit, ox: Int, oy: Int, _ x: Float, _ y: Float) -> Hit {
+    static func hit(_ kit: MenuKit, ox: Int, oy: Int, _ x: Float, _ y: Float, settings s: GameSettings) -> Hit {
         guard let d = kit.file("dialog.options") else { return .none }
         func inside(_ n: String, w: Int? = nil, h: Int? = nil) -> Bool {
             guard let l = MenuKit.find(d, n) else { return false }
@@ -112,7 +123,11 @@ enum OptionsView {
         for (k, sl) in sliders.enumerated() {
             guard let r = MenuKit.find(d, sl.slot) else { continue }
             let rect = UIRect(ox + r.x, oy + r.y, r.width, 41)
-            if rect.contains(x, y) { return .slider(k, kit.hScrollbarValue(rect, x)) }
+            guard rect.contains(x, y) else { continue }
+            // a speed's t_scrollbar: an arrow or the track either side of the thumb moves it by one
+            // position (0x83c3b4 / 0x83af60, page (6 - -2) / 5 = 1)
+            if k < 3 { return .speedStep(k, kit.hScrollbarSide(rect, x, value: thumb(k, s))) }
+            return .slider(k, kit.hScrollbarValue(rect, x))
         }
         return .none
     }
@@ -129,9 +144,11 @@ enum OptionsView {
             }
         case .fullScreen: s.fullScreen = !(s.fullScreen ?? false)
         case .slider(let k, let v):
-            var all = s.sliders
-            all[k] = k < 3 ? (v * 4).rounded() / 4 : v
-            s.sliders = all
+            if k == 3 { s.music = v } else if k == 4 { s.sound = v }
+        case .speedStep(let k, let d):
+            var all = s.speeds
+            all[k] = SpeedOption.stepped(percent: all[k], by: d)
+            s.speeds = all
         default: break
         }
     }
@@ -149,7 +166,7 @@ extension Renderer {
     func optionsClick(x: Float, y: Float) {
         guard var s = optionsOpen, let kit = kit else { optionsOpen = nil; return }
         let (ox, oy) = optionsOrigin
-        let h = OptionsView.hit(kit, ox: ox, oy: oy, x, y)
+        let h = OptionsView.hit(kit, ox: ox, oy: oy, x, y, settings: s)
         switch h {
         case .ok:
             optionsOpen = nil
@@ -167,9 +184,11 @@ extension Renderer {
         sound?.effectVolume = settings.sound
         sound?.setMusicVolume(settings.music)
         game?.quickCombatOnly = settings.quickCombat
-        // walk speeds in percent like the combat speed (heroes4.exe defaults 150 own, 200 others)
-        GameState.armySpeedPercent = Int(50 + settings.armySpeed * 250)
-        GameState.otherArmySpeedPercent = Int(50 + settings.enemySpeed * 250)
-        combat?.animationSpeed = Int(50 + settings.combatSpeed * 250)
+        // the speeds in percent as the exe keeps them (SpeedOption; 0x7cbe40 / 0x6ecb50)
+        let sp = settings.speeds
+        GameState.armySpeedPercent = sp[0]
+        combat?.animationSpeed = sp[1]
+        GameState.otherArmySpeedPercent = sp[2]
+        GameState.showEnemyMoves = SpeedOption.showsEnemyMoves(sp[2])
     }
 }

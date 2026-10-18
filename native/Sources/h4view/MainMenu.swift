@@ -277,7 +277,7 @@ final class MenuView: NSView {
     func clickOptions(_ x: Float, _ y: Float) {
         guard var o = options else { return }
         let (ox, oy) = OptionsView.origin(1024, 768)
-        let h = OptionsView.hit(kit, ox: ox, oy: oy, x, y)
+        let h = OptionsView.hit(kit, ox: ox, oy: oy, x, y, settings: o)
         switch h {
         case .ok: o.save(); options = nil; sound.setMusicVolume(o.music)
         case .cancel: options = nil

@@ -137,7 +137,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// The music for where the player is: the town's alignment in a town, else the terrain under
     /// the hero (terrain.<Terrain>); combat music is started by the battle itself.
     func updateMusic() {
-        guard let s = sound, let g = game, !inCombat else { return }
+        guard let s = sound, let g = game, !inCombat, endGame == nil else { return }
         if let t = townOpen, t < g.towns.count { s.playMusic("town.\(g.towns[t].alignment)"); return }
         guard let h = g.heroes.first, let c = g.map.cells[g.level][h.x * g.map.size + h.y] else { return }
         let names: [UInt8: String] = [0: "Water", 1: "grass", 2: "Rough", 3: "Swamp", 4: "Volcanic", 5: "Snow", 6: "Sand", 7: "Dirt", 8: "Subterranean"]
@@ -148,7 +148,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// windmills, water wheels, stables, creature banks, ...), louder the nearer, four at most.
     func updateAmbient(_ now: Date) {
         guard let s = sound, let g = game else { return }
-        if inCombat || townOpen != nil { s.setAmbient([:]); return }
+        if inCombat || townOpen != nil || endGame != nil { s.setAmbient([:]); return }
         guard now.timeIntervalSince(lastAmbientCheck) > 0.5 else { return }
         lastAmbientCheck = now
         let w = mapWindow, centre = cell(at: pan + (w.min + w.max) / 2 / zoom)
@@ -518,6 +518,10 @@ final class Renderer: NSObject, MTKViewDelegate {
         promptDecor = (text, title, items)
     }
     var outcomeShown = false
+    /// The win / lose window while it is up (EndGame.swift).
+    var endGame: EndGameWindow? = nil
+    /// The Final Score dialog over it after a won single scenario (FinalScore.swift).
+    var finalScore: FinalScoreDialog? = nil
     var modelFigures: [String: (state: String, since: Date, until: Date)] = [:]
     /// 15000 -> "15,000"
     static func grouped(_ n: Int) -> String {
@@ -1199,7 +1203,8 @@ final class Renderer: NSObject, MTKViewDelegate {
             g.sounds.removeAll()
             updateMusic()
             if lastAutosaveDay != g.day, mapPath != nil { lastAutosaveDay = g.day; autosave() }   // each new day autosaves
-            if let won = g.outcome, !outcomeShown, prompt == nil, !inCombat { outcomeShown = true; scenarioOver(won: won) }
+            startEndSequenceIfDue()   // the scenario is over and every message read: the win / lose window
+            updateEndGame(now: now)
             // Auto Play (nwcGoSolo): the computer plays the human's turn once nothing waits for him
             if g.autoPlayPending, prompt == nil, !inCombat, townOpen == nil, g.levelUp == nil, g.pendingBattle == nil,
                g.pendingHeroBattle == nil, g.pendingSiege == nil, g.scripts.messages.isEmpty, cheatBox?.active != true { g.autoPlayTurn() }
@@ -1266,8 +1271,10 @@ final class Renderer: NSObject, MTKViewDelegate {
         combat?.update(now: now)
         let inTown = townOpen != nil && town != nil
         refreshShroud()
-        let mapList = inTown || inCombat ? [] : quads(at: time)
-        let uiList = (inCombat ? combatQuads(now: now) : inTown ? townScreenQuads() : uiQuads()) + abilityPopupQuads() + cheatBoxQuads()
+        // the win / lose window replaces the adventure screen (0x4c5d00 closes the frame)
+        let mapList = inTown || inCombat || endGame != nil ? [] : quads(at: time)
+        let uiList = endGame != nil ? endGameQuads(now: Date()) + finalScoreQuads()
+            : (inCombat ? combatQuads(now: now) : inTown ? townScreenQuads() : uiQuads()) + abilityPopupQuads() + cheatBoxQuads()
         // where this frame's buttons are (any quad drawn with a layers.button.* picture), for the click sound
         buttonRects = uiList.filter { buttonTextures.contains(ObjectIdentifier($0.texture)) }.map { ($0.x, $0.y, $0.w, $0.h) }
         // the adventure panel's own buttons are painted into its frame; their hotspots mark them

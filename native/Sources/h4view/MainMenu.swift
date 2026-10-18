@@ -54,6 +54,8 @@ final class MenuView: NSView {
         case epilogue(id: Int, index: Int, carry: String?)
         case load
         case setup(path: String)
+        case highScores
+        case campaignResults(id: Int, carry: String?)
     }
     /// The new-game options (layers.dialog.New_Game_Options): the players, who is human, their
     /// alignments, the difficulty, whether wandering stacks move.
@@ -80,6 +82,11 @@ final class MenuView: NSView {
     var scroll = 0, selected = 0
     var saves: [(name: String, date: Date)] = []
     var campaignCache: [Int: CampaignFile] = [:]
+    // the high scores and the campaign results (HighScoreMenu.swift)
+    var menuRules: RuleTables?
+    var highScores: HighScores?
+    var highScoreStandard = true, highScoreScroll = 0, highScoreName = "", confirmingReset = false
+    var campaignResultsScroll = 0
 
     init(args: [String]) throws {
         archivePath = args[1]
@@ -88,15 +95,21 @@ final class MenuView: NSView {
         var extra: [H4Archive] = []
         for f in ["updates.h4r", "x2.h4r", "storm.h4r"] { if let a = try? H4Archive(url: dir.appendingPathComponent(f)) { extra.append(a) } }
         for a in extra.reversed() { archive.supplement(with: a) }
-        let texts = (try? H4Archive(url: dir.appendingPathComponent("text.h4r"))).flatMap { try? RuleTables(archive: $0) }?.strings ?? [:]
+        let rules = (try? H4Archive(url: dir.appendingPathComponent("text.h4r"))).flatMap { try? RuleTables(archive: $0) }
+        let texts = rules?.strings ?? [:]
         strings = texts
+        menuRules = rules
         kit = MenuKit(archives: extra + [archive], strings: { texts })
         sound = GameSound(dataDirectory: dir)
         super.init(frame: NSRect(x: 0, y: 0, width: 1024, height: 768))
         // an epilogue / the next scenario after a won campaign scenario: "--menu --next <id> <index> [--carry file]"
         if let k = args.firstIndex(of: "--next"), k + 2 < args.count, let id = Int(args[k + 1]), let index = Int(args[k + 2]) {
             let carry = args.firstIndex(of: "--carry").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
-            screen = .epilogue(id: id, index: index, carry: carry)
+            afterScenarioWon(id: id, index: index, carry: carry)
+        }
+        // the high scores after a result made the list: "--menu --high-score <standard|campaign> <index>"
+        if let k = args.firstIndex(of: "--high-score"), k + 1 < args.count {
+            openHighScores(standard: args[k + 1] != "campaign", newEntry: k + 2 < args.count ? Int(args[k + 2]) : nil)
         }
         // the adventure System Menu's New Scenario / New Campaign: "--menu --screen <scenarios|campaigns:k>"
         if let k = args.firstIndex(of: "--screen"), k + 1 < args.count { open(args[k + 1]) }
@@ -119,6 +132,8 @@ final class MenuView: NSView {
         case "options": openOptionsMenu()
         case "settings": options = GameSettings.load()
         case "load": saves = Renderer.savedGames(); scroll = 0; selected = 0; screen = .load
+        case "highscores": openHighScores(standard: p.count < 2 || p[1] != "campaign", newEntry: nil)
+        case "campaignresults": screen = .campaignResults(id: Int(p.count > 1 ? p[1] : "1") ?? 1, carry: nil)
         case "hover": if let l = MenuKit.find(kit.file("menu.main.1024"), "\(p.count > 1 ? p[1] : "New_Game")_Released") { hover = (Float(l.x + l.width / 2), Float(l.y + l.height / 2)) }
         case "setup":
             let H = URL(fileURLWithPath: archivePath).deletingLastPathComponent().deletingLastPathComponent().path
@@ -131,7 +146,7 @@ final class MenuView: NSView {
     func tick() {
         if popup != nil { needsDisplay = true; return }
         switch screen {
-        case .briefing, .epilogue: needsDisplay = true
+        case .briefing, .epilogue, .highScores: needsDisplay = true
         default: break
         }
     }
@@ -203,6 +218,8 @@ final class MenuView: NSView {
         case .epilogue(let id, let index, _): drawBriefing(id, index, epilogue: true)
         case .load: drawLoad()
         case .setup: drawSetup()
+        case .highScores: drawHighScores()
+        case .campaignResults(let id, let carry): drawCampaignResults(id, carry)
         }
         if let p = popup {
             draw(kit.scrollMenu(p.items.map { $0.0 }, x: p.x, y: p.y, hover: hover, elapsed: snapshotting ? 10 : Date().timeIntervalSince(p.opened)))
@@ -256,7 +273,7 @@ final class MenuView: NSView {
         guard let rel = kit.layer("menu.main.1024", "Options_Released") else { return }
         let none: () -> Void = {}
         popup = Popup(items: [(text("main_menu_settings.misc", "Game Settings"), { [weak self] in self?.options = GameSettings.load() }),
-                              (text("main_menu_high_score.misc", "High Scores"), none),
+                              (text("main_menu_high_score.misc", "High Scores"), { [weak self] in self?.openHighScores(standard: true, newEntry: nil) }),
                               (text("main_menu_replay_intro.misc", "Replay Cinematic"), none),
                               (text("main_menu_replay_intro.storm_misc", "Replay Storm Cinematic"), none),
                               (text("main_menu_replay_intro.x2_misc", "Replay Winds of War Cinematic"), none),
@@ -520,7 +537,7 @@ final class MenuView: NSView {
         let voice = cut?.voice ?? ""
         if !snapshotting, !voice.isEmpty, voicePlaying != "\(id)|\(index)|\(epilogue)" {
             voicePlaying = "\(id)|\(index)|\(epilogue)"
-            _ = sound.play("Voice_Over.\(voice)")
+            _ = sound.play("Voice_Over.\(CampaignFile.voiceOver(voice))")
         }
     }
     func clickBriefing(_ id: Int, _ index: Int, carry: String?, epilogue: Bool, _ x: Float, _ y: Float) {
@@ -531,8 +548,7 @@ final class MenuView: NSView {
         if hit(l("Replay_Released"), ox, oy, x, y) { voicePlaying = nil; screenOpened = Date(); return }
         if epilogue {
             guard hit(l("Next"), ox, oy, x, y, w: 166, h: 40) else { return }
-            if let c = campaign(id), index + 1 < c.count { screen = .briefing(id: id, index: index + 1, carry: carry) }
-            else { screen = .main }   // the campaign is won
+            afterEpilogue(id: id, index: index, carry: carry)   // the next briefing, or the campaign's results
             return
         }
         for k in 1...3 where hit(l("Tab_\(k)_Pressed"), ox, oy, x, y) && ((campaign(id)?.count ?? 1) > 1 || k > 1) { briefingTab = k; return }
@@ -719,6 +735,8 @@ final class MenuView: NSView {
         case .epilogue(let id, let index, let carry): clickBriefing(id, index, carry: carry, epilogue: true, x, y)
         case .load: clickLoad(x, y, double: double)
         case .setup(let path): clickSetup(path, x, y)
+        case .highScores: clickHighScores(x, y)
+        case .campaignResults(let id, let carry): clickCampaignResults(id, carry, x, y)
         }
     }
     override func scrollWheel(with e: NSEvent) {
@@ -728,6 +746,7 @@ final class MenuView: NSView {
         needsDisplay = true
     }
     override func keyDown(with e: NSEvent) {
+        if highScoreKey(e) { return }
         if e.keyCode == 53 {   // Esc: close what is open, else back to the menu
             if popup != nil { popup = nil } else if options != nil { options = nil } else { screen = .main }
             needsDisplay = true

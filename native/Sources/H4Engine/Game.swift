@@ -1002,6 +1002,11 @@ public final class GameState {
     public func finishBattle(hero: Hero, monsterAt i: Int, _ p: MapScene.Placed, won: Bool, army: [Hero.Stack], monstersLeft: Int, experience: Int, rounds: Int) {
         guard let t = tables, i < monsters.count, let c = t.creature(monsters[i].creature) else { return }
         clearBattleEffects(hero)
+        if won {   // the score's battle counters (0x809d0c), the armies as they started
+            let m = monsters[i]
+            let foe = ([(m.creature, m.count)] + m.extra.map { ($0.creature, $0.count) }).reduce(0) { $0 + (t.creature($1.0)?.experience ?? 0) * $1.1 }
+            recordBattleWin(colour: map.humanColour, winnerValue: armyValue(hero), loserValue: foe)
+        }
         hero.army = army
         refreshMovement(hero)
         if monsters[i].bank == "script", let sb = scriptBattle {   // a script's fight: its win or lose action
@@ -1057,7 +1062,7 @@ public final class GameState {
         hero.target = nil
         pendingBattle = nil
         runContinuous()
-        checkScenario(newDay: false)
+        checkScenario()
     }
 
     /// Where a hero retreats to: the player's nearest town (none: the hero cannot retreat,
@@ -1085,7 +1090,7 @@ public final class GameState {
         pendingBattle = nil
         log.append("\(hero.name) retreats to \(towns[town].name)")
         runContinuous()
-        checkScenario(newDay: false)
+        checkScenario()
     }
 
     /// Give a hero the usual starting army: the two cheapest level-1 creatures of his alignment,
@@ -1269,7 +1274,7 @@ public final class GameState {
                 if towns[i].owned { log.append("\(towns[i].name) is yours") }
                 caravansAtCapture(town: i, newOwner: actingColour)
                 runTownEvent(i, slot: 1, previousOwner: previous, hero: hero)   // "captured"
-                checkScenario(newDay: false)
+                checkScenario()
             } else {
                 runTownEvent(i, slot: 3, hero: hero)                            // "visited"
             }
@@ -1697,46 +1702,27 @@ public final class GameState {
         runGuardChecks()
     }
 
-    /// The scenario's outcome: true won, false lost, nil still playing.
+    /// The scenario's outcome: true won, false lost, nil still playing (game +0x32c once over).
     public var outcome: Bool? = nil
-    /// Days left for the standard victory: when one side owns every owned town it must hold
-    /// them 3 days (heroes4.exe 0x4c57c6); the same count is the losers' time to take one back.
+    /// The team that won (+0x330), for the score.
+    public var winningTeam: Int? = nil
+    /// Players eliminated (player +0xa8) and made to lose by a script (+0xa9).
+    public var eliminatedPlayers: Set<Int> = []
+    public var lostPlayers: Set<Int> = []
+    /// The team holding every town (game +0xb08) and its days left (+0xaf4, 3 when it starts):
+    /// EndSequence.swift.
+    public var victoryTeam: Int? = nil
     public var victoryDays: Int? = nil
+    /// The score's counters per colour: battles won and their points (player +0x70 / +0x6c),
+    /// quests completed (+0x150).
+    public var battlesWon: [Int: Int] = [:], battlePoints: [Int: Int] = [:], questsCompleted: [Int: Int] = [:]
+    /// The campaign's carry-over this scenario started with (its earlier scenarios' scores).
+    public var carriedIn: Carryover? = nil
 
     func text(_ key: String, _ fallback: String) -> String { tables?.strings[key] ?? fallback }
 
-    /// The standard conditions: lose with no towns and no armies ("Lose all towns and
-    /// armies."); win by being the only side to own towns for 3 days.
-    public func checkScenario(newDay: Bool) {
-        guard outcome == nil else { return }
-        let me = map.humanColour, myTeam = map.teams[me]
-        func ally(_ p: Int) -> Bool { p == me || (myTeam != nil && map.teams[p] == myTeam) }
-        let held = towns.compactMap { $0.owner }
-        if heroes.isEmpty && sanctuaryGuests.isEmpty && !held.contains(where: ally) {
-            outcome = false
-            log.append(map.lossText ?? text("default_loss_condition", "Lose all towns and armies."))
-            return
-        }
-        guard map.standardVictory && scripts.standardVictoryOn else { return }
-        if !held.isEmpty && held.allSatisfy(ally) {
-            if let d = victoryDays {
-                guard newDay else { return }
-                if d <= 1 { victoryDays = 0; outcome = true; log.append(map.victoryText ?? text("default_victory_condition", "Be the only player to own towns.")); return }
-                victoryDays = d - 1
-                log.append(d - 1 == 1 ? text("victory_pending_singular.adventure_map", "Hold your towns for one more day to win the game!")
-                           : text("victory_pending_plural.adventure_map", "Hold your towns for another %days days to win the game!").replacingOccurrences(of: "%days", with: "\(d - 1)"))
-            } else {
-                victoryDays = 3
-                log.append(text("victory_initiated.adventure_map", "Victory is at hand!  Hold your towns for 3 days and your foes will be defeated!"))
-            }
-        } else if victoryDays != nil {
-            victoryDays = nil
-            log.append(text("victory_terminated.adventure_map", "Your opponent has taken steps to undermine your victory.  A town has been reclaimed!"))
-        }
-    }
-
     public func endTurn() {
-        defer { runDayEvents(); checkScenario(newDay: true) }
+        defer { runDayEvents(); checkScenario() }
         for c in aiPlayers { aiTurn(c) }   // the computer players move before the new day
         day += 1
         for h in heroes { h.maxMovement = armyMovement(h); h.movement = h.maxMovement; h.path = []; h.plan = [] }
@@ -1748,7 +1734,9 @@ public final class GameState {
         dwellingsNewDay()
         townsNewDay()    // town dwellings grow a seventh of their week every day (0x899960)
         for i in towns.indices { towns[i].builtToday = false; if towns[i].tavernDays > 0 { towns[i].tavernDays -= 1 } }
-        caravanArrivals(for: map.humanColour)   // the human's turn starts (0x4b3710 -> 0x4b1010)
+        victoryNewDay()  // 0x4e5b00: after the new day, a hold of every town loses a day
+        victoryTurnStart()   // the human's turn starts (0x4b3710): the hold's days, or its win
+        caravanArrivals(for: map.humanColour)   // (0x4b3710 -> 0x4b1010)
     }
 
     public var dateText: String { "Month \(month), Week \(week), Day \(dayOfWeek)" }

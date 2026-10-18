@@ -10,6 +10,24 @@ public struct CampaignFile {
     let slices: [Data]
     public var count: Int { slices.count }
 
+    /// A cut scene's voice key to its sound (sound.Voice_Over.<name>): the table 0x813b70 matched by
+    /// 0x816cd0; the expansions' keys are their sounds' names.
+    public static func voiceOver(_ key: String) -> String { voiceOverNames[key.lowercased()] ?? key }
+    static let voiceOverNames: [String: String] = [
+        "chaos_a_prologue": "Chaos A", "chaos_b_prologue": "Chaos B", "chaos_c_prologue": "Chaos C", "chaos_d_prologue": "Chaos D",
+        "chaos_e_prologue": "Chaos E - Intro", "chaos_epilogue": "Chaos E - Epilogue",
+        "death_a_prologue": "Death A", "death_b_prologue": "Death B", "death_c_prologue": "Death C", "death_d_prologue": "Death D",
+        "death_e_prologue": "Death E - Intro", "death_epilogue": "Death E - Epilogue",
+        "life_a_prologue": "Life A", "life_b_prologue": "Life B", "life_c_prologue": "Life C", "life_d_prologue": "Life D",
+        "life_e_prologue": "Life E - Intro", "life_epilogue": "Life E - Epilogue",
+        "might_a_prologue": "Might A", "might_b_prologue": "Might B", "might_c_prologue": "Might C",
+        "might_d_prologue": "Might D - Intro", "might_epilogue": "Might D - Epilogue",
+        "nature_a_prologue": "Nature A", "nature_b_prologue": "Nature B", "nature_c_prologue": "Nature C", "nature_d_prologue": "Nature D",
+        "nature_e_prologue": "Nature E - Intro", "nature_epilogue": "Nature E - Epilogue",
+        "order_a_prologue": "Order A", "order_b_prologue": "Order B", "order_c_prologue": "Order C", "order_d_prologue": "Order D",
+        "order_e_prologue": "Order E", "order_f_prologue": "Order F", "order_g_prologue": "Order G",
+        "order_h_prologue": "Order H - Intro", "order_epilogue": "Order H - Epilogue"]
+
     public init(data raw: Data) throws {
         var d = raw
         if d.prefix(10) != Data("H4CAMPAIGN".utf8), d.count > 16, d.dropFirst(16).prefix(10) == Data("H4CAMPAIGN".utf8) { d = d.subdata(in: (d.startIndex + 16)..<d.endIndex) }
@@ -81,6 +99,8 @@ public struct CampaignFile {
 public struct Carryover: Codable {
     public var human: [SaveGame.HeroState] = []
     public var byColour: [Int: [SaveGame.HeroState]] = [:]
+    /// Each won scenario's {score, days} so far (t_carryover_data +0xffc, 0x4e6020).
+    public var scores: [CampaignScore]? = nil
     public init() {}
 }
 

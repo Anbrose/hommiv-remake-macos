@@ -138,7 +138,7 @@ extension GameState {
         case .combat:
             switch c {
             case .winCombat, .loseCombat, .tattooedWhiteTrash, .oldManJack: return .combat(c)
-            case .winScenario, .loseScenario: endScenario(won: c == .winScenario); return .done
+            case .winScenario, .loseScenario: cheatEndScenario(won: c == .winScenario); return .done
             case .newGame: return .newGame
             default: return .nothing
             }
@@ -180,7 +180,7 @@ extension GameState {
             autoPlay.toggle()
             autoPlayPending = autoPlay   // on: the turn ends (0x4b2930(0)) and the computer plays on
             return .done
-        case .winScenario, .loseScenario: endScenario(won: c == .winScenario); return .done
+        case .winScenario, .loseScenario: cheatEndScenario(won: c == .winScenario); return .done
         case .newGame: return .newGame
         case .dumpMapImage: return .dumpMapImage
         default:
@@ -225,13 +225,9 @@ extension GameState {
         h.spellPoints = 1000
     }
 
-    /// Win / Lose Scenario (0x4c5df0, the routine a real victory or defeat runs).
-    public func endScenario(won: Bool) {
-        guard outcome == nil else { return }
-        outcome = won
-        log.append(won ? (scripts.victoryText ?? map.victoryText ?? text("default_victory_condition", "Be the only player to own towns."))
-                       : (scripts.lossText ?? map.lossText ?? text("default_loss_condition", "Lose all towns and armies.")))
-    }
+    /// Win / Lose Scenario: the scenario-over routine 0x4c5df0 for the current player's team,
+    /// the same as a real victory or defeat.
+    public func cheatEndScenario(won: Bool) { endScenario(won: won, team: team(of: actingColour)) }
 
     /// The name a victory's high score is entered under (dialog.win 0x6f526b): "Cheater"
     /// (cheater.misc) once a code was used.

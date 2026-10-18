@@ -4,11 +4,27 @@ import H4Engine
 /// The game's Bink movies (movies.h4r: bink.win_battle_intro, bink.lose_battle_loop, ...), shown
 /// in dialogs such as the combat results' Cut_Scene. There is no Bink decoder in the engine yet:
 /// a movie is decoded once with ffmpeg (if one is installed) into raw RGBA frames kept in
-/// ~/Library/Caches/h4view, then played from memory. Without ffmpeg the slot stays empty.
+/// ~/Library/Caches/h4view, then played from that file (mapped, a frame at a time); its sound
+/// track, if it has one, is decoded beside it as a .wav. Without ffmpeg the slot stays empty.
 final class Movie {
     let width: Int, height: Int, fps: Double
-    let frames: [Bitmap]
-    init(width: Int, height: Int, fps: Double, frames: [Bitmap]) { self.width = width; self.height = height; self.fps = fps; self.frames = frames }
+    let count: Int
+    /// The decoded sound track, if the movie has one.
+    let audio: URL?
+    private let pixels: Data
+    init(width: Int, height: Int, fps: Double, pixels: Data, audio: URL?) {
+        self.width = width; self.height = height; self.fps = fps; self.pixels = pixels; self.audio = audio
+        count = pixels.count / max(1, width * height * 4)
+    }
+    /// Frame i (clamped to the movie).
+    func frame(_ i: Int) -> Bitmap {
+        let size = width * height * 4, k = min(max(i, 0), count - 1)
+        var bm = Bitmap(width: width, height: height)
+        bm.pixels = [UInt8](pixels[pixels.startIndex + k * size ..< pixels.startIndex + (k + 1) * size])
+        return bm
+    }
+    /// Seconds the movie runs.
+    var duration: Double { Double(count) / fps }
 }
 
 final class Movies {
@@ -58,17 +74,21 @@ final class Movies {
             try? p.run(); p.waitUntilExit()
             try? FileManager.default.removeItem(at: bik)
         }
-        guard let pixels = try? Data(contentsOf: raw) else { return }
-        let size = w * h * 4
-        var frames: [Bitmap] = []
-        var o = 0
-        while o + size <= pixels.count {
-            var bm = Bitmap(width: w, height: h)
-            bm.pixels = [UInt8](pixels[o..<(o + size)])
-            frames.append(bm); o += size
+        // the sound track (Bink audio) once, beside the frames
+        let wav = dir.appendingPathComponent("\(name).wav"), noAudio = dir.appendingPathComponent("\(name).noaudio")
+        if !FileManager.default.fileExists(atPath: wav.path), !FileManager.default.fileExists(atPath: noAudio.path) {
+            let bik = dir.appendingPathComponent("\(name).a.bik")
+            try? data.write(to: bik)
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: ffmpeg)
+            p.arguments = ["-v", "error", "-y", "-i", bik.path, "-vn", "-acodec", "pcm_s16le", wav.path]
+            try? p.run(); p.waitUntilExit()
+            try? FileManager.default.removeItem(at: bik)
+            if !FileManager.default.fileExists(atPath: wav.path) { FileManager.default.createFile(atPath: noAudio.path, contents: nil) }
         }
-        guard !frames.isEmpty else { return }
-        let m = Movie(width: w, height: h, fps: num > 0 ? Double(num) / Double(den) : 15, frames: frames)
+        guard let pixels = try? Data(contentsOf: raw, options: .alwaysMapped), pixels.count >= w * h * 4 else { return }
+        let m = Movie(width: w, height: h, fps: num > 0 ? Double(num) / Double(den) : 15, pixels: pixels,
+                      audio: FileManager.default.fileExists(atPath: wav.path) ? wav : nil)
         queue.sync { loaded[name] = m }
     }
 }

@@ -116,6 +116,13 @@ final class AdventureUI {
         for a in overlays.reversed() { if let d = try? a.payload(name) { return d } }
         return try? archive.payload(name)
     }
+    var iconFiles: [String: LayerFile] = [:]
+    /// A picture of a layers.icons.<file> sheet, whatever the case of its name.
+    func dialogIcon(_ file: String, _ name: String) -> UILayer? {
+        if iconFiles[file] == nil, let d = payload("layers.icons.\(file).h4d") { iconFiles[file] = try? LayerFile(data: d) }
+        guard let f = iconFiles[file] else { return nil }
+        return f[name] ?? f.layers.first { $0.name.lowercased() == name.lowercased() }
+    }
     func dialog(_ name: String) -> LayerFile? {
         if dialogs[name] == nil, let d = payload("layers.dialog.\(name).h4d") { dialogs[name] = try? LayerFile(data: d) }
         return dialogs[name]

@@ -236,6 +236,10 @@ final class SeaRouteTests: XCTestCase {
         g.click(hero: a, x: 188, y: 110)
         XCTAssertFalse(a.plan.isEmpty)
         XCTAssertTrue(a.plan.allSatisfy { g.passability.isSea($0.x, $0.y) })
+        // the route's X is on the army it ends on (0x4d8250: element 0), not on the stop before it
+        let marks = g.arrows(for: a)
+        XCTAssertEqual(marks.count, a.plan.count + 1)
+        XCTAssertEqual(marks.last.map { [$0.x, $0.y] }, [188, 110]); XCTAssertTrue(marks.last?.name.hasSuffix(".dest") == true)
         g.click(hero: a, x: 188, y: 110)
         walk(g, a)
         XCTAssertEqual(a.boat, "chaos")

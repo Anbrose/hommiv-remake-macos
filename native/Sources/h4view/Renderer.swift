@@ -886,13 +886,15 @@ final class Renderer: NSObject, MTKViewDelegate {
         var (x, y) = cell(at: m)
         func underCursor(_ p: MapScene.Placed) -> Bool { self.underCursor(p, m) }
         func onFootprint(_ p: MapScene.Placed) -> Bool { self.onFootprint(p, (x, y)) }
+        // an army on the clicked cell (in front of a town's gate too): met or attacked (0x522560)
+        if g.enemyAt(x, y) != nil || g.heroes.contains(where: { $0 !== hero && $0.z == g.level && ($0.x, $0.y) == (x, y) }) { g.click(hero: hero, x: x, y: y); return }
         // a visitable object under the cursor or on the clicked cell (topmost drawn wins): walk next to it and use it
         if let p = scene.placed.last(where: { g.isVisitable($0) && (underCursor($0) || onFootprint($0)) }) {
             g.click(hero: hero, pickup: p)
             return
         }
-        // sailing, a ship to board, or an army (on land or aboard: met or attacked, 0x522560)
-        if hero.boat != nil || g.boat(at: x, y) != nil || g.enemyAt(x, y) != nil || g.heroes.contains(where: { $0 !== hero && $0.z == g.level && ($0.x, $0.y) == (x, y) }) { g.click(hero: hero, x: x, y: y); return }
+        // sailing, or a ship to board
+        if hero.boat != nil || g.boat(at: x, y) != nil { g.click(hero: hero, x: x, y: y); return }
         if !g.passability.isFree(x, y) {
             // Clicked on something you cannot stand on. If an object's picture is under the cursor
             // (a bridge deck is drawn well above its cells), go to the nearest free cell of its
@@ -1144,11 +1146,15 @@ final class Renderer: NSObject, MTKViewDelegate {
             if let g = game, g.fogEnabled {
                 if p.type == "random_monster" || p.type == "monster" || p.type == "army", let i = g.monster(for: p), !g.monsterSeen(i) { continue }
             }
-            // a wandering stack stands in the turning dashed ring (animation.highlight_ring), centred under its feet
+            // a wandering stack stands in the turning dashed ring (animation.highlight_ring): an
+            // actor's highlight subimage (0x4034b0 / 0x402940) puts the centre of its images' union
+            // box at the position + (0, 16), the cell's centre -- where the route's X lands too
             var ring: Quad? = nil
-            if let g = game, let i = g.monster(for: p), g.monsters[i].bank == nil, let r = highlightRing, !r.frames.isEmpty {
+            if let g = game, let i = g.monster(for: p), g.monsters[i].bank == nil, let r = highlightRing, let first = r.frames.first {
                 let f = r.frames[Int(t / 0.08) % r.frames.count]
-                ring = Quad(texture: texture(for: f, of: "highlight_ring"), x: p.anchorX - f.bitmap.width / 2, y: p.anchorY - 2 - f.bitmap.height / 2, w: f.bitmap.width, h: f.bitmap.height)
+                let u = r.frames.reduce(first.box) { b, g in (min(b.left, g.box.left), min(b.top, g.box.top), max(b.right, g.box.right), max(b.bottom, g.box.bottom)) }
+                let rx = p.anchorX - (u.0 + (u.2 - u.0) / 2), ry = p.anchorY + 16 - (u.1 + (u.3 - u.1) / 2)
+                ring = Quad(texture: texture(for: f, of: "highlight_ring"), x: rx + f.box.left, y: ry + f.box.top, w: f.bitmap.width, h: f.bitmap.height)
             }
             var (f, sh) = frame(of: p, at: t)
             var ax = p.anchorX, ay = p.anchorY, cell = (x: p.cellX, y: p.cellY)
@@ -1156,6 +1162,10 @@ final class Renderer: NSObject, MTKViewDelegate {
             // a wandering stack walking up to a hero: drawn where it has got to in its walk
             // sequences, sorted as an army is; one turned toward an army: its wait sequence that way
             if let g = game, let i = g.monster(for: p), let model = g.monsters[i].model {
+                // a stack is an actor (a t_army): its images are drawn from its position plus the
+                // adv_actor model offset (0x429100 / 0x429fd0), as a hero's are (heroParts)
+                let off = actorModel(model)?.offset ?? (x: 0, y: 0)
+                defer { ax += off.x; ay += off.y }
                 var seq: (state: String, facing: String, frame: Int)? = g.monsters[i].facing.map { ("wait", $0, 0) }
                 if let c = g.charge, c.monster == i, let cp = g.chargePosition {
                     let (sx, sy) = screen(cp.x, cp.y)

@@ -1763,6 +1763,12 @@ public final class GameState {
         }
         // a route to an object ends on the object itself (as in the game), though the hero stops
         // on the cell before it: the last arrow points into it and the X sits on it
+        // a route to an army (an enemy's to attack, one of ours or an ally's to meet) likewise
+        // ends on the army's cell (0x4fe990 / 0x4fee2d): 0x4d8250 places the dest arrow at the
+        // route's element 0, the army's point, not at the cell the walker stops on
+        if let e = h.attackTarget ?? h.tradeTarget, let last = plan.last, GameState.adjacent((last.x, last.y), (e.x, e.y)) {
+            plan.append((e.x, e.y))
+        }
 
         if let t = h.target, let last = plan.last ?? (h.isWalking ? nil : (x: h.x, y: h.y)), let p = scene.placed.first(where: { $0.cellX == t.x && $0.cellY == t.y && $0.name == t.name }) {
             var cell = (x: t.x, y: t.y)

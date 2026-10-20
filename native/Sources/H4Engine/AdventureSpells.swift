@@ -11,8 +11,14 @@ extension GameState {
     }
     public func castAdventureSpell(_ spell: Int, by h: Hero) {
         guard adventureSpells(h).contains(spell) else { return }
+        let cost = h.spellCost(spell)
+        h.spellPoints = spellPoints(h) - cost
+        if !applyAdventureSpell(spell, by: h) { h.spellPoints = spellPoints(h) + cost }   // nothing happened: nothing spent
+    }
+    /// The spell's effect on the map. False when it could not take effect (no ship to summon).
+    @discardableResult
+    func applyAdventureSpell(_ spell: Int, by h: Hero) -> Bool {
         let s = RuleTables.spells[spell]
-        h.spellPoints = spellPoints(h) - h.spellCost(spell)
         sounds.append("spell.\(s.keyword)")
         switch spell {
         case 181:   // Town Gate: to the nearest own town
@@ -24,7 +30,7 @@ extension GameState {
             }
         case 108: h.timedEffects["spell.pathfinding"] = 1           // no terrain penalty today
         case 183: h.timedEffects["spell.visions"] = 1; updateVision()   // Visions: vision level at least 3 today
-        case 158: if !summonBoat(h) { h.spellPoints = spellPoints(h) + h.spellCost(spell) }   // no ship: nothing spent
+        case 158: if !summonBoat(h) { return false }
         case 132: h.movement += h.maxMovement * 0.3                  // Endurance ("by 30") [G: read as 30%]
         case 70: h.armyLuck["spell.luck"] = 10                       // maximum luck until the next battle
         case 103: h.armyMorale["spell.morale"] = 10
@@ -36,6 +42,7 @@ extension GameState {
             log.append("\(s.name) has no effect here yet")
         }
         floaters.append((s.name, h.x, h.y))
+        return true
     }
 }
 
@@ -87,18 +94,34 @@ extension GameState {
 }
 
 extension GameState {
-    /// Drink a potion from the backpack on the map: its spell on the hero, free; the potion is gone.
+    /// The adventure spell a backpack potion casts (its 0x2e effect), if any.
+    public func potionSpell(_ id: Int) -> Int? {
+        guard let e = RuleTables.effects(ofArtifact: id).first(where: { $0.type == 0x2e }), e.spell >= 0, e.spell < RuleTables.spells.count else { return nil }
+        return e.spell
+    }
+    /// The backpack's potions by the spell each casts: spell -> backpack indices (the book's items, 0x86a370).
+    public func backpackPotions(_ h: Hero) -> [Int: [Int]] {
+        var out: [Int: [Int]] = [:]
+        for (k, a) in h.backpack.enumerated() where ArtifactRules.slotType(a, tables: tables) == ArtifactRules.potion {
+            if let sp = potionSpell(a) { out[sp, default: []].append(k) }
+        }
+        return out
+    }
+    /// Does the army screen show the spell book button for this hero (0x650ed0)? Spell points left
+    /// (+0x790), a worn artifact with a spell effect (0x2e), or a potion in the backpack.
+    public func showsSpellBook(_ h: Hero) -> Bool {
+        if spellPoints(h) > 0 { return true }
+        if h.equipped.contains(where: { $0.map { RuleTables.effects(ofArtifact: $0).contains { $0.type == 0x2e } } ?? false }) { return true }
+        return h.backpack.contains { ArtifactRules.slotType($0, tables: tables) == ArtifactRules.potion }
+    }
+    /// Drink a potion from the backpack on the map: its spell on the hero, free; the potion is gone
+    /// (kept when the spell could not take effect). The hero does not learn the spell.
     @discardableResult
     public func drink(_ h: Hero, backpackIndex k: Int) -> Bool {
-        guard h.backpack.indices.contains(k), let e = RuleTables.effects(ofArtifact: h.backpack[k]).first(where: { $0.type == 0x2e }),
-              e.spell >= 0, e.spell < RuleTables.spells.count, RuleTables.spells[e.spell].has("Adv") else { return false }
+        guard h.backpack.indices.contains(k), let sp = potionSpell(h.backpack[k]), RuleTables.spells[sp].has("Adv") else { return false }
         let name = artifactName(h.backpack[k])
+        guard applyAdventureSpell(sp, by: h) else { return false }
         h.backpack.remove(at: k)
-        let saved = h.spellPoints
-        h.spellPoints = spellPoints(h) + h.spellCost(e.spell)   // the potion pays for itself
-        h.spells.insert(e.spell)
-        castAdventureSpell(e.spell, by: h)
-        if e.spell != 76 { h.spellPoints = saved }
         log.append("\(h.name) drinks \(name)")
         return true
     }

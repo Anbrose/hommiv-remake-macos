@@ -14,6 +14,8 @@ final class ArmySession {
     let town: Int?
     var selected: (row: Int, k: Int) { didSet { if oldValue != selected { backpackRow = 0 } } }   // another member: the backpack from its top (0x5346b7)
     var splitMode = false
+    /// "Sort potions" (dialog +0x184, the potion button 0x538180): the backpack shows potions last.
+    var potionMode = false
     /// The artifacts (hero_artifacts_spec.md): a press on one, the one in hand, the pointer, the
     /// backpack's scrollbar step, a parchment's message at the pointer, a held right-click text.
     var artPress: ArtifactPlace?
@@ -201,7 +203,7 @@ extension Renderer {
     // MARK: input
 
     func armyScreenPress(x: Float, y: Float) {
-        guard let s = armySession, splitDialog == nil else { return }
+        guard let s = armySession, splitDialog == nil, spellBook == nil else { return }
         s.dragAt = nil
         s.artNote = nil
         s.artPress = nil
@@ -258,6 +260,12 @@ extension Renderer {
         // the split toggle (0x530e50)
         let split = s.double ? d["split_button"] : d["Single_Split_Button"]
         if inside(split, at: ox, oy, x, y) { s.splitMode.toggle(); sound?.play("miscellaneous.button"); return }
+        // sort potions on / off (0x538180)
+        if inside(d["Hide_Potions_Button"], at: ox, oy, x, y) { s.potionMode.toggle(); sound?.play("miscellaneous.button"); return }
+        // the spell book (0x5385d0)
+        if armyShowsSpellBook(armyScreenShown(s).item), inside(d["SpellBook_Released"], at: ox, oy, x, y) {
+            sound?.play("miscellaneous.button"); openArmyBook(s); return
+        }
         if s.double, s.town == nil {
             if inside(d["Move_Army_Down"], at: ox, oy, x, y) { s.x.moveAll(from: 0, to: 1); sound?.play("miscellaneous.button"); return }
             if inside(d["Move_Army_Up"], at: ox, oy, x, y) { s.x.moveAll(from: 1, to: 0); sound?.play("miscellaneous.button"); return }
@@ -288,7 +296,7 @@ extension Renderer {
         }
     }
     func armyScreenKey(_ code: UInt16, chars: String) -> Bool {
-        guard let s = armySession else { return false }
+        guard let s = armySession, spellBook == nil else { return false }   // the book over it takes the keys
         if splitDialog != nil { return splitKey(code) }
         if code == 53 || code == 36 || code == 76 { closeArmyScreen(); return true }   // Escape / Enter: done
         if chars.lowercased() == text("split_creatures_army.hot_keys", "S").lowercased() { s.splitMode.toggle(); return true }
@@ -328,10 +336,15 @@ extension Renderer {
         out += buttonAt("ok", "Released", d["ok_button"], ox, oy)
         for (n, on) in [("loose", true), ("tight", false), ("square", false)] { out += layoutImage(d, on ? "\(n)_pressed" : "\(n)_Released", ox, oy) }
         if stack != nil { out += buttonAt("dismiss", "Released", d["dismiss"], ox, oy) }
-        out += buttonAt("hide_Potion", "Show_Potions_Released", d["Hide_Potions_Button"], ox, oy)
-        if hero != nil || (creature?.spellPoints ?? 0) > 0 { out += layoutImage(d, "SpellBook_Released", ox, oy) }
+        // the potion toggle (0x538180): "show_potions" while off, "hide_potions" while sorting
+        let potionArt = s.potionMode ? "Hide_Potions" : "Show_Potions"
+        out += buttonAt("hide_Potion", potionArt + (overArmyButton(d["Hide_Potions_Button"]) ? "_Highlighted" : "_Released"), d["Hide_Potions_Button"], ox, oy)
+        // the spell book (+0x300), shown only for a member with something to cast (0x650ed0)
+        if armyShowsSpellBook(item) {
+            out += layoutImage(d, overArmyButton(d["SpellBook_Released"]) ? "SpellBook_Highlighted" : "SpellBook_Released", ox, oy)
+        }
         // the ring rows and the split toggle (pressed while split mode is on)
-        let splitState = s.splitMode ? "Pressed" : "Released"
+        let splitState = s.splitMode ? "Pressed" : overArmyButton(s.double ? d["split_button"] : d["Single_Split_Button"]) ? "Highlighted" : "Released"
         if s.double {
             out += layoutImage(d, "Double_Ring_Background", ox, oy)
             out += buttonAt("split", splitState, d["split_button"], ox, oy)
@@ -465,5 +478,73 @@ extension Renderer {
             return ui.creatureIcon(c.keyword)
         }
         return ui.portrait(keyword: h.keyword, alignment: h.alignment)
+    }
+
+    // MARK: the spell book, potion and split buttons
+
+    /// The pointer is over a layout window.
+    func overArmyButton(_ l: UILayer?) -> Bool {
+        guard let l = l else { return false }
+        let (ox, oy) = armyOrigin
+        return hoverButton((ox + l.x, oy + l.y, l.width, l.height))
+    }
+    /// The spell book button is shown for the selected member when it has something to cast
+    /// (0x650ed0): a hero with spell points left, a spell artifact worn or a potion in the backpack;
+    /// a creature whose kind has spell points.
+    func armyShowsSpellBook(_ item: ArmySlot?) -> Bool {
+        if let h = item?.hero { return game?.showsSpellBook(h) ?? false }
+        if let st = item?.stack { return (game?.tables?.creature(st.creature)?.spellPoints ?? 0) > 0 }
+        return false
+    }
+    /// The button under a point and its table.Interface army_screen item.
+    func armyButtonHelpItem(x: Float, y: Float) -> (item: String, l: UILayer)? {
+        guard let s = armySession, let d = ui?.dialog("army.layout") else { return nil }
+        let (ox, oy) = armyOrigin
+        if let l = s.double ? d["split_button"] : d["Single_Split_Button"], inside(l, at: ox, oy, x, y) { return ("split", l) }
+        if let l = d["Hide_Potions_Button"], inside(l, at: ox, oy, x, y) { return (s.potionMode ? "undo_hide_potions" : "hide_potions", l) }
+        if armyShowsSpellBook(armyScreenShown(s).item), let l = d["SpellBook_Released"], inside(l, at: ox, oy, x, y) { return ("spellbook", l) }
+        return nil
+    }
+    /// A button's balloon (0x74be10 sets the interface texts on it).
+    func armyButtonTip(x: Float, y: Float) -> String? {
+        armyButtonHelpItem(x: x, y: y).flatMap { interfaceText("army_screen", $0.item)?.balloon }
+    }
+    /// A right click on a button: its right-click text while the button is held, at the window's (centre x, bottom).
+    func armyButtonRightDown(x: Float, y: Float) -> Bool {
+        guard let b = armyButtonHelpItem(x: x, y: y), let t = interfaceText("army_screen", b.item)?.rightClick, !t.isEmpty else { return false }
+        let (ox, oy) = armyOrigin
+        heldHelp = (t, ox + b.l.x + b.l.width / 2, oy + b.l.y + b.l.height)
+        return true
+    }
+    /// The spell book button (0x5385d0): the selected member's adventure book (0x868980). A hero's
+    /// book holds its spells, its worn items' and its backpack potions' (0x86a370); a creature's
+    /// its own spells, none of them castable on the map.
+    func openArmyBook(_ s: ArmySession) {
+        guard let g = game, let item = armyScreenShown(s).item else { return }
+        if let h = item.hero {
+            let potions = g.backpackPotions(h)
+            let worn = h.artifactSpells.withSkill.union(h.artifactSpells.free)
+            let all = h.spells.union(worn).union(potions.keys)
+            var castable = Set(g.adventureSpells(h))
+            var costs = Dictionary(all.map { ($0, h.spellCost($0)) }, uniquingKeysWith: { a, _ in a })
+            for (sp, ks) in potions where RuleTables.spells[sp].has("Adv") && !ks.isEmpty && !castable.contains(sp) { castable.insert(sp); costs[sp] = 0 }
+            var sb = SpellBookState(spells: Array(all), castable: castable, points: g.spellPoints(h), combat: false, costs: costs,
+                                    items: worn.union(potions.keys))
+            sb.caster = h
+            sb.potions = potions.mapValues { $0.count }
+            spellBook = sb
+        } else if let st = item.stack, let c = g.tables?.creature(st.creature),
+                  let caster = Caster(creature: c.keyword, spellPoints: c.spellPoints, spellPower: c.spellPower) {
+            var sb = SpellBookState(spells: caster.spells, castable: [], points: c.spellPoints, combat: false)
+            for sp in caster.spells { sb.powers[sp] = bookPower(sp, caster: caster) }
+            spellBook = sb
+        }
+    }
+    /// After a spell from the army screen's book: Town Gate (181) takes the army away and closes the
+    /// screen (0x5387d4); the exe tests 101 (mire in its keyword table 0x994da8) the same way. Otherwise it stays, refreshed.
+    func armyBookCast(_ spell: Int) {
+        guard let s = armySession else { return }
+        if spell == 181 || spell == 101 { closeArmyScreen(); return }
+        refreshArtifactArmies(s)
     }
 }

@@ -135,6 +135,7 @@ extension Renderer {
             }
             return nil
         }
+        if armySession != nil, let t = armyButtonTip(x: x, y: y) { return t }   // the spell book, potion and split buttons
         if armySession != nil, let h = sessionHero, let d = ui.dialog("army.layout") {
             return heroThingTip(h, d, (AdventureUI.width - 800) / 2, (AdventureUI.height - 600) / 2, x: x, y: y)
         }

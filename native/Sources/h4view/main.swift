@@ -424,6 +424,14 @@ if let out = snapshot {
         }
     }
     if openHeroScreen, let h = game.heroes.first { renderer.openArmyScreen(h, item: ProcessInfo.processInfo.environment["H4SLOT"].flatMap { Int($0) } ?? 0) }
+    if let b = ProcessInfo.processInfo.environment["H4BACKPACK"], let h = game.heroes.first {   // snapshot: these artifacts in the first hero's backpack
+        h.backpack += b.split(separator: ",").compactMap { RuleTables.artifactIds.firstIndex(of: String($0)) }
+    }
+    for p in (ProcessInfo.processInfo.environment["H4ARMYCLICK"] ?? "").split(separator: ";") {   // snapshot: clicks "x,y;..." on the army screen (the pointer stays on the last)
+        let v = p.split(separator: ",").compactMap { Float($0) }; guard v.count == 2 else { continue }
+        renderer.pointerCanvas = (v[0], v[1])
+        if renderer.spellBook != nil { renderer.spellBookClick(x: v[0], y: v[1]) } else if armySession != nil { renderer.armyScreenClick(x: v[0], y: v[1]) }
+    }
     if let k = ProcessInfo.processInfo.environment["H4SPLIT"].flatMap({ Int($0) }), let h = game.heroes.first, k < h.army.count {   // snapshot: the split dialog
         renderer.openSplit(creature: h.army[k].creature, source: h.army[k].count, destination: 0, at: (560, 560)) { _ in }
     }

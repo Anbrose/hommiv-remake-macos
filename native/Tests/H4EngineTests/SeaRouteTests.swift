@@ -300,4 +300,62 @@ final class SeaRouteTests: XCTestCase {
         XCTAssertNil(water.backdrop)
         XCTAssertTrue(water.isOpen(50, 50)); XCTAssertFalse(water.isOpen(27, 27))
     }
+
+    /// The computer's trade (0x486f80 / 0x484da0 / 0x4857f0): the places pooled (same creatures
+    /// merged), the weakest seven into the main row, then the best swaps until none gains; nothing
+    /// changes when the main row does not gain; a heroless main row takes a hero.
+    func testComputerTradeRows() {
+        func st(_ c: String, _ n: Int) -> ArmySlot? { .stack(Hero.Stack(creature: c, count: n)) }
+        let worth: (ArmySlot) -> Float = { s in Float(s.stack?.count ?? 100) }
+        let value: ([ArmySlot?]) -> Float = { r in r.compactMap { $0 }.reduce(0) { $0 + worth($1) } }
+        let r = GameState.aiTradeRows(main: [st("a", 10)], other: [st("b", 5), st("c", 3), st("d", 2), st("e", 1), st("f", 1), st("g", 1), st("h", 1)],
+                                      value: value, worth: worth)
+        XCTAssertEqual(Set(r?.main.compactMap { $0?.stack?.creature } ?? []), ["a", "b", "c", "d", "e", "f", "g"])
+        XCTAssertEqual(r?.other.compactMap { $0?.stack?.creature }, ["h"])
+        // the same creatures merge in the pool
+        let m = GameState.aiTradeRows(main: [st("a", 10)], other: [st("a", 4)], value: value, worth: worth)
+        XCTAssertEqual(m?.main.compactMap { $0?.stack }.map { "\($0.creature)\($0.count)" }, ["a14"])
+        XCTAssertTrue(m?.other.allSatisfy { $0 == nil } == true)
+        // nothing to gain
+        XCTAssertNil(GameState.aiTradeRows(main: [st("a", 10)], other: [], value: value, worth: worth))
+        // a hero always goes to a heroless main row, even at a loss
+        let hero = Hero(actor: "hero.order_might_male", x: 0, y: 0, movement: 0)
+        let h = GameState.aiTradeRows(main: [st("a", 500)], other: [.hero(hero), st("b", 1), st("c", 1), st("d", 1), st("e", 1), st("f", 1), st("g", 1)],
+                                      value: { r in r.compactMap { $0 }.reduce(0) { $0 + ($1.hero != nil ? 1 : Float($1.stack!.count)) } }, worth: worth)
+        XCTAssertTrue(h?.main.contains { $0?.hero === hero } == true)
+    }
+
+    /// A ship sailing into an empty ship takes it (0x522583 -> 0x524610) and meets it: the army
+    /// screen with the empty army aboard; left empty, it is an empty ship again, now the player's.
+    /// Two armies of one computer player meeting trade at once (0x522a48 -> 0x486f80).
+    func testShipTakesEmptyShipAndComputerArmiesTrade() throws {
+        let g = try pirateDaughter()
+        let a = try aboard(g)
+        let cell = try XCTUnwrap(GameState.directions.map { (a.x + $0.0, a.y + $0.1) }.first { g.passability.isFreeWater($0.0, $0.1) && g.boat(at: $0.0, $0.1) == nil })
+        let foe = (g.map.humanColour + 1) % 8
+        g.boats.append(Boat(x: cell.0, y: cell.1, z: 0, alignment: "order", owner: foe)); g.passability.block(cell.0, cell.1)
+        g.click(hero: a, x: cell.0, y: cell.1)
+        XCTAssertNil(g.pendingTrade)
+        g.click(hero: a, x: cell.0, y: cell.1)
+        let t = try XCTUnwrap(g.pendingTrade)
+        XCTAssertTrue(t.hero === a)
+        XCTAssertEqual(t.other.boat, "order"); XCTAssertEqual(t.other.owner, a.owner); XCTAssertTrue(t.other.army.isEmpty)
+        XCTAssertNil(g.boat(at: cell.0, cell.1))
+        g.pendingTrade = nil
+        g.finishExchange(g.exchange(a, with: t.other))
+        let b = try XCTUnwrap(g.boat(at: cell.0, cell.1))
+        XCTAssertEqual(g.boats[b].owner, a.owner); XCTAssertEqual(g.boats[b].alignment, "order")
+        XCTAssertFalse(g.heroes.contains { $0 === t.other })
+
+        // two of the computer's armies
+        let r = landHero(g, 150, 150, owner: foe); r.army = [Hero.Stack(creature: "peasant", count: 20)]
+        let m = Hero(actor: "", x: 150, y: 151, movement: 10); m.heroless = true; m.owner = foe; m.z = 0
+        m.army = [Hero.Stack(creature: "peasant", count: 5), Hero.Stack(creature: "squire", count: 4)]
+        g.place(enemy: r); g.place(enemy: m)
+        g.armiesMet(arriving: m, reached: r)
+        XCTAssertNil(g.pendingTrade)
+        XCTAssertEqual(r.army.first { $0.creature == "peasant" }?.count, 25)
+        XCTAssertEqual(r.army.first { $0.creature == "squire" }?.count, 4)
+        XCTAssertFalse(g.enemyHeroes.contains { $0 === m })
+    }
 }

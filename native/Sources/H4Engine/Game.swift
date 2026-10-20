@@ -1469,7 +1469,9 @@ public final class GameState {
         if let e = enemyAt(x, y) { if team(of: e.owner) == team(of: hero.owner) { meet(e, with: hero) } else { attack(e, with: hero) }; return }
         if let f = heroes.first(where: { $0 !== hero && $0.z == level && standingCell($0) == (x, y) }) { meet(f, with: hero); return }
         hero.attackTarget = nil; hero.tradeTarget = nil
+        if hero.boat != nil, let b = boat(at: x, y) { sailToEmptyShip(hero, b); return }   // an empty ship: taken, then met (0x524610)
         if hero.boat != nil {   // at sea: the planner afloat sails over water; a coast cell is the landing
+            hero.boardTarget = nil
             let from = standingCell(hero)
             guard let r = passability.path(from: from, to: (x, y), afloat: true) else { return }
             if let last = hero.plan.last, last.x == x, last.y == y, hero.target == nil { hero.path = hero.plan; hero.plan = []; hero.progress = 0 }
@@ -1686,11 +1688,14 @@ public final class GameState {
             // the walk entered an object (0x544ce0): the army turns to face it, then uses it
             if let bt = h.boardTarget {
                 h.boardTarget = nil
-                if let b = boat(at: bt.0, bt.1), GameState.adjacent((h.x, h.y), bt) { face(h, toward: bt); board(h, b); continue }
+                if let b = boat(at: bt.0, bt.1), GameState.adjacent((h.x, h.y), bt) {
+                    if h.boat != nil { takeOverEmptyShip(h, b) } else { face(h, toward: bt); board(h, b) }
+                    continue
+                }
             }
             if let f = h.tradeTarget {
                 h.tradeTarget = nil
-                if GameState.adjacent((h.x, h.y), (f.x, f.y)), heroes.contains(where: { $0 === f }) || enemyHeroes.contains(where: { $0 === f }) { face(h, toward: (f.x, f.y)); pendingTrade = (h, f); continue }
+                if GameState.adjacent((h.x, h.y), (f.x, f.y)), heroes.contains(where: { $0 === f }) || enemyHeroes.contains(where: { $0 === f }) { face(h, toward: (f.x, f.y)); armiesMet(arriving: h, reached: f); continue }
             }
             if let e = h.attackTarget, GameState.adjacent((h.x, h.y), (e.x, e.y)) {
                 h.attackTarget = nil

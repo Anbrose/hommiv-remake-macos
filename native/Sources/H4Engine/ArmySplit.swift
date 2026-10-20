@@ -28,7 +28,7 @@ extension GameState {
     func meet(_ f: Hero, with hero: Hero) {
         hero.attackTarget = nil
         if GameState.adjacent((hero.x, hero.y), (f.x, f.y)) {   // two clicks, as any route (0x4f5c80)
-            if hero.tradeTarget === f, hero.plan.isEmpty { hero.tradeTarget = nil; pendingTrade = (hero, f); moveEnded(hero) }
+            if hero.tradeTarget === f, hero.plan.isEmpty { hero.tradeTarget = nil; armiesMet(arriving: hero, reached: f); moveEnded(hero) }
             else { hero.plan = []; hero.tradeTarget = f; hero.target = nil; hero.planGoal = (f.x, f.y) }
             return
         }

@@ -82,7 +82,7 @@ extension Renderer {
                 out.append(Quad(texture: tex, x: Int(px - 32 * sc), y: Int(py - 16 * sc), w: Int(64 * sc) + 1, h: Int(32 * sc) + 1))
             } }
         }
-        // two ships' decks (images with alpha) over the water (0x62af00)
+        // the decks (images with alpha) in list order, the upper ship first (0x62af00)
         for (k, bd) in [f.backdrop, f.overlay].enumerated() {
             guard let bd = bd, bd.kind == 4 else { continue }
             out.append(Quad(texture: uiTexture("battlefield|\(cs.fieldName)|\(k)", { bd.bitmap }), x: Int(Float(bd.x) * sc), y: Int(Float(bd.y) * sc), w: Int(Float(bd.width) * sc), h: Int(Float(bd.height) * sc)))

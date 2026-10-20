@@ -123,24 +123,68 @@ public struct Battlefield {
         return sx > 24 && sx < Float(backdropWidth) - 24 && sy > 40 && sy < Float(backdropHeight) - 16
     }
 
-    public init(data d: Data) throws {
-        backdrop = Battlefield.presetBackdrop(d)
+    /// A field of preset maps (ship decks, 0x62af00), in the exe's list order: one ship's
+    /// <align>.single, or the defender's <align>.upper then the attacker's <align>.lower (each
+    /// later deck drawn over the earlier, the lower ship's planks resting on the upper's deck).
+    /// No preset at all (a ship of no alignment, 0x62a050's empty handle): open water, every cell
+    /// of the field open. `bridge`: the battle's bridge flag (0x562c80's [+0xc]).
+    public init(presets: [Data], bridge: Bool = false) {
+        let images = presets.compactMap(Battlefield.presetBackdrop)
+        backdrop = images.first
+        overlay = images.count > 1 ? images[1] : nil
         terrain = 0; variant = 0
-    }
-    /// Two ships side by side (0x62af00): the attacker's lower deck and the defender's upper one,
-    /// both images with alpha (the lower at y 74), drawn over open water.
-    public init(lower: Data, upper: Data) {
-        backdrop = Battlefield.presetBackdrop(lower)
-        overlay = Battlefield.presetBackdrop(upper)
-        terrain = 0; variant = 0
+        let n = Battlefield.size
+        for x in 0..<n { for y in 0..<n where !Battlefield.inGrid(x, y) { blocked[x * n + y] = true } }
+        for d in presets { if let g = Battlefield.presetGrid(d) { applyPreset(g, bridge: bridge) } }
     }
     /// The second deck of a two-ship field, drawn over the first.
     public internal(set) var overlay: UILayer? = nil
     static func presetBackdrop(_ d: Data) -> UILayer? {
-        guard d.count > 4864 else { return nil }
-        var img = Data([1, 0])
-        img.append(d[(d.startIndex + 4864)...])
-        return (try? LayerFile(data: img))?.layers.first
+        guard d.count > presetImage else { return nil }
+        return (try? LayerFile(data: Data(d[(d.startIndex + presetImage)...])))?.layers.first
+    }
+
+    /// The battle grid's rows (0x74dcf0 with 102 cells of 16 units in a 1180x1024 scene): row x
+    /// holds the cells y in |x - 37| ..< min(x + 38, 166 - x, 102), 4838 in all.
+    public static func rowCells(_ x: Int) -> Range<Int> { abs(x - 37)..<min(x + 38, 166 - x, size) }
+    /// A cell of the battle's grid (0x562e90): not a row's first or last cell, and x + y > 54
+    /// (the top corner behind the frame); the rest are blocked.
+    public static func inGrid(_ x: Int, _ y: Int) -> Bool {
+        guard x >= 0, x < size else { return false }
+        let r = rowCells(x)
+        return y > r.lowerBound && y < r.upperBound - 1 && x + y > 54
+    }
+    /// Where a preset's image starts: the header, then the grid's 4838 bytes.
+    static let presetImage = 24 + 4838
+    /// A battlefield_preset_map's cells (0x584400): header u32 1, 1, 102, 16, 1180, 1024, then
+    /// the rows from the last to the first, each row's cells (rowCells) one byte each: 0 nothing
+    /// here, 1 deck, 2 deck (not 0x609d10's), 255 (-1) blocked. Indexed x * 102 + y; nil when
+    /// the file is not one.
+    public static func presetGrid(_ d: Data) -> [UInt8]? {
+        let r = ByteReader(d)
+        guard d.count >= presetImage, r.peekU32(at: 8) == UInt32(size), r.peekU32(at: 12) == 16 else { return nil }
+        var g = [UInt8](repeating: 0, count: size * size)
+        var p = 24
+        for x in stride(from: size - 1, through: 0, by: -1) {
+            for y in rowCells(x) { g[x * size + y] = r.byte(at: p); p += 1 }
+        }
+        return g
+    }
+    /// One preset over the field (0x562c80): -1 blocks the cell (flags 4|8), 1 and 2 open it as
+    /// deck (terrain 1, flags cleared; 1 also takes flag 0x10 off a bridge), 0 leaves it as it is
+    /// -- or blocks it on a bridge (flags 4|8|0x10). Flag 4 is what the path finder blocks (0x60ee87).
+    mutating func applyPreset(_ g: [UInt8], bridge: Bool) {
+        let n = Battlefield.size
+        for x in 0..<n { for y in Battlefield.rowCells(x) {
+            let i = x * n + y
+            switch g[i] {
+            case 255: blocked[i] = true
+            case 0: if bridge { blocked[i] = true }
+            case 1, 2: blocked[i] = false
+            default: break
+            }
+        } }
+        for x in 0..<n { for y in 0..<n where !Battlefield.inGrid(x, y) { blocked[x * n + y] = true } }
     }
 
     /// An obstacle kind from combat_header (heroes4.h4r): its combat_object sprite, footprint,

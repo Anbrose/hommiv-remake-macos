@@ -9,22 +9,24 @@ extension GameState {
     public func enemyAt(_ x: Int, _ y: Int) -> Hero? { enemyHeroes.first { $0.z == level && $0.x == x && $0.y == y } }
 
     /// The battlefield of a fight in which an army is aboard a ship (0x62bf60 -> 0x62af00, each
-    /// side's ship from its creature array, vtable+0x18 = army +0xc8, -1 on land): one ship -- an
-    /// army on the shore against one aboard, or a ship against a stack -- fights on that ship's
-    /// deck, battlefield_preset_map.<alignment>.single (0x62a050); two ships lie side by side, the
-    /// attacker's <alignment>.lower and the defender's <alignment>.upper (0x629c70 / 0x629e60).
-    /// Both armies then stand in formation 5 (0x62d987). nil: no ship, the land field of the
-    /// terrain. The exe's names run Life, Order, Death, Chaos, Nature, Might (0x628300); a ship of
-    /// no alignment has no preset there (an empty handle), the remake takes the neutral deck.
+    /// side's ship from its creature array, vtable+0x18 = army +0xc8, -1 on land): the preset maps
+    /// in the exe's list order. One ship -- an army on the shore against one aboard, or a ship
+    /// against a stack -- fights on that ship's deck, battlefield_preset_map.<alignment>.single
+    /// (0x62a050); two ships lie side by side, the defender's <alignment>.upper first, then the
+    /// attacker's <alignment>.lower drawn over it (0x629e60 / 0x629c70; 0x62b04c appends the
+    /// second handle first). Both armies then stand in formation 5 (0x62d987). The names run
+    /// Life, Order, Death, Chaos, Nature, Might (0x628300); any other alignment builds
+    /// "netural.<kind>", a name no archive holds, so that ship adds no deck (the empty handle is
+    /// skipped) -- the neutral.* files are never used; with no deck at all the field is open water.
+    /// nil: no ship, the land field of the terrain.
     public static func shipField(attacker: String?, defender: String?) -> [String]? {
-        func name(_ a: String) -> String {
-            ["life": "Life", "order": "Order", "death": "Death", "chaos": "Chaos", "nature": "Nature", "might": "Might"][a.lowercased()] ?? "neutral"
-        }
+        let names = ["life": "Life", "order": "Order", "death": "Death", "chaos": "Chaos", "nature": "Nature", "might": "Might"]
+        func deck(_ a: String?, _ kind: String) -> [String] { a.flatMap { names[$0.lowercased()] }.map { ["\($0).\(kind)"] } ?? [] }
         switch (attacker, defender) {
         case (nil, nil): return nil
-        case let (a?, d?): return ["\(name(a)).lower", "\(name(d)).upper"]
-        case let (a?, nil): return ["\(name(a)).single"]
-        case let (nil, d?): return ["\(name(d)).single"]
+        case let (a?, d?): return deck(d, "upper") + deck(a, "lower")
+        case let (a?, nil): return deck(a, "single")
+        case let (nil, d?): return deck(d, "single")
         }
     }
 

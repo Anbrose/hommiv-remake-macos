@@ -270,17 +270,11 @@ final class CombatScreen {
         guard let real = lowerIndex[name.lowercased()] else { return nil }
         return try? archive.payload(real)
     }
-    /// A ship battle's field (GameState.shipField): one deck, or the lower and upper decks of two ships.
+    /// A ship battle's field (GameState.shipField): its decks in order, none for open water.
     func shipField(_ names: [String]) -> Battlefield? {
-        if names.count == 2 {
-            guard let lo = payload("battlefield_preset_map.\(names[0]).h4d"), let up = payload("battlefield_preset_map.\(names[1]).h4d") else { return nil }
-            return Battlefield(lower: lo, upper: up)
-        }
-        return names.first.flatMap(loadField)
-    }
-    func loadField(_ name: String) -> Battlefield? {
-        if fields[name] == nil, let d = payload("battlefield_preset_map.\(name).h4d") { fields[name] = try? Battlefield(data: d) }
-        return fields[name]
+        let key = names.joined(separator: "+")
+        if fields[key] == nil { fields[key] = Battlefield(presets: names.compactMap { payload("battlefield_preset_map.\($0).h4d") }) }
+        return fields[key]
     }
     func actor(_ name: String) -> CombatActor? {
         if actors[name] == nil, let d = payload("combat_actor.\(name).h4d") { actors[name] = try? CombatActor(data: d) }

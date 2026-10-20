@@ -249,13 +249,55 @@ final class SeaRouteTests: XCTestCase {
     }
 
     /// The battlefield by the sides' ships (0x62af00): none the land, one its deck, two the
-    /// attacker's lower and the defender's upper deck.
+    /// defender's upper deck then the attacker's lower; a ship of no alignment adds no deck (0x628300
+    /// builds "netural.", which no archive holds), so alone it fights on open water.
     func testShipBattlefields() {
         XCTAssertNil(GameState.shipField(attacker: nil, defender: nil))
         XCTAssertEqual(GameState.shipField(attacker: "life", defender: nil), ["Life.single"])
         XCTAssertEqual(GameState.shipField(attacker: nil, defender: "might"), ["Might.single"])
-        XCTAssertEqual(GameState.shipField(attacker: "order", defender: "nature"), ["Order.lower", "Nature.upper"])
-        XCTAssertEqual(GameState.shipField(attacker: "generic", defender: nil), ["neutral.single"])
+        XCTAssertEqual(GameState.shipField(attacker: "order", defender: "nature"), ["Nature.upper", "Order.lower"])
+        XCTAssertEqual(GameState.shipField(attacker: "generic", defender: nil), [])
+        XCTAssertEqual(GameState.shipField(attacker: "generic", defender: "death"), ["Death.upper"])
+        XCTAssertEqual(GameState.shipField(attacker: "life", defender: "generic"), ["Life.lower"])
         XCTAssertEqual(Battle.deployment[Battle.Formation.ship.rawValue].count, 2)
+    }
+
+    /// The decks' cells (0x584400 / 0x562c80 / 0x562e90): the grid's rows are the 102-cell
+    /// battle rows clipped to the scene (4838 cells), read last row first; -1 blocks, 1 and 2 are
+    /// deck, 0 leaves the cell to the deck before; a row's ends and x + y <= 54 stay blocked.
+    func testDeckCells() throws {
+        XCTAssertEqual((0..<Battlefield.size).reduce(0) { $0 + Battlefield.rowCells($1).count }, 4838)
+        XCTAssertEqual(Battlefield.rowCells(0), 37..<38)
+        XCTAssertEqual(Battlefield.rowCells(37), 0..<75)
+        XCTAssertFalse(Battlefield.inGrid(37, 0)); XCTAssertFalse(Battlefield.inGrid(37, 74)); XCTAssertFalse(Battlefield.inGrid(27, 27))
+        XCTAssertTrue(Battlefield.inGrid(37, 73)); XCTAssertTrue(Battlefield.inGrid(50, 50))
+        let a = try StartPlacementTests().archive().0
+        func deck(_ n: String) throws -> Data { try a.payload(try XCTUnwrap(a.byName.keys.first { $0.lowercased() == "battlefield_preset_map.\(n).h4d" })) }
+        // one ship: its deck all over, the rails (top right, bottom left) blocked
+        let single = Battlefield(presets: [try deck("life.single")])
+        XCTAssertNotNil(single.backdrop); XCTAssertNil(single.overlay)
+        let g = try XCTUnwrap(Battlefield.presetGrid(try deck("life.single")))
+        XCTAssertEqual(g[50 * 102 + 50], 1)
+        XCTAssertTrue(single.isOpen(50, 50))
+        let rails = (0..<102).flatMap { x in Battlefield.rowCells(x).map { (x, $0) } }.filter { g[$0.0 * 102 + $0.1] == 255 }
+        XCTAssertFalse(rails.isEmpty)
+        XCTAssertTrue(rails.allSatisfy { !single.isOpen($0.0, $0.1) })
+        // two ships: the upper deck's hull (-1) under the lower deck (1) is the lower ship's deck;
+        // where the lower has nothing (0) the upper's cells hold
+        let up = try XCTUnwrap(Battlefield.presetGrid(try deck("life.upper"))), lo = try XCTUnwrap(Battlefield.presetGrid(try deck("life.lower")))
+        let two = Battlefield(presets: [try deck("life.upper"), try deck("life.lower")])
+        XCTAssertNotNil(two.overlay)
+        var checked = 0
+        for x in 0..<102 { for y in Battlefield.rowCells(x) where Battlefield.inGrid(x, y) {
+            let i = x * 102 + y
+            let want: Bool = lo[i] == 0 ? up[i] != 255 && up[i] != 0 || (up[i] == 0) : lo[i] != 255
+            XCTAssertEqual(two.isOpen(x, y), want && Battlefield.onField(x, y), "\(x),\(y)")
+            if lo[i] == 1 && up[i] == 255 { checked += 1 }
+        } }
+        XCTAssertGreaterThan(checked, 100)
+        // no deck at all: open water
+        let water = Battlefield(presets: [])
+        XCTAssertNil(water.backdrop)
+        XCTAssertTrue(water.isOpen(50, 50)); XCTAssertFalse(water.isOpen(27, 27))
     }
 }

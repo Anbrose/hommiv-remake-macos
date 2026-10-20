@@ -143,10 +143,13 @@ extension Passability {
         if isSea(x1, y1) { return dx == 0 || dy == 0 || (isWater(x1, y0) && isWater(x0, y1)) }
         return isFree(x1, y1) && !isWater(x1, y1)
     }
-    /// Does a step enter an object on the walker's medium (0x4fea80: afloat onto the water's
-    /// objects and stacks; on land onto the land's)?
+    /// Does a step enter an object on the walker's medium (0x4fea80)? Afloat onto the water's
+    /// objects and stacks only; on land onto the land's (and a bridge deck's) only -- a land army
+    /// steps onto open water solely into an army aboard a ship (0x4fee2d: t_army vtable+0x38,
+    /// 0x525b60 its ship +0xc8 set), which the remake boards apart (Boats.swift), never into a
+    /// sea chest, flotsam, buoy or sea stack from the shore.
     func entersOnMedium(from x0: Int, _ y0: Int, to x1: Int, _ y1: Int, afloat: Bool) -> Bool {
-        enters(from: x0, y0, to: x1, y1) && (!afloat || isSea(x1, y1))
+        enters(from: x0, y0, to: x1, y1) && afloat == isSea(x1, y1)
     }
     /// The same search started from several cells at once (each at cost 0); cells in `avoid`
     /// are never entered (a caravan's safe route, Caravans.swift).
@@ -175,7 +178,7 @@ extension Passability {
                 let nx = x + d.dx, ny = y + d.dy
                 guard nx >= 0, ny >= 0, nx < size, ny < size else { continue }
                 guard afloat ? canSail(from: x, y, to: nx, ny) || entersOnMedium(from: x, y, to: nx, ny, afloat: true)
-                             : canStep(from: x, y, to: nx, ny) || enters(from: x, y, to: nx, ny) else { continue }
+                             : canStep(from: x, y, to: nx, ny) || entersOnMedium(from: x, y, to: nx, ny, afloat: false) else { continue }
                 let j = nx * size + ny
                 if !avoid.isEmpty, avoid.contains(j) { continue }
                 let ng = c + Int32(afloat ? (d.dx != 0 && d.dy != 0 ? 150 : 100) : stepCost100(from: x, y, to: nx, ny))

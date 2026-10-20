@@ -96,4 +96,57 @@ final class SeaRouteTests: XCTestCase {
         XCTAssertEqual([h.x, h.y], [188, 110])
         XCTAssertNotNil(g.boat(at: 189, 109))
     }
+
+    /// On land a step onto open water enters only an army aboard a ship (0x4fea80 at 0x4fee2d:
+    /// t_army vtable+0x38 = its ship set, 0x525b60): a hero on the beach gets no route into the
+    /// sea cartographer (31,135) from (30,136), nor into a sea chest or flotsam moved next to a
+    /// beach; the empty ship (189,108) is still walked to and boarded.
+    func testLandArmyEntersNoWaterObjectFromTheShore() throws {
+        let g = try pirateDaughter()
+        let h = Hero(actor: "hero.life_might_male", x: 30, y: 136, movement: 30)
+        h.owner = g.map.humanColour
+        h.army = [Hero.Stack(creature: "peasant", count: 50)]
+        g.heroes = [h]
+        let p0 = g.passability
+        let carto = try XCTUnwrap(g.scene.placed.first { $0.type == "cartographer" && $0.cellX == 31 && $0.cellY == 135 })
+        XCTAssertTrue(p0.isSea(31, 135)); XCTAssertTrue(p0.enters(from: 30, 136, to: 31, 135))
+        XCTAssertNil(p0.routeInto(g.entryCells(carto), from: (30, 136)))
+        g.click(hero: h, pickup: carto)
+        XCTAssertTrue(h.plan.isEmpty); XCTAssertNil(h.target)
+
+        // a sea chest and a flotsam moved beside a beach (the first spot where the whole footprint is free open water)
+        for kind in ["sea_chest", "flotsam"] {
+            let o = try XCTUnwrap(g.scene.placed.first { $0.subtype == kind || $0.type == kind })
+            let fw = o.sprite.footprint.w, fh = o.sprite.footprint.h, ps = g.passability
+            var spot: (c: (Int, Int), beach: (Int, Int))? = nil
+            search: for x in 1..<(ps.size - fw - 1) { for y in 1..<(ps.size - fh - 1) {
+                let cells = (0..<fw).flatMap { i in (0..<fh).map { (x + i, y + $0) } }
+                guard cells.allSatisfy({ ps.isFreeWater($0.0, $0.1) && ps.isSea($0.0, $0.1) }) else { continue }
+                for e in cells { for d in Passability.directions where ps.isFree(e.0 + d.dx, e.1 + d.dy) && !ps.isWater(e.0 + d.dx, e.1 + d.dy) {
+                    spot = ((x, y), (e.0 + d.dx, e.1 + d.dy)); break search
+                } }
+            } }
+            let (c, beach) = try XCTUnwrap(spot, kind)
+            h.x = beach.0; h.y = beach.1; h.plan = []; h.target = nil
+            g.passability.free(o.cellX, o.cellY)
+            let q = g.scene.relocate(o, toX: c.0, y: c.1)
+            for i in 0..<fw { for j in 0..<fh { g.passability.block(c.0 + i, c.1 + j) } }
+            g.passability.addEntries(try XCTUnwrap(o.sprite.entryEdges), at: c.0, c.1, object: 0)
+            XCTAssertTrue(g.entryCells(q).contains { g.passability.enters(from: beach.0, beach.1, to: $0.0, $0.1) }, kind)   // the step the exe refuses
+            XCTAssertNil(g.passability.routeInto(g.entryCells(q), from: beach), kind)
+            g.click(hero: h, pickup: q)
+            g.click(hero: h, pickup: q)
+            XCTAssertTrue(h.plan.isEmpty, kind); XCTAssertNil(h.target, kind); XCTAssertFalse(h.isWalking, kind)
+            XCTAssertTrue(g.scene.placed.contains { $0.cellX == c.0 && $0.cellY == c.1 && $0.name == o.name }, kind)
+        }
+
+        // boarding: walk to the shore beside the ship, then aboard
+        h.x = 188; h.y = 110; h.plan = []; h.target = nil
+        if g.boat(at: 189, 108) == nil { g.boats.append(Boat(x: 189, y: 108, z: 0, alignment: "chaos", owner: nil)); g.passability.block(189, 108) }
+        g.click(hero: h, x: 189, y: 108)
+        XCTAssertFalse(h.plan.isEmpty)
+        g.click(hero: h, x: 189, y: 108)
+        walk(g, h)
+        XCTAssertEqual(h.boat, "chaos"); XCTAssertEqual([h.x, h.y], [189, 108])
+    }
 }

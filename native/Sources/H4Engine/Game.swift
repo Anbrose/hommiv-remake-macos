@@ -54,7 +54,7 @@ public struct Passability {
                 guard let c = cells[x * size + y] else { continue }
                 let i = x * size + y
                 switch c.type {
-                case 0, 9, 10, 11: blocked[i] = true; water[i] = c.type == 0; continue   // water (by ship) and rivers (need a bridge)
+                case 0, 9, 10, 11: blocked[i] = true; water[i] = c.type == 0 || c.type == 9; continue   // water and type 9 (by ship, as the exe's water test 0/9), other rivers (need a bridge)
                 default: cost[i] = Passability.terrainCost(c.type)
                 }
                 blocked[i] = false; terrainBlocked[i] = false

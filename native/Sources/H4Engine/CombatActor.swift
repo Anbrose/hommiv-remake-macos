@@ -124,10 +124,23 @@ public struct Battlefield {
     }
 
     public init(data d: Data) throws {
+        backdrop = Battlefield.presetBackdrop(d)
+        terrain = 0; variant = 0
+    }
+    /// Two ships side by side (0x62af00): the attacker's lower deck and the defender's upper one,
+    /// both images with alpha (the lower at y 74), drawn over open water.
+    public init(lower: Data, upper: Data) {
+        backdrop = Battlefield.presetBackdrop(lower)
+        overlay = Battlefield.presetBackdrop(upper)
+        terrain = 0; variant = 0
+    }
+    /// The second deck of a two-ship field, drawn over the first.
+    public internal(set) var overlay: UILayer? = nil
+    static func presetBackdrop(_ d: Data) -> UILayer? {
+        guard d.count > 4864 else { return nil }
         var img = Data([1, 0])
         img.append(d[(d.startIndex + 4864)...])
-        backdrop = (try? LayerFile(data: img))?.layers.first
-        terrain = 0; variant = 0
+        return (try? LayerFile(data: img))?.layers.first
     }
 
     /// An obstacle kind from combat_header (heroes4.h4r): its combat_object sprite, footprint,

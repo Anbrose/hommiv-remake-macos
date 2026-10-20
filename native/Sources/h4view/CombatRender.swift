@@ -68,7 +68,7 @@ extension Renderer {
         var out: [Quad] = []
         let sc = CombatScreen.sceneScale
         // the ground: a ship's backdrop, or the terrain's tiles
-        if let bd = f.backdrop {
+        if let bd = f.backdrop, bd.kind != 4 {
             out.append(Quad(texture: uiTexture("battlefield|\(cs.fieldName)", { bd.bitmap }), x: 0, y: 0, w: Int(Float(bd.width) * sc), h: Int(Float(bd.height) * sc)))
         } else if let patch = cs.groundPatch(terrain: f.terrain, variant: f.variant, alt: 1) {
             // the terrain's 64x32 tiles, each covering 2x2 combat cells, continuous as on the map
@@ -81,6 +81,11 @@ extension Renderer {
                 let tex = uiTexture("ground|\(f.terrain)|\(f.variant)|\(ti)", { patch.tiles[min(ti, patch.tiles.count - 1)] })
                 out.append(Quad(texture: tex, x: Int(px - 32 * sc), y: Int(py - 16 * sc), w: Int(64 * sc) + 1, h: Int(32 * sc) + 1))
             } }
+        }
+        // two ships' decks (images with alpha) over the water (0x62af00)
+        for (k, bd) in [f.backdrop, f.overlay].enumerated() {
+            guard let bd = bd, bd.kind == 4 else { continue }
+            out.append(Quad(texture: uiTexture("battlefield|\(cs.fieldName)|\(k)", { bd.bitmap }), x: Int(Float(bd.x) * sc), y: Int(Float(bd.y) * sc), w: Int(Float(bd.width) * sc), h: Int(Float(bd.height) * sc)))
         }
         // a citadel's or castle's moat: terrain cells x 50...53 down the whole field (water tiles)
         if !f.moat.isEmpty, let water = cs.groundPatch(terrain: 0, variant: 0, alt: 1) {

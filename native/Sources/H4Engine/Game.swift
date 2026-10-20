@@ -1463,8 +1463,11 @@ public final class GameState {
     public func click(hero: Hero, x: Int, y: Int) {
         if hero.isWalking { stopWalk(hero); return }
         preparePlanner(for: hero)
-        if let e = enemyAt(x, y) { attack(e, with: hero); return }
-        if let f = heroes.first(where: { $0 !== hero && $0.z == level && standingCell($0) == (x, y) }), hero.boat == nil, f.boat == nil { meet(f, with: hero); return }
+        // an army reached (0x522560, whatever the media: a land army steps onto a ship's cell,
+        // 0x4fee2d, a ship onto an army's land cell, 0x4feb64 -> t_army vtable+0x34 true): the
+        // owner's or an ally's (the same team, +0x2b8) opens the army screen, any other a battle
+        if let e = enemyAt(x, y) { if team(of: e.owner) == team(of: hero.owner) { meet(e, with: hero) } else { attack(e, with: hero) }; return }
+        if let f = heroes.first(where: { $0 !== hero && $0.z == level && standingCell($0) == (x, y) }) { meet(f, with: hero); return }
         hero.attackTarget = nil; hero.tradeTarget = nil
         if hero.boat != nil {   // at sea: the planner afloat sails over water; a coast cell is the landing
             let from = standingCell(hero)
@@ -1687,7 +1690,7 @@ public final class GameState {
             }
             if let f = h.tradeTarget {
                 h.tradeTarget = nil
-                if GameState.adjacent((h.x, h.y), (f.x, f.y)), heroes.contains(where: { $0 === f }) { face(h, toward: (f.x, f.y)); pendingTrade = (h, f); continue }
+                if GameState.adjacent((h.x, h.y), (f.x, f.y)), heroes.contains(where: { $0 === f }) || enemyHeroes.contains(where: { $0 === f }) { face(h, toward: (f.x, f.y)); pendingTrade = (h, f); continue }
             }
             if let e = h.attackTarget, GameState.adjacent((h.x, h.y), (e.x, e.y)) {
                 h.attackTarget = nil

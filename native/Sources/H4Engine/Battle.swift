@@ -198,7 +198,8 @@ public final class Battle {
     }
 
     /// Army formations (t_creature_array +0x2c, set by the army dialog's buttons).
-    public enum Formation: Int { case loose = 0, tight = 1, square = 2, siege = 3, castle = 4 }
+    /// 5: both armies of a field battle on ships' decks (0x62d987: the battle's naval flag).
+    public enum Formation: Int { case loose = 0, tight = 1, square = 2, siege = 3, castle = 4, ship = 5 }
 
     /// Deployment cells, heroes4.exe 0xaae8b8 (filled by the initializer at 0x6246f0):
     /// [formation][side][army slot] = (x, y). Formations 3 and 4 are the siege ones and 5
@@ -285,7 +286,7 @@ public final class Battle {
             case .square:
                 _ = pull(2, 3, 100); _ = pull(0, 2, 100); _ = pull(4, 2, 100); _ = pull(1, 3, 100)
                 _ = pull(5, 3, 100); _ = pull(6, 3, 100); _ = pull(0, 1, 100); _ = pull(4, 5, 100)
-            case .loose, .siege, .castle: break
+            case .loose, .siege, .castle, .ship: break
             }
         }
         siegeDeploy()

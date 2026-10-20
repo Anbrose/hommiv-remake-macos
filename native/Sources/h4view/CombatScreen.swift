@@ -270,6 +270,14 @@ final class CombatScreen {
         guard let real = lowerIndex[name.lowercased()] else { return nil }
         return try? archive.payload(real)
     }
+    /// A ship battle's field (GameState.shipField): one deck, or the lower and upper decks of two ships.
+    func shipField(_ names: [String]) -> Battlefield? {
+        if names.count == 2 {
+            guard let lo = payload("battlefield_preset_map.\(names[0]).h4d"), let up = payload("battlefield_preset_map.\(names[1]).h4d") else { return nil }
+            return Battlefield(lower: lo, upper: up)
+        }
+        return names.first.flatMap(loadField)
+    }
     func loadField(_ name: String) -> Battlefield? {
         if fields[name] == nil, let d = payload("battlefield_preset_map.\(name).h4d") { fields[name] = try? Battlefield(data: d) }
         return fields[name]
@@ -357,16 +365,18 @@ final class CombatScreen {
         return out
     }
     /// A battle between the player's army (attacking, bottom left) and an enemy hero's army.
-    func start(game g: GameState, hero h: Hero, enemy e: Hero, terrain: UInt8, variant: UInt8 = 0) {
+    func start(game g: GameState, hero h: Hero, enemy e: Hero, terrain: UInt8, variant: UInt8 = 0, ships: [String]? = nil) {
         guard let t = g.tables else { return }
         hero = h; enemy = e; placed = nil; siegeTown = nil
         let seed = g.day * 977 + h.x * 31 + h.y
         fieldName = "generated.\(terrain).\(variant).\(seed)"
         field = generatedField(terrain: terrain, variant: variant, seed: seed, tables: t)
+        if let s = ships, let f = shipField(s) { field = f; fieldName = "ships.\(s.joined(separator: "+"))" }
         Combatant.abilityKeywords = t.abilityKeywords
         guard let f = field else { return }
         strings = t.strings
-        battle = Battle(field: f, attackers: armyFighters(game: g, h, tables: t), defenders: armyFighters(game: g, e, tables: t), seed: seed, tables: t)
+        battle = Battle(field: f, attackers: armyFighters(game: g, h, tables: t), defenders: armyFighters(game: g, e, tables: t), seed: seed,
+                        formations: ships == nil ? (.loose, .loose) : (.ship, .ship), tables: t)
         attachModels()
         var pieces = (1...6).map { "combat.music.\($0)" }
         let r = seed % 6; pieces = Array(pieces[r...] + pieces[..<r])
@@ -415,12 +425,13 @@ final class CombatScreen {
     }
 
     /// Set up a battle between a hero's army and a wandering stack.
-    func start(game g: GameState, hero h: Hero, monsterAt i: Int, _ p: MapScene.Placed, terrain: UInt8, variant: UInt8 = 0) {
+    func start(game g: GameState, hero h: Hero, monsterAt i: Int, _ p: MapScene.Placed, terrain: UInt8, variant: UInt8 = 0, ships: [String]? = nil) {
         guard let t = g.tables, let c = t.creature(g.monsters[i].creature) else { return }
         hero = h; monsterIndex = i; placed = p; enemy = nil; siegeTown = nil
         let seed = g.day * 977 + h.x * 31 + h.y
         fieldName = "generated.\(terrain).\(variant).\(seed)"
         field = generatedField(terrain: terrain, variant: variant, seed: seed, tables: t)
+        if let s = ships, let f = shipField(s) { field = f; fieldName = "ships.\(s.joined(separator: "+"))" }
         Combatant.abilityKeywords = t.abilityKeywords
         guard let f = field else { return }
         // morale from each army's alignments (heroes4.exe 0x640310)
@@ -447,7 +458,7 @@ final class CombatScreen {
         for (k, st) in split.enumerated() {
             if let st = st, let d = t.creature(st.creature) { var f = fighter(d, st.count, army: monsterArmy); f.slot = k; defenders.append(f) }
         }
-        battle = Battle(field: f, attackers: attackers, defenders: defenders, seed: seed, tables: t)
+        battle = Battle(field: f, attackers: attackers, defenders: defenders, seed: seed, formations: ships == nil ? (.loose, .loose) : (.ship, .ship), tables: t)
         attachModels()
         // combat.start, then the six combat pieces in turn (heroes4.exe 0x62a720 / 0x62a830)
         var pieces = (1...6).map { "combat.music.\($0)" }

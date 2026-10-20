@@ -36,7 +36,7 @@ extension GameState {
         var best: [(x: Int, y: Int)]? = nil, bestN = Int.max
         for c in cells {
             if c == (hero.x, hero.y) { best = []; bestN = 0; continue }
-            if let p = passability.path(from: (hero.x, hero.y), to: c), p.count < bestN { best = p; bestN = p.count }
+            if let p = passability.path(from: (hero.x, hero.y), to: c, afloat: hero.boat != nil), p.count < bestN { best = p; bestN = p.count }
         }
         guard let route = best else { return }
         if hero.tradeTarget === f, !hero.plan.isEmpty { hero.path = hero.plan; hero.plan = []; hero.progress = 0; return }
@@ -121,6 +121,9 @@ public final class ArmyExchange {
     public let entry: [Float]
     /// The rows' armies' per-day movement before the exchange.
     let base: [Float]
+    /// One row's army is aboard a ship and the other's is not (army vtable+0x38 differs): a stack
+    /// changing rows pays at least all the movement it has left (0x646d40 -> 0x646e72).
+    public var crossesMedium = false
 
     public var isNewArmy: Bool { other == nil && newCell != nil }
     /// One row only (no new army possible, Single_Ring_Background).
@@ -144,8 +147,8 @@ public final class ArmyExchange {
     /// with the refund for one going back: (cost for the moving one, cost for one swapped back).
     func transfer(from: (row: Int, k: Int), to: (row: Int, k: Int)) -> (go: Float, back: Float)? {
         guard from.row != to.row else { return nil }
-        let go = credit[from.row][from.k] > 0 ? -credit[from.row][from.k] : entry[to.row]
-        let back = credit[to.row][to.k] > 0 ? -credit[to.row][to.k] : entry[from.row]
+        let go = credit[from.row][from.k] > 0 ? -credit[from.row][from.k] : crossesMedium ? max(entry[to.row], remaining(from.row, from.k)) : entry[to.row]
+        let back = credit[to.row][to.k] > 0 ? -credit[to.row][to.k] : crossesMedium ? max(entry[from.row], remaining(to.row, to.k)) : entry[from.row]
         return (go, back)
     }
 
@@ -218,9 +221,11 @@ extension GameState {
     /// The army screen of a trade: the moving army on top, the one it met below (0x522c6a).
     public func exchange(_ a: Hero, with b: Hero) -> ArmyExchange {
         let costs = transferCosts(standingCell(a), standingCell(b), level: a.z)
-        return ArmyExchange(main: a, other: b, newCell: nil, rows: [armySlots(a), armySlots(b)],
-                            spent: [[Float](repeating: a.maxMovement - a.movement, count: GameState.rowSlots), [Float](repeating: b.maxMovement - b.movement, count: GameState.rowSlots)],
-                            entry: [costs.intoA, costs.intoB], base: [a.maxMovement, b.maxMovement])
+        let x = ArmyExchange(main: a, other: b, newCell: nil, rows: [armySlots(a), armySlots(b)],
+                             spent: [[Float](repeating: a.maxMovement - a.movement, count: GameState.rowSlots), [Float](repeating: b.maxMovement - b.movement, count: GameState.rowSlots)],
+                             entry: [costs.intoA, costs.intoB], base: [a.maxMovement, b.maxMovement])
+        x.crossesMedium = (a.boat != nil) != (b.boat != nil)
+        return x
     }
 
 
@@ -242,7 +247,7 @@ extension GameState {
             h.maxMovement = armyMovement(h); h.movement = max(0, h.maxMovement - spentOf(row))
         }
         if let o = x.other {
-            let a = setArmy(x.main, x.rows[0]), b = setArmy(o, x.rows[1])
+            let ab = setArmies([(x.main, x.rows[0]), (o, x.rows[1])]), a = ab[0], b = ab[1]
             settle(a, 0); settle(b, 1)
             if let a = a { select(a); return a }
             if let b = b { select(b); return b }

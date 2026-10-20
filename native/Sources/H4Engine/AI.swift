@@ -217,7 +217,8 @@ extension GameState {
         }
         // the player's armies it is stronger than (under Auto Play, the human's armies go for the computers')
         let human = heroes.contains { $0 === h }
-        for ph in (human ? enemyHeroes : heroes) where ph.z == h.z && ph.owner != h.owner {
+        // (never an ally's: armies of one team meet, they do not fight, 0x522603)
+        for ph in (human ? enemyHeroes : heroes) where ph.z == h.z && team(of: ph.owner) != team(of: h.owner) {
             let theirs = strength(ph)
             let stand = (-1...1).flatMap { dx in (-1...1).map { (ph.x + dx, ph.y + $0) } }.filter { $0 != (ph.x, ph.y) }
             consider(4000 + theirs / 10, at: (ph.x, ph.y), stand: stand,

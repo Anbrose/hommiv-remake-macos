@@ -891,7 +891,8 @@ final class Renderer: NSObject, MTKViewDelegate {
             g.click(hero: hero, pickup: p)
             return
         }
-        if hero.boat != nil || g.boat(at: x, y) != nil { g.click(hero: hero, x: x, y: y); return }   // sailing, or a ship to board
+        // sailing, a ship to board, or an army (on land or aboard: met or attacked, 0x522560)
+        if hero.boat != nil || g.boat(at: x, y) != nil || g.enemyAt(x, y) != nil || g.heroes.contains(where: { $0 !== hero && $0.z == g.level && ($0.x, $0.y) == (x, y) }) { g.click(hero: hero, x: x, y: y); return }
         if !g.passability.isFree(x, y) {
             // Clicked on something you cannot stand on. If an object's picture is under the cursor
             // (a bridge deck is drawn well above its cells), go to the nearest free cell of its
@@ -1272,7 +1273,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         battlePoseShown = battleWaiting && !battleShown
         if battleShown, let g = game, let cs = combat, let pb = g.pendingBattle, cs.battle == nil {
             let cell = g.map.cells[g.level][pb.hero.x * g.map.size + pb.hero.y]
-            cs.start(game: g, hero: pb.hero, monsterAt: pb.monster, pb.placed, terrain: cell?.type ?? 1, variant: cell?.variant ?? 0)
+            cs.start(game: g, hero: pb.hero, monsterAt: pb.monster, pb.placed, terrain: cell?.type ?? 1, variant: cell?.variant ?? 0,
+                     ships: GameState.shipField(attacker: pb.hero.boat, defender: nil))
             g.pendingBattle = nil
         }
         if let g = game, let cs = combat, let ps = g.pendingSiege, cs.battle == nil {
@@ -1282,7 +1284,10 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
         if battleShown, let g = game, let cs = combat, let pb = g.pendingHeroBattle, cs.battle == nil {
             let cell = g.map.cells[g.level][pb.enemy.x * g.map.size + pb.enemy.y]
-            cs.start(game: g, hero: pb.hero, enemy: pb.enemy, terrain: cell?.type ?? 1, variant: cell?.variant ?? 0)
+            // the attacker's ship is the lower deck (the computer's army attacks when aiAttacking)
+            let ships = g.aiAttacking ? GameState.shipField(attacker: pb.enemy.boat, defender: pb.hero.boat) : GameState.shipField(attacker: pb.hero.boat, defender: pb.enemy.boat)
+            cs.start(game: g, hero: pb.hero, enemy: pb.enemy, terrain: cell?.type ?? 1, variant: cell?.variant ?? 0, ships: ships)
+            g.aiAttacking = false
             g.pendingHeroBattle = nil
         }
         let now = combat?.clock ?? Date()

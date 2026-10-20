@@ -149,4 +149,109 @@ final class SeaRouteTests: XCTestCase {
         walk(g, h)
         XCTAssertEqual(h.boat, "chaos"); XCTAssertEqual([h.x, h.y], [189, 108])
     }
+
+    // MARK: armies meeting across the shore (0x522560)
+
+    func landHero(_ g: GameState, _ x: Int, _ y: Int, owner: Int? = nil) -> Hero {
+        let h = Hero(actor: "hero.order_might_male", x: x, y: y, movement: 30)
+        h.owner = owner ?? g.map.humanColour; h.maxMovement = 30
+        h.army = [Hero.Stack(creature: "peasant", count: 20)]
+        return h
+    }
+
+    /// A land army routed into its own army aboard the ship (the step onto the ship's water cell,
+    /// 0x4fee2d) meets it: the army screen of the two (0x522c6a), a stack changing between the
+    /// ship and the shore paying all its movement left (0x646e72); leaders swapping rows keep the
+    /// armies' places, the ship staying with its row (army +0xc8), and a row left with nothing
+    /// aboard leaves the empty ship.
+    func testLandArmyMeetsItsArmyAboardAndTrades() throws {
+        let g = try pirateDaughter()
+        let a = try aboard(g)
+        let b = landHero(g, 188, 110)
+        g.heroes = [a, b]
+        g.click(hero: b, x: a.x, y: a.y)
+        XCTAssertTrue(b.plan.allSatisfy { !g.passability.isWater($0.x, $0.y) })
+        g.click(hero: b, x: a.x, y: a.y)
+        walk(g, b)
+        XCTAssertTrue(GameState.adjacent((b.x, b.y), (a.x, a.y)))
+        XCTAssertNil(g.pendingHeroBattle)
+        let t = try XCTUnwrap(g.pendingTrade); XCTAssertTrue(t.hero === b && t.other === a)
+        g.pendingTrade = nil
+        let shore = (b.x, b.y), ship = (a.x, a.y)
+
+        let x = g.exchange(b, with: a)
+        XCTAssertTrue(x.crossesMedium)
+        let left = b.movement
+        XCTAssertGreaterThan(left, 1)
+        // the peasants go aboard: all of the stack's movement, more than the water's entry cost
+        let k = try XCTUnwrap(x.rows[0].firstIndex { $0?.stack != nil })
+        let free = try XCTUnwrap(x.rows[1].firstIndex { $0 == nil })
+        XCTAssertNil(x.move(from: (0, k), to: (1, free)))
+        XCTAssertEqual(x.remaining(1, free), 0, accuracy: 0.001)
+        // the leaders swap rows: the ship's hero ashore, the shore's hero aboard
+        XCTAssertNil(x.move(from: (1, 0), to: (0, 0)))
+        g.finishExchange(x)
+        let ashore = try XCTUnwrap(g.heroes.first { $0 === a }), afloat = try XCTUnwrap(g.heroes.first { $0 === b })
+        XCTAssertEqual([ashore.x, ashore.y], [shore.0, shore.1]); XCTAssertNil(ashore.boat)
+        XCTAssertEqual([afloat.x, afloat.y], [ship.0, ship.1]); XCTAssertEqual(afloat.boat, "chaos")
+        XCTAssertEqual(g.heroes.count, 2)
+
+        // a fresh pair: everything ashore leaves the row aboard empty, and the empty ship stays
+        let a2 = try aboard(g), b2 = landHero(g, shore.0, shore.1)
+        g.heroes = [a2, b2]
+        let y = g.exchange(b2, with: a2)
+        for k in 0..<GameState.rowSlots where y.rows[1][k] != nil {
+            let j = try XCTUnwrap(y.rows[0].firstIndex { $0 == nil })
+            XCTAssertNil(y.move(from: (1, k), to: (0, j)))
+        }
+        g.finishExchange(y)
+        XCTAssertEqual(g.heroes.count, 1)
+        XCTAssertTrue(g.heroes[0] === b2); XCTAssertNil(b2.boat); XCTAssertEqual(b2.companions.count, 1)
+        XCTAssertEqual(g.boat(at: ship.0, ship.1).map { g.boats[$0].alignment }, "chaos")
+        XCTAssertNil(a2.boat)
+    }
+
+    /// An enemy army aboard is attacked from the shore and an enemy on the shore from the ship
+    /// (0x522560 -> 0x521780; the afloat step onto an army's land cell, 0x4feb64 -> t_army
+    /// vtable+0x34 true); the fight is on the one ship's deck.
+    func testArmiesFightAcrossTheShore() throws {
+        let g = try pirateDaughter()
+        let foe = (g.map.humanColour + 1) % 8
+        // the enemy aboard at (189,109), the hero on the beach (188,110)
+        let e = landHero(g, 189, 109, owner: foe); e.boat = "death"
+        g.place(enemy: e)
+        let b = landHero(g, 188, 110)
+        g.heroes = [b]
+        g.click(hero: b, x: 189, y: 109)
+        XCTAssertTrue(b.attackTarget === e)
+        g.click(hero: b, x: 189, y: 109)
+        XCTAssertTrue(try XCTUnwrap(g.pendingHeroBattle).enemy === e)
+        XCTAssertEqual(GameState.shipField(attacker: b.boat, defender: e.boat), ["Death.single"])
+        g.pendingHeroBattle = nil; g.removeEnemy(e)
+
+        // the ship sails up to an enemy on the beach
+        let a = try aboard(g)
+        let f = landHero(g, 188, 110, owner: foe)
+        g.place(enemy: f)
+        g.click(hero: a, x: 188, y: 110)
+        XCTAssertFalse(a.plan.isEmpty)
+        XCTAssertTrue(a.plan.allSatisfy { g.passability.isSea($0.x, $0.y) })
+        g.click(hero: a, x: 188, y: 110)
+        walk(g, a)
+        XCTAssertEqual(a.boat, "chaos")
+        XCTAssertTrue(GameState.adjacent((a.x, a.y), (188, 110)))
+        XCTAssertTrue(try XCTUnwrap(g.pendingHeroBattle).enemy === f)
+        XCTAssertEqual(GameState.shipField(attacker: a.boat, defender: f.boat), ["Chaos.single"])
+    }
+
+    /// The battlefield by the sides' ships (0x62af00): none the land, one its deck, two the
+    /// attacker's lower and the defender's upper deck.
+    func testShipBattlefields() {
+        XCTAssertNil(GameState.shipField(attacker: nil, defender: nil))
+        XCTAssertEqual(GameState.shipField(attacker: "life", defender: nil), ["Life.single"])
+        XCTAssertEqual(GameState.shipField(attacker: nil, defender: "might"), ["Might.single"])
+        XCTAssertEqual(GameState.shipField(attacker: "order", defender: "nature"), ["Order.lower", "Nature.upper"])
+        XCTAssertEqual(GameState.shipField(attacker: "generic", defender: nil), ["neutral.single"])
+        XCTAssertEqual(Battle.deployment[Battle.Formation.ship.rawValue].count, 2)
+    }
 }

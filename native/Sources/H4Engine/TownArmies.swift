@@ -125,28 +125,57 @@ extension GameState {
     /// map); creatures without a hero stay a heroless army (army_split_spec.md §6); an army left
     /// with nothing leaves the map (0x4bb0f0). Returns the army object now holding the row.
     @discardableResult
-    public func setArmy(_ h: Hero, _ row: [ArmySlot?]) -> Hero? {
-        let hs = row.compactMap { $0?.hero }, stacks = row.compactMap { $0?.stack }
-        if hs.isEmpty && stacks.isEmpty {
-            heroes.removeAll { $0 === h }
-            if let v = townVisitor, v.hero === h { townVisitor = nil }
-            return nil
+    public func setArmy(_ h: Hero, _ row: [ArmySlot?]) -> Hero? { setArmies([(h, row)])[0] }
+
+    /// Several rows back into their armies at once (a trade's two): each row takes over the place
+    /// its army had before the exchange -- cell, facing, owner, its ship (army +0xc8: whoever leads
+    /// a ship's row is aboard) and its slot in its player's list -- read before anything changes,
+    /// so leaders swapping rows keep each army where it was. An army left with nothing leaves the
+    /// map (0x4bb0f0); one aboard leaves its empty ship (a t_army with a ship and no creatures).
+    @discardableResult
+    func setArmies(_ pairs: [(Hero, [ArmySlot?])]) -> [Hero?] {
+        struct Place { let h: Hero, x: Int, y: Int, z: Int, facing: String, owner: Int, listRank: Int, movement: Float, boat: String?, enemy: Bool }
+        let places = pairs.map { p in Place(h: p.0, x: p.0.x, y: p.0.y, z: p.0.z, facing: p.0.facing, owner: p.0.owner, listRank: p.0.listRank,
+                                           movement: p.0.movement, boat: p.0.boat, enemy: enemyHeroes.contains { $0 === p.0 }) }
+        // the leads, then every old army's contents cleared before the rows go in
+        let leads: [Hero?] = zip(pairs, places).map { pair, p in
+            let hs = pair.1.compactMap { $0?.hero }, stacks = pair.1.compactMap { $0?.stack }
+            if hs.isEmpty && stacks.isEmpty { return nil }
+            let reuse = p.h.heroless && !pairs.contains { $0.1.contains { $0?.hero === p.h } }
+            return hs.first ?? (reuse ? p.h : heroless(like: p.h))
         }
-        let lead: Hero = hs.first ?? (h.heroless ? h : heroless(like: h))
-        if lead !== h {
-            lead.x = h.x; lead.y = h.y; lead.z = h.z; lead.facing = h.facing; lead.owner = h.owner
-            lead.path = []; lead.plan = []; lead.target = nil; lead.listRank = h.listRank
-            if lead.heroless || h.heroless { lead.movement = h.movement }
-            if let k = heroes.firstIndex(where: { $0 === h }) { heroes[k] = lead } else { heroes.insert(lead, at: 0) }
-            if let v = townVisitor, v.hero === h { townVisitor = (v.town, lead) }
-            h.companions = []; h.army = []; h.rowKeys = []
+        for p in places where !leads.contains(where: { $0 === p.h }) { p.h.companions = []; p.h.army = []; p.h.rowKeys = [] }
+        for ((h, row), (lead, p)) in zip(pairs, zip(leads, places)) {
+            guard let lead = lead else { continue }
+            lead.x = p.x; lead.y = p.y; lead.z = p.z; lead.facing = p.facing; lead.owner = p.owner; lead.listRank = p.listRank
+            lead.boat = p.boat
+            if lead !== h { lead.path = []; lead.plan = []; lead.target = nil }
+            if lead.heroless || h.heroless { lead.movement = p.movement }
+            lead.companions = lead.heroless ? [] : Array(row.compactMap { $0?.hero }.dropFirst())
+            lead.army = row.compactMap { $0?.stack }
+            lead.rowKeys = GameState.keys(of: row)
         }
-        lead.companions = lead.heroless ? [] : Array(hs.dropFirst())
-        lead.army = stacks
-        lead.rowKeys = GameState.keys(of: row)
-        refreshHeroless(lead)
-        lead.maxMovement = armyMovement(lead); lead.movement = min(lead.movement, lead.maxMovement)
-        return lead
+        // the lists: each lead takes its army's slot (an ally's army stays in the other players' list)
+        let slots = places.map { p in p.enemy ? enemyHeroes.firstIndex { $0 === p.h } : heroes.firstIndex { $0 === p.h } }
+        for (k, p) in places.enumerated() {
+            if let lead = leads[k], let i = slots[k] { if p.enemy { enemyHeroes[i] = lead } else { heroes[i] = lead } }
+            else if let lead = leads[k], lead !== p.h, !p.enemy { heroes.insert(lead, at: 0) }
+            if let v = townVisitor, v.hero === p.h { townVisitor = leads[k].map { (v.town, $0) } }
+        }
+        for (k, p) in places.enumerated() where leads[k] == nil {
+            if p.enemy { enemyHeroes.removeAll { $0 === p.h }; if p.z < passabilities.count { passabilities[p.z].free(p.x, p.y) } }
+            else { heroes.removeAll { $0 === p.h } }
+            if let b = p.boat {
+                boats.append(Boat(x: p.x, y: p.y, z: p.z, alignment: b, owner: p.owner))
+                if p.z < passabilities.count { passabilities[p.z].block(p.x, p.y) }
+            }
+            if !leads.contains(where: { $0 === p.h }) { p.h.boat = nil }
+        }
+        for lead in leads.compactMap({ $0 }) {
+            refreshHeroless(lead)
+            lead.maxMovement = armyMovement(lead); lead.movement = min(lead.movement, lead.maxMovement)
+        }
+        return leads
     }
 
     /// A drop of place `from` on place `to` (0x646d40): an empty place takes it (or `split` of it),

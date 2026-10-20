@@ -55,7 +55,7 @@ extension Renderer {
         for f in g.floaters { floaters.append((f.text, f.x, f.y, now)) }
         g.floaters.removeAll()
         floaters.removeAll { now.timeIntervalSince($0.since) > 3 }
-        if let t = g.pendingTrade, adventureDialog == nil { g.pendingTrade = nil; if g.heroes.contains(where: { $0 === t.other }) { openTrade(t.hero, t.other) } }
+        if let t = g.pendingTrade, adventureDialog == nil { g.pendingTrade = nil; if g.heroes.contains(where: { $0 === t.other }) || g.enemyHeroes.contains(where: { $0 === t.other }) { openTrade(t.hero, t.other) } }
         if g.chestOffer != nil, adventureDialog == nil { adventureDialog = .chest; chestChoice = true }   // gold is on at opening (0x5a2c00(0))
         // an object's yes/no question (a vein, the Tree of Knowledge) in the message box
         if let q = g.question, prompt == nil {

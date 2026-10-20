@@ -8,6 +8,26 @@ import Foundation
 extension GameState {
     public func enemyAt(_ x: Int, _ y: Int) -> Hero? { enemyHeroes.first { $0.z == level && $0.x == x && $0.y == y } }
 
+    /// The battlefield of a fight in which an army is aboard a ship (0x62bf60 -> 0x62af00, each
+    /// side's ship from its creature array, vtable+0x18 = army +0xc8, -1 on land): one ship -- an
+    /// army on the shore against one aboard, or a ship against a stack -- fights on that ship's
+    /// deck, battlefield_preset_map.<alignment>.single (0x62a050); two ships lie side by side, the
+    /// attacker's <alignment>.lower and the defender's <alignment>.upper (0x629c70 / 0x629e60).
+    /// Both armies then stand in formation 5 (0x62d987). nil: no ship, the land field of the
+    /// terrain. The exe's names run Life, Order, Death, Chaos, Nature, Might (0x628300); a ship of
+    /// no alignment has no preset there (an empty handle), the remake takes the neutral deck.
+    public static func shipField(attacker: String?, defender: String?) -> [String]? {
+        func name(_ a: String) -> String {
+            ["life": "Life", "order": "Order", "death": "Death", "chaos": "Chaos", "nature": "Nature", "might": "Might"][a.lowercased()] ?? "neutral"
+        }
+        switch (attacker, defender) {
+        case (nil, nil): return nil
+        case let (a?, d?): return ["\(name(a)).lower", "\(name(d)).upper"]
+        case let (a?, nil): return ["\(name(a)).single"]
+        case let (nil, d?): return ["\(name(d)).single"]
+        }
+    }
+
     /// An enemy army on the map: its cell blocks the way.
     public func place(enemy h: Hero) {
         enemyHeroes.append(h)
@@ -30,7 +50,7 @@ extension GameState {
         }
         let cells = (-1...1).flatMap { dx in (-1...1).map { dy in (e.x + dx, e.y + dy) } }.filter { $0 != (e.x, e.y) && isVacant($0, for: hero) }
         var best: [(x: Int, y: Int)]? = nil, bestN = Int.max
-        for c in cells { if let p = passability.path(from: (hero.x, hero.y), to: c), p.count < bestN { best = p; bestN = p.count } }
+        for c in cells { if let p = passability.path(from: (hero.x, hero.y), to: c, afloat: hero.boat != nil), p.count < bestN { best = p; bestN = p.count } }
         guard let route = best else { return }
         if hero.attackTarget === e, !hero.plan.isEmpty { hero.path = hero.plan; hero.plan = []; hero.progress = 0; return }
         hero.plan = route; hero.attackTarget = e; hero.target = nil

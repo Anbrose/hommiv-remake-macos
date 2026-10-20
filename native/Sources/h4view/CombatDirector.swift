@@ -378,6 +378,11 @@ extension CombatScreen {
             return
         case "stone_gaze":
             stone(s.target, at: t, survivors: s.left > 0)
+        case "fire resistance":
+            // a breath on a Fire Resistant stack (0x56dd29 -> 0x575960): the window 40 and its text
+            postAction(s.target, "combat_action.fire_resistance", "Fire Resistance", now: t)
+            showEffect("fire resistance", on: s.target, at: t, sound: 40)
+            return
         default: break
         }
         let sid = CombatScreen.spellId(key)

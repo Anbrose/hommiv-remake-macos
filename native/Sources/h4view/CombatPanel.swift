@@ -156,7 +156,8 @@ extension Renderer {
         let mode = cs.shownMode(cur)
         if mode != 4, let target = enemyUnder(b, x: x, y: y) {
             if mode == 3 { openCombatBook(); return }
-            if b.canShoot(cur), mode == 0 { _ = b.shoot(target.id) } else { _ = b.attack(target.id) }
+            // melee goes from the place the pointer aims at, as the pointer shows (0x626ef0 -> 0x56f600)
+            if b.canShoot(cur), mode == 0 { _ = b.shoot(target.id) } else { _ = b.attack(target.id, aim: meleeAim(target, x: x, y: y)) }
         } else if onGate(b, x: x, y: y), b.turnsToStrikeGate(cur) != nil {
             // the gate: walk next to it (where the pointer aims, 0x56f600) and strike it
             _ = b.attackGate(from: gateStrikePosition(b, cur, x: x, y: y))

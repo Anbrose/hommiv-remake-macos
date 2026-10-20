@@ -952,13 +952,16 @@ final class Renderer: NSObject, MTKViewDelegate {
         gaits[model] = g
         return g
     }
-    /// The frame of an actor sequence to draw: a walk state's own frame, else by the file's speed.
-    func actorFrame(_ s: Sprite, state: String?, frame: Int, at t: Double) -> (SpriteImage?, SpriteImage?) {
+    /// The frame of an actor sequence to draw: a walk state's own frame; else, given the
+    /// adv_actor state's speed byte, frame ((ms - start) / (1000 / speed)) % frames as heroes4.exe
+    /// times an actor's idle loop (0x41ac12 / 0x41afd0); else by the file's speed.
+    func actorFrame(_ s: Sprite, state: String?, frame: Int, at t: Double, stateSpeed: Int? = nil) -> (SpriteImage?, SpriteImage?) {
         var f = s.frames.first, sh = f.flatMap { s.shadow(for: $0) }
         let tl = s.timeline
         guard !tl.isEmpty else { return (f, sh) }
         let index: Int
         if let st = state, st != "wait" { index = min(max(0, frame), tl.count - 1) }
+        else if let sp = stateSpeed, sp > 0 { index = Int(t * 1000) / (1000 / sp) % tl.count }
         else { index = Int(t / (tl[0].frame.speed > 0 ? Double(tl[0].frame.speed) / 60.0 : 0.125)) % tl.count }
         f = tl[index].frame; sh = tl[index].shadow
         return (f, sh)
@@ -976,16 +979,25 @@ final class Renderer: NSObject, MTKViewDelegate {
         if r.sequence(actor: actorName, state: state, facing: h.facing) == nil { state = h.isWalking ? "walk" : "wait" }
         guard let entry = r.sequence(actor: actorName, state: state, facing: h.facing) else { print("hero: no sequence for \(h.actor) \(state) \(h.facing)"); return (nil, nil, nil, nil) }
         guard let s = actorSprite(entry) else { return (nil, nil, nil, nil) }
-        let (frame, shadow) = actorFrame(s, state: state, frame: h.animFrame, at: t)
+        let model = actorModel(actorName)
+        let (frame, shadow) = actorFrame(s, state: state, frame: h.animFrame, at: t, stateSpeed: model?.state(state)?.speed)
         let (px, py) = h.position
         let (sx, sy0) = screen(px, py)
         let sy = sy0 - (game.map { h.elevation(in: $0.passability) } ?? 0)   // raised on bridges
-        let ox = Int(sx) + Int(s.origin.x), oy = Int(sy) - 16 + Int(s.origin.y)   // origin is from the cell's top vertex
+        // The actor's position is the cell's top vertex (as an object's anchor); its sequence
+        // images (body and shadow) are drawn from the position plus the adv_actor model offset
+        // (0x429100 / 0x429fd0: model +4 / +8), the sequence origin being from that point.
+        let off = model?.offset ?? (x: 0, y: 0)
+        let posX = Int(sx), posY = Int(sy) - 16
+        let ox = posX + off.x + Int(s.origin.x), oy = posY + off.y + Int(s.origin.y)
         var parts: (ring: Quad?, shadow: Quad?, body: Quad?, flag: Quad?) = (nil, nil, nil, nil)
-        // the selected army's ring (adv_object.internal.selected.army, 8 turning frames) under its feet
-        if h === game?.heroes.first, let ring = arrowSprite("selected.army"), !ring.frames.isEmpty {
+        // the selected army's ring (adv_object.internal.selected.army, 8 turning frames): the
+        // highlight subimage (0x4034b0 / 0x402940) puts the centre of its images' union box at
+        // the position + (0, 16), the cell's centre, whatever the actor model's offset
+        if h === game?.heroes.first, let ring = arrowSprite("selected.army"), let first = ring.frames.first {
             let f = ring.frames[Int(t / 0.1) % ring.frames.count]
-            let rx = Int(sx) + Int(ring.origin.x), ry = Int(sy) + Int(ring.origin.y)   // (centred under the feet: the cell's bottom vertex)
+            let u = ring.frames.reduce(first.box) { b, g in (min(b.left, g.box.left), min(b.top, g.box.top), max(b.right, g.box.right), max(b.bottom, g.box.bottom)) }
+            let rx = posX - (u.0 + (u.2 - u.0) / 2), ry = posY + 16 - (u.1 + (u.3 - u.1) / 2)
             parts.ring = Quad(texture: texture(for: f, of: "selected.army"), x: rx + f.box.left, y: ry + f.box.top, w: f.bitmap.width, h: f.bitmap.height)
         }
         if let sh = shadow { parts.shadow = Quad(texture: texture(for: sh, of: entry), x: ox + sh.box.left, y: oy + sh.box.top, w: sh.bitmap.width, h: sh.bitmap.height) }
@@ -993,7 +1005,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         // the owner's flag at the actor model's flag point (an army with no owner, 6, has none)
         // (its phase keyed by the army, an empty ship's by its cell, so it does not jump as it walks)
         let id = ObjectIdentifier(h).hashValue, phase = h.actor.isEmpty ? (h.x, h.y) : (id & 0xffff, (id >> 16) & 0xffff)
-        parts.flag = actorFlag(actor: actorName, owner: h.owner, imageX: Int(sx), imageY: Int(sy) - 16, cellX: phase.0, cellY: phase.1, at: t)
+        parts.flag = actorFlag(actor: actorName, owner: h.owner, imageX: posX + off.x, imageY: posY + off.y, cellX: phase.0, cellY: phase.1, at: t)
         if ProcessInfo.processInfo.environment["H4DEBUG"] != nil {
             let out = [parts.ring, parts.shadow, parts.body, parts.flag].compactMap { $0 }
             print("hero: \(entry) at cell (\(px),\(py)) screen (\(sx),\(sy)) origin \(s.origin) frame \(frame?.name ?? "-") box \(frame.map { "\($0.box)" } ?? "-") -> \(out.map { "(\($0.x),\($0.y) \($0.w)x\($0.h))" })")

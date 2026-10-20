@@ -320,6 +320,7 @@ if let f = loadFile, let save = try? SaveGame.read(URL(fileURLWithPath: f)) {
     if let h = game.heroes.first { print("loaded: day \(game.day), hero at (\(h.x),\(h.y)), movement \(h.movement), gold \(game.resources["Gold"] ?? 0), monsters \(game.monsters.count), objects \(scene.placed.count)") }
 }
 else { game.runDayEvents() }
+if ProcessInfo.processInfo.environment["H4NOSTORY"] != nil { game.scripts.messages = [] }   // snapshot: the map without the opening story
 for m in game.scripts.messages { print("script text: \(m.prefix(100))") }
 
 // The adventure screen chrome (frame, panel, fonts); the map alone if the UI files are missing.

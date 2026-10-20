@@ -929,31 +929,83 @@ public final class Battle {
         }
     }
 
-    /// The other creatures a blow also strikes: Multiple Attack every adjacent enemy, 3-Headed
-    /// the enemies beside the target, Breath the creature right behind it (friend or foe), an
-    /// Area Attack everything around the target.
-    func extraTargets(_ a: Unit, _ t: Unit, ranged: Bool) -> [Unit] {
-        let others = units.filter { $0.alive && $0.id != a.id && $0.id != t.id }
+    /// The other creatures a blow also strikes. Ranged: Area Attack everything around the target.
+    /// Melee (0x56e680): Breath the creatures on the line from the attacker through the target
+    /// (`breathLine`); Arc Breath, Hydra Strike and 3-Headed the stacks in a sector around the
+    /// attacker (`sectorVictims`, 0x56d100).
+    /// `from`: the attacker's corner if it stood elsewhere (the hover marks for an aimed place);
+    /// `preview` leaves out what the marks leave out.
+    public func extraTargets(_ a: Unit, _ t: Unit, ranged: Bool, from: (Int, Int)? = nil, preview: Bool = false) -> [Unit] {
         if ranged {
             guard a.stats.has("area_effect") || a.stats.has("large_area_effect") else { return [] }
-            return others.filter { Battle.adjacent($0, t) }
+            return units.filter { $0.alive && $0.id != a.id && $0.id != t.id && Battle.adjacent($0, t) }
         }
-        if a.stats.has("hydra_strike") { return others.filter { side(of: $0) != side(of: a) && Battle.adjacent(a, $0) } }
-        if a.stats.has("3_headed_attack") {
-            return Array(others.filter { side(of: $0) != side(of: a) && Battle.adjacent(a, $0) && Battle.adjacent(t, $0) }
-                .sorted { Battle.distance($0, t) < Battle.distance($1, t) }.prefix(2))
-        }
-        if a.stats.has("breath_attack") || a.stats.has("arc_breath_attack") {
-            let dx = t.centre.0 - a.centre.0, dy = t.centre.1 - a.centre.1
-            let len = max(0.001, (dx * dx + dy * dy).squareRoot())
-            let reach = Float(t.size) / 2 + 1.5
-            let px = t.centre.0 + dx / len * reach, py = t.centre.1 + dy / len * reach
-            return others.filter { u in
-                !u.stats.has("fire_resistance") &&
-                px >= Float(u.x) - 0.5 && px <= Float(u.x + u.size) + 0.5 && py >= Float(u.y) - 0.5 && py <= Float(u.y + u.size) + 0.5
-            }
-        }
+        // 0x56e869: arc breath (84) first, then hydra (29) and 3-headed (0); breath (9) is separate (0x56e99a)
+        let range = Battle.meleeRange(a)
+        let at = from ?? (a.x, a.y)
+        if a.stats.has("arc_breath_attack") { return sectorVictims(a, t, at: at, range: range + 9, degrees: 135, allies: true, fireResistant: false) }
+        if a.stats.has("hydra_strike") { return sectorVictims(a, t, at: at, range: range + 2, degrees: 360, allies: false, fireResistant: true) }
+        if a.stats.has("3_headed_attack") { return sectorVictims(a, t, at: at, range: range + 2, degrees: 135, allies: false, fireResistant: true) }
+        if a.stats.has("breath_attack") { return breathLine(a, t, at: at, preview: preview) }
         return []
+    }
+
+    /// Breath (0x56d620): from the attacker's centre a line through the target's centre, stepped a
+    /// cell (16 units) at a time along its major axis with exact remainders; it ends off the field or
+    /// once it is more than 8 x size + 16 x range + 144 units from the attacker's centre. Every stack
+    /// one of its points falls on (friend or foe, not the attacker or the target, not in Sanctuary)
+    /// is struck once. With `preview` (the hover marks, 0x56e006) Fire Resistance ones are left out;
+    /// the blow itself (0x56dbf0) keeps them and they resist.
+    func breathLine(_ a: Unit, _ t: Unit, at: (Int, Int), preview: Bool = false) -> [Unit] {
+        let ax = at.0 * 16 + a.size * 8, ay = at.1 * 16 + a.size * 8
+        let dx = t.x * 16 + t.size * 8 - ax, dy = t.y * 16 + t.size * 8 - ay
+        let major = max(abs(dx), abs(dy))
+        guard major > 0 else { return [] }
+        let limit = 8 * a.size + 16 * Battle.meleeRange(a) + 144
+        let sx = dx.signum(), sy = dy.signum()
+        var px = ax, py = ay, accX = 0, accY = 0
+        var seen: Set<Int> = [a.id, t.id], out: [Unit] = []
+        while true {
+            accX += abs(dx) * 16; accY += abs(dy) * 16
+            py += sy * (accY / major); accY %= major
+            px += sx * (accX / major); accX %= major
+            let ddx = Double(px - ax), ddy = Double(py - ay)
+            guard Int((ddx * ddx + ddy * ddy).squareRoot()) <= limit else { break }
+            let cx = px >> 4, cy = py >> 4
+            guard cx >= 0, cy >= 0, cx < Battlefield.size, cy < Battlefield.size else { break }
+            guard let v = units.first(where: { $0.alive && cx >= $0.x && cx < $0.x + $0.size && cy >= $0.y && cy < $0.y + $0.size }),
+                  !seen.contains(v.id) else { continue }
+            seen.insert(v.id)
+            if preview, v.stats.has("fire_resistance") { continue }
+            if v.stats.under(137) { continue }
+            out.append(v)
+        }
+        return out
+    }
+
+    /// The sector of 0x56cda0 / 0x88aeb0: the cells (i, j) of the (size + 2 range)-square box from the
+    /// attacker's corner - range with (2i + 1 - n)^2 + (2j + 1 - n)^2 <= n^2 (a disc round its centre),
+    /// within degrees / 2 of the 8-way direction to the target (all of the disc at 360); every stack
+    /// on one (not the attacker; not an ally unless `allies`; not Fire Resistant unless
+    /// `fireResistant`; not in Sanctuary), in the box's row order.
+    func sectorVictims(_ a: Unit, _ t: Unit, at: (Int, Int), range: Int, degrees: Int, allies: Bool, fireResistant: Bool) -> [Unit] {
+        let n = a.size + 2 * range
+        let toTarget = Battle.worldAngle(dx: t.x * 16 + t.size * 8 - at.0 * 16 - a.size * 8, dy: t.y * 16 + t.size * 8 - at.1 * 16 - a.size * 8)
+        let centre = (((2 * toTarget + 45) / 90) & 7) * 45
+        var out: [Unit] = []
+        for i in 0..<n { for j in 0..<n {
+            let u = 2 * i + 1 - n, v = 2 * j + 1 - n
+            guard u * u + v * v <= n * n else { continue }
+            if degrees < 360, 2 * Battle.angleDifference(Battle.worldAngle(dx: u, dy: v), centre) > degrees { continue }
+            let x = at.0 - range + i, y = at.1 - range + j
+            guard let s = units.first(where: { $0.alive && x >= $0.x && x < $0.x + $0.size && y >= $0.y && y < $0.y + $0.size }),
+                  s.id != a.id, s.id != t.id, !out.contains(where: { $0.id == s.id }) else { continue }
+            if !allies, !hostile(a, s) { continue }
+            if !fireResistant, s.stats.has("fire_resistance") { continue }
+            if s.stats.under(137) { continue }
+            out.append(s)
+        } }
+        return out
     }
 
     /// The side a unit fights for now (a hypnotized one fights for the other).
@@ -1062,50 +1114,82 @@ public final class Battle {
         return true
     }
 
-    /// How far a unit strikes in melee: Long Weapon reaches one cell further.
-    static func reach(_ u: Unit) -> Int { u.stats.has("long_weapon") ? 1 : 0 }
+    /// How far a unit strikes in melee (0x5efa30): 2, Long Weapon 6 -- cells of gap between the footprints.
+    static func meleeRange(_ u: Unit) -> Int { u.stats.has("long_weapon") ? 6 : 2 }
     static func inReach(_ x: Int, _ y: Int, _ s: Int, _ b: Unit, reach: Int) -> Bool {
         x <= b.x + b.size + reach && b.x <= x + s + reach && y <= b.y + b.size + reach && b.y <= y + s + reach
     }
-
-    /// Turns the unit needs to strike the target (1 = now), for the melee pointer's frame; nil: no way.
-    public func turnsToAttack(_ u: Unit, _ t: Unit) -> Int? {
-        let r = Battle.reach(u)
-        if Battle.inReach(u.x, u.y, u.size, t, reach: r) { return 1 }
-        var best = Float.infinity
-        for (k, c) in explore(u, budget: moveBudget(u) * 12) where c < best {
-            let x = k / Battlefield.size, y = k % Battlefield.size
-            if Battle.inReach(x, y, u.size, t, reach: r), field.fits(x, y, size: u.size) || u.stats.has("flying"), !overlaps(x, y, u.size, except: u.id) { best = c }
-        }
-        guard best < .infinity else { return nil }
-        return max(1, Int((best / max(1, moveBudget(u))).rounded(.up)))
+    /// The distance of two footprints' centres in world units (16 a cell), rounded (0x50c7e9).
+    static func centreDistance(_ x: Int, _ y: Int, _ s: Int, _ b: Unit) -> Int {
+        let dx = Double(b.x * 16 + b.size * 8 - x * 16 - s * 8), dy = Double(b.y * 16 + b.size * 8 - y * 16 - s * 8)
+        return Int((dx * dx + dy * dy).squareRoot() + 0.5)
+    }
+    /// Can a footprint at (x, y) strike `b` in melee (the attack positions, 0x50c4e0): the centres no
+    /// further apart than 16 x range + 8 x (both sizes) + 8.
+    static func inMeleeRange(_ x: Int, _ y: Int, _ s: Int, _ b: Unit, range: Int) -> Bool {
+        centreDistance(x, y, s, b) <= 16 * range + 8 * (s + b.size) + 8
+    }
+    /// The world angle of a direction (0x51ed60): atan2(dy, -dx) in whole degrees (truncated), 0...359.
+    public static func worldAngle(dx: Int, dy: Int) -> Int {
+        (360 + Int(atan2(Double(dy), Double(-dx)) * 180 / .pi)) % 360
+    }
+    /// The difference of two angles in degrees, 0...180 (0x51eda0).
+    public static func angleDifference(_ a: Int, _ b: Int) -> Int {
+        let d = abs(a - b) % 360
+        return d > 180 ? 360 - d : d
     }
 
-    /// The reachable footprint position from which the unit can strike the target that costs least, or nil.
-    public func attackPosition(_ u: Unit, _ t: Unit) -> (Int, Int)? {
-        let r = Battle.reach(u)
-        if Battle.inReach(u.x, u.y, u.size, t, reach: r) { return (u.x, u.y) }
-        var best: (Int, Int)? = nil, bestCost = Float.infinity
-        for (k, c) in reachable(u) where c < bestCost {
-            let x = k / Battlefield.size, y = k % Battlefield.size
-            if Battle.inReach(x, y, u.size, t, reach: r) { bestCost = c; best = (x, y) }
+    /// A place a unit can strike a target from (an entry of 0x50c4e0's list): its footprint corner,
+    /// the world angle from it to the target, and the move it costs.
+    public struct AttackPlace { public let x: Int, y: Int; public let angle: Int; public let cost: Float }
+    /// Every place the unit can strike the target from, in the exe's order (0x50c4e0): where it stands
+    /// if it is in range, then the box round the target (corner x from target.x - range - size to
+    /// target.x + target.size + range, y likewise; x outer, y inner) where its path map reaches (any
+    /// number of turns) and it can stop, in range.
+    public func attackPlaces(_ u: Unit, _ t: Unit) -> [AttackPlace] {
+        let r = Battle.meleeRange(u), s = u.size
+        let tcx = t.x * 16 + t.size * 8, tcy = t.y * 16 + t.size * 8
+        func place(_ x: Int, _ y: Int, _ c: Float) -> AttackPlace {
+            AttackPlace(x: x, y: y, angle: Battle.worldAngle(dx: tcx - x * 16 - s * 8, dy: tcy - y * 16 - s * 8), cost: c)
         }
+        var out: [AttackPlace] = []
+        if Battle.inMeleeRange(u.x, u.y, s, t, range: r) { out.append(place(u.x, u.y, 0)) }
+        let far = reachable(u, budget: moveBudget(u) * 12)
+        for x in (t.x - r - s)...(t.x + t.size + r) { for y in (t.y - r - s)...(t.y + t.size + r) {
+            guard x >= 0, y >= 0, x < Battlefield.size, y < Battlefield.size, (x, y) != (u.x, u.y),
+                  let c = far[Battle.key(x, y)], Battle.inMeleeRange(x, y, s, t, range: r) else { continue }
+            out.append(place(x, y, c))
+        } }
+        return out
+    }
+    /// The place an attack aimed at `aim` degrees goes from (0x56f600): the first of `attackPlaces`
+    /// whose angle is nearest it; without an aim the cheapest (ties: the first).
+    public func attackPlace(_ u: Unit, _ t: Unit, aim: Int? = nil) -> AttackPlace? {
+        let places = attackPlaces(u, t)
+        guard let aim = aim else { return places.min { $0.cost < $1.cost } }
+        var best: AttackPlace? = nil, bestDiff = 500
+        for p in places { let d = Battle.angleDifference(aim, p.angle); if d < bestDiff { bestDiff = d; best = p } }
         return best
     }
+    /// Turns the unit needs to strike the target from that place (1 = now, 0x5714a0), for the melee
+    /// pointer's frame; nil: there is no place it can strike it from.
+    public func turnsToAttack(_ u: Unit, _ t: Unit, aim: Int? = nil) -> Int? {
+        guard let p = attackPlace(u, t, aim: aim) else { return nil }
+        return max(1, Int((p.cost / max(1, moveBudget(u))).rounded(.up)))
+    }
+    /// The reachable footprint position from which the unit can strike the target this turn, or nil.
+    public func attackPosition(_ u: Unit, _ t: Unit, aim: Int? = nil) -> (Int, Int)? {
+        guard let p = attackPlace(u, t, aim: aim), p.cost <= moveBudget(u) else { return nil }
+        return (p.x, p.y)
+    }
 
-    public func attack(_ targetId: Int) -> Bool {
-        guard finished == nil, let u = current, let t = units.first(where: { $0.id == targetId }), mayStrike(u, t) else { return false }
-        guard let pos = attackPosition(u, t) else {
-            // out of reach this turn: head for the nearest place it can be struck from
-            let r = Battle.reach(u)
-            var best: (Int, Int)? = nil, bestCost = Float.infinity
-            for (k, c) in explore(u, budget: moveBudget(u) * 12) where c < bestCost {
-                let x = k / Battlefield.size, y = k % Battlefield.size
-                if Battle.inReach(x, y, u.size, t, reach: r), u.stats.has("flying") ? field.fits(x, y, size: u.size) : true, !overlaps(x, y, u.size, except: u.id) { best = (x, y); bestCost = c }
-            }
-            guard let b = best else { return false }
-            return move(to: b.0, b.1)
-        }
+    /// Melee on a stack, from the place the pointer's aim picks (`attackPlace`); a place beyond this
+    /// turn's move: the unit walks towards it as far as it can (0x56b9b0 -> 0x56c6f0).
+    public func attack(_ targetId: Int, aim: Int? = nil) -> Bool {
+        guard finished == nil, let u = current, let t = units.first(where: { $0.id == targetId }), mayStrike(u, t),
+              let place = attackPlace(u, t, aim: aim) else { return false }
+        if place.cost > moveBudget(u) { return move(to: place.x, place.y) }
+        let pos = (place.x, place.y)
         let start = (u.x, u.y)
         beginAction(u)
         var movedPoints: Float = 0
@@ -1134,7 +1218,15 @@ public final class Battle {
     func canRetaliate(_ t: Unit, against a: Unit) -> Bool {
         t.alive && !t.disabled && !a.stats.has("no_retaliation") && !fears(t, a)
             && (!t.retaliated || t.stats.has("unlimited_retaliation"))
-            && Battle.inReach(t.x, t.y, t.size, a, reach: Battle.reach(t))
+            && Battle.reachesBack(t, a)
+    }
+    /// Whether a stack reaches its attacker to strike back (0x5f2810): always unless the attacker's
+    /// range is longer (Long Weapon); then the gap (round(distance) - 8 x both sizes + 8) >> 4 must be
+    /// within its own range.
+    static func reachesBack(_ t: Unit, _ a: Unit) -> Bool {
+        let r = meleeRange(t)
+        guard meleeRange(a) > r else { return true }
+        return (centreDistance(t.x, t.y, t.size, a) - 8 * (t.size + a.size) + 8) >> 4 <= r
     }
     /// Aura of Fear on the attacker (the panic ability likewise with Panic): no strike back unless
     /// the fear cannot touch the target or it has Death Ward (0x5f2810 / 0x5f2a47).
@@ -1172,7 +1264,16 @@ public final class Battle {
     func blow(_ u: Unit, _ t: Unit) {
         let extra = extraTargets(u, t, ranged: false)
         hit(u, t, ranged: false)
-        for e in extra where e.alive { hit(u, e, ranged: false, secondary: true) }
+        // each other stack rolls its block and its own damage (0x56dd92 / 0x56d48c -> 0x575fe0); a
+        // breath on a Fire Resistant one shows Fire Resistance and does nothing (0x56dd0f -> 0x575960, 40)
+        for e in extra where e.alive {
+            if u.stats.has("breath_attack"), !u.stats.has("arc_breath_attack"), e.stats.has("fire_resistance") {
+                events.append(.effect(unit: e.id, name: "fire resistance", damage: 0, killed: 0, left: e.stats.count))
+                continue
+            }
+            rollBlock(e)
+            hit(u, e, ranged: false, secondary: true)
+        }
     }
     /// The melee exchange (heroes4.exe 0x56ef40): without First Strike on either side both strike
     /// at once (0x56e680 with the simultaneous flag) -- the target strikes back with the stack it had
@@ -1308,7 +1409,7 @@ public final class Battle {
         }
         var costs: [(Unit, Float)] = []
         for v in cands {
-            if Battle.inReach(u.x, u.y, u.size, v, reach: Battle.reach(u)) { costs.append((v, 0)); continue }
+            if Battle.inMeleeRange(u.x, u.y, u.size, v, range: Battle.meleeRange(u)) { costs.append((v, 0)); continue }
             if let p = attackPosition(u, v) { costs.append((v, reachable(u)[Battle.key(p.0, p.1)] ?? 0)) }
         }
         if let m = costs.map({ $0.1 }).min() {

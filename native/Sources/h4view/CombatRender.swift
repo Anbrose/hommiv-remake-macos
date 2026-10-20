@@ -452,10 +452,15 @@ extension Renderer {
                 cursorFrameIndex = div >= 8 ? 3 : div >= 4 ? 2 : div >= 2 ? 1 : 0
                 return "combat.shoot"
             }
-            cursorFrameIndex = min(4, b.turnsToAttack(cur, t) ?? 1) - 1   // melee pointers too: 1, 2, 3, 4+ turns
-            let names = ["e": "east", "w": "west", "n": "north", "s": "south", "ne": "northeast", "nw": "northwest", "se": "southeast", "sw": "southwest"]
-            let dir = Battle.facing(dx: t.centre.0 - cur.centre.0, dy: t.centre.1 - cur.centre.1)
-            return "combat.melee.\(names[dir] ?? "east")"
+            // the place the pointer aims at (0x56f900 -> 0x56f600): its pointer points the way the blow
+            // goes, its frame is the turns to get there (1, 2, 3, 4+); no place: the plain pointer
+            let aim = meleeAim(t, x: x, y: y)
+            guard let place = b.attackPlace(cur, t, aim: aim), let turns = b.turnsToAttack(cur, t, aim: aim) else { combatTarget = nil; return "combat.normal" }
+            cursorFrameIndex = min(4, turns) - 1
+            // the stacks the blow also strikes from there are marked too (0x626270 -> 0x56df10 / 0x56e110)
+            let extra = b.extraTargets(cur, t, ranged: false, from: (place.x, place.y), preview: true)
+            if !extra.isEmpty { combatArea = Set(extra.map { $0.id }) }
+            return Renderer.meleeCursor(place.angle)
         }
         // the castle gate (no stack under the pointer, 0x627350 -> 0x5650d0): a melee attack on it,
         // whatever the stack's mode (a shot or a walk there fails and the default chain reaches the
@@ -464,9 +469,8 @@ extension Renderer {
         if onGate(b, x: x, y: y), let turns = b.turnsToStrikeGate(cur) {
             cursorFrameIndex = min(4, turns) - 1
             let from = gateStrikePosition(b, cur, x: x, y: y).map { (Float($0.0) + Float(cur.size) / 2, Float($0.1) + Float(cur.size) / 2) } ?? cur.centre
-            let names = ["e": "east", "w": "west", "n": "north", "s": "south", "ne": "northeast", "nw": "northwest", "se": "southeast", "sw": "southwest"]
             let g = b.gateCentre ?? from
-            return "combat.melee.\(names[Battle.facing(dx: g.0 - from.0, dy: g.1 - from.1)] ?? "east")"
+            return Renderer.meleeCursor(Battle.worldAngle(dx: Int(((g.0 - from.0) * 16).rounded()), dy: Int(((g.1 - from.1) * 16).rounded())))
         }
         // walking: the number beside the pointer is the turns needed to get there
         let c = footprintAt(cur, x: x, y: y)
@@ -515,6 +519,19 @@ extension Renderer {
     /// Where a click on the gate makes the stack strike from (0x56f600): of the places it can reach
     /// this turn next to the gate, the one whose direction from the gate's centre is nearest the
     /// pointer's (0x51eda0 angle difference); nil when none is in reach this turn.
+    /// The melee pointers by direction (cursor.combat.melee.*, loaded 0x55e1a0 into 0xaa11f8.. in this
+    /// order): world angle a picks ((4a + 45) / 90) & 15 (0x56f962) -- 16 directions from northeast clockwise.
+    static let meleeCursorNames = ["northeast", "east_northeast", "east", "east_southeast", "southeast", "south_southeast", "south", "south_southwest",
+                                   "southwest", "west_southwest", "west", "west_northwest", "northwest", "north_northwest", "north", "north_northeast"]
+    static func meleeCursor(_ angle: Int) -> String { "combat.melee." + meleeCursorNames[((4 * angle + 45) / 90) & 15] }
+    /// Where a pointer over a stack aims a melee blow (0x56f600): from the pointer to the stack's
+    /// centre on screen, the angle atan2(dy / 2, dx) in whole degrees (truncated) + 45 -- the world
+    /// angle the blow would go if dy were not halved (the exe halves it, so the side bands are wider).
+    func meleeAim(_ t: Battle.Unit, x: Float, y: Float) -> Int {
+        let c = Battlefield.screen(t.centre.0, t.centre.1)
+        let dx = Int(c.0 * CombatScreen.sceneScale) - Int(x), dy = (Int(c.1 * CombatScreen.sceneScale) - Int(y)) / 2
+        return 45 + Int(atan2(Double(dy), Double(dx)) * 180 / .pi)
+    }
     func gateStrikePosition(_ b: Battle, _ u: Battle.Unit, x: Float, y: Float) -> (Int, Int)? {
         let options = b.gateAttackPositions(u)
         guard let g = b.gateCentre, !options.isEmpty else { return nil }

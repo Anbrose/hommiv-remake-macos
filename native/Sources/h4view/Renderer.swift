@@ -777,14 +777,20 @@ final class Renderer: NSObject, MTKViewDelegate {
         // or activate / Boat_Activate to board
         let army = game.flatMap { g in g.heroes.first.flatMap { $0.z == g.level ? g.armyCursor(for: $0, at: cell(at: m).0, cell(at: m).1) : nil } }
         if let a = army { kind = a }
+        // aboard, a cell with nothing to visit: the planner afloat decides, Boat_Move over the
+        // water, Anchor for the landing (0x4f6780)
+        else if ["move", "blocked"].contains(kind), let g = game, let h = g.heroes.first, h.boat != nil, h.z == g.level {
+            let c = cell(at: m)
+            kind = g.afloatMoveCursor(for: h, at: c.0, c.1)
+        }
         // a free cell where a wandering stack would fall on the hero: the danger pointer
         // a fight there -- a stack, an enemy army, or a cell in the guard zone of a stack the player
         // sees -- the crossed swords (cursor.attack; 0x4f6780 never uses the single sword)
-        if kind == "move", let g = game, let h = g.heroes.first {
+        if ["move", "Boat_Move", "Anchor"].contains(kind), let g = game, let h = g.heroes.first {
             let c = cell(at: m)
             if g.seenThreat(to: h, at: c.0, c.1) != nil { kind = "attack" }
         }
-        guard ["move", "attack", "activate", "exchange", "Boat_Activate", "Danger_Zone"].contains(kind), let g = game, let h = g.heroes.first else { return kind }
+        guard ["move", "Boat_Move", "Anchor", "attack", "activate", "exchange", "Boat_Activate", "Danger_Zone"].contains(kind), let g = game, let h = g.heroes.first else { return kind }
         guard h.z == g.level else { return "normal" }
         // the days to get there pick the frame; an object is reached from the cell before it
         var c = cell(at: m)
@@ -985,6 +991,37 @@ final class Renderer: NSObject, MTKViewDelegate {
         return (m.offset.x - heroModelOffset.x, m.offset.y - heroModelOffset.y)
     }
 
+    /// The ring centre of the army a route ends on at `cell` (a wandering stack, an enemy army,
+    /// another of the player's armies or an ally's, an empty ship); nil when none stands there.
+    func armyRingCentre(at cell: (Int, Int), for h: Hero) -> (x: Int, y: Int)? {
+        guard let g = game else { return nil }
+        if let p = scene.placed.first(where: { $0.cellX == cell.0 && $0.cellY == cell.1 && g.monster(for: $0) != nil }),
+           let i = g.monster(for: p), g.monsters[i].bank == nil { return Renderer.stackRingCentre(p) }
+        if let e = g.enemyAt(cell.0, cell.1) { return ringCentre(army: e) }
+        if let f = g.heroes.first(where: { $0 !== h && $0.z == g.level && $0.x == cell.0 && $0.y == cell.1 }) { return ringCentre(army: f) }
+        if let b = g.boat(at: cell.0, cell.1) { let ship = Hero(actor: "", x: g.boats[b].x, y: g.boats[b].y, movement: 0); return ringCentre(army: ship) }
+        return nil
+    }
+    /// Where the selected army's ring (adv_object.internal.selected.army) is drawn from for an
+    /// army whose cell point is (x, y): centred under its feet, the cell's bottom vertex.
+    static func armyRingOrigin(_ ring: Sprite, x: Int, y: Int) -> (x: Int, y: Int) { (x + Int(ring.origin.x), y + Int(ring.origin.y)) }
+    /// The centre of an army's (selected.army) ring on the map, where a route's X on it goes.
+    func ringCentre(army h: Hero) -> (x: Int, y: Int)? {
+        guard let ring = arrowSprite("selected.army"), let b = Renderer.unionBox(ring) else { return nil }
+        let (sx, sy0) = screen(h.position.x, h.position.y)
+        let sy = sy0 - (game.map { h.elevation(in: $0.passability) } ?? 0)
+        let o = Renderer.armyRingOrigin(ring, x: Int(sx), y: Int(sy))
+        return (o.x + (b.left + b.right) / 2, o.y + (b.top + b.bottom) / 2)
+    }
+    /// The centre of a wandering stack's turning dashed ring (animation.highlight_ring), under its feet.
+    static func stackRingCentre(_ p: MapScene.Placed) -> (x: Int, y: Int) { (p.anchorX, p.anchorY - 2) }
+    /// The union of a sprite's frame boxes (nil without frames).
+    static func unionBox(_ s: Sprite) -> (left: Int, top: Int, right: Int, bottom: Int)? {
+        guard let first = s.frames.first else { return nil }
+        return s.frames.dropFirst().reduce((first.box.left, first.box.top, first.box.right, first.box.bottom)) { b, f in
+            (min(b.0, f.box.left), min(b.1, f.box.top), max(b.2, f.box.right), max(b.3, f.box.bottom)) }
+    }
+
     /// The pieces of one army at time t (heroes4.exe t_abstract_adv_actor): the selection ring
     /// under it, its shadow (drawn with the other shadows), the current sequence frame, and the
     /// owner's flag.
@@ -1014,7 +1051,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         // the selected army's ring (adv_object.internal.selected.army, 8 turning frames) under its feet
         if h === game?.heroes.first, let ring = arrowSprite("selected.army"), !ring.frames.isEmpty {
             let f = ring.frames[Int(t / 0.1) % ring.frames.count]
-            let rx = Int(sx) + Int(ring.origin.x), ry = Int(sy) + Int(ring.origin.y)   // (centred under the feet: the cell's bottom vertex)
+            let (rx, ry) = Renderer.armyRingOrigin(ring, x: Int(sx), y: Int(sy))
             parts.ring = Quad(texture: texture(for: f, of: "selected.army"), x: rx + f.box.left, y: ry + f.box.top, w: f.bitmap.width, h: f.bitmap.height)
         }
         if let sh = shadow { parts.shadow = Quad(texture: texture(for: sh, of: entry), x: ox + sh.box.left, y: oy + sh.box.top, w: sh.bitmap.width, h: sh.bitmap.height) }
@@ -1142,7 +1179,12 @@ final class Renderer: NSObject, MTKViewDelegate {
                     let raise = g.passability.elevation(a.x, a.y)
                     let (sx, sy) = screen(Float(a.x), Float(a.y))
                     let ax = Int(sx), ay = Int(sy - raise) - 16
-                    let ox = ax + Int(s.origin.x), oy = ay + Int(s.origin.y)
+                    var ox = ax + Int(s.origin.x), oy = ay + Int(s.origin.y)
+                    // the X on an army (0x4d8250 puts it on the army's own cell point, where the
+                    // game centres the army's ring): centred on the ring the remake draws it in
+                    if a.name.hasSuffix(".dest"), let c = armyRingCentre(at: (a.x, a.y), for: h), let b = Renderer.unionBox(s) {
+                        ox = c.x - (b.left + b.right) / 2; oy = c.y - (b.top + b.bottom) / 2
+                    }
                     if let sh = s.shadow(for: f) { shadows.append(Quad(texture: texture(for: sh, of: a.name), x: ox + sh.box.left, y: oy + sh.box.top, w: sh.bitmap.width, h: sh.bitmap.height)) }
                     let q = Quad(texture: texture(for: f, of: a.name), x: ox + f.box.left, y: oy + f.box.top, w: f.bitmap.width, h: f.bitmap.height)
                     pieces += columnPieces(sprite: s, quads: [q], flag: nil, anchorX: ax, anchorY: ay, cellX: a.x, cellY: a.y, seq: Renderer.arrowSeq + arrowIndex)
@@ -1164,7 +1206,8 @@ final class Renderer: NSObject, MTKViewDelegate {
             var ring: Quad? = nil
             if let g = game, let i = g.monster(for: p), g.monsters[i].bank == nil, let r = highlightRing, !r.frames.isEmpty {
                 let f = r.frames[Int(t / 0.08) % r.frames.count]
-                ring = Quad(texture: texture(for: f, of: "highlight_ring"), x: p.anchorX - f.bitmap.width / 2, y: p.anchorY - 2 - f.bitmap.height / 2, w: f.bitmap.width, h: f.bitmap.height)
+                let c = Renderer.stackRingCentre(p)
+                ring = Quad(texture: texture(for: f, of: "highlight_ring"), x: c.x - f.bitmap.width / 2, y: c.y - f.bitmap.height / 2, w: f.bitmap.width, h: f.bitmap.height)
             }
             var (f, sh) = frame(of: p, at: t)
             var ax = p.anchorX, ay = p.anchorY, cell = (x: p.cellX, y: p.cellY)

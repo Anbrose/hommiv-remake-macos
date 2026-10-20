@@ -20,4 +20,14 @@ extension GameState {
         }
         return nil
     }
+
+    /// The pointer over a cell no army stands on for an army aboard a ship (0x4f6780, the
+    /// adventure window's cursors of 0x4f4d2f..0x4f4db3): with a route afloat there (the same
+    /// planner the click uses, 0x4f7300) "Anchor" (+0xf4) when the route ends on land (0x405350:
+    /// the landing) and "Boat_Move" (+0x134) on the water; no route: "blocked" (+0x124).
+    public func afloatMoveCursor(for h: Hero, at x: Int, _ y: Int) -> String {
+        preparePlanner(for: h)
+        guard h.boat != nil, passability.path(from: standingCell(h), to: (x, y), afloat: true) != nil else { return "blocked" }
+        return passability.isSea(x, y) ? "Boat_Move" : "Anchor"
+    }
 }

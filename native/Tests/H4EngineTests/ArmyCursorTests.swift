@@ -38,4 +38,29 @@ final class ArmyCursorTests: XCTestCase {
         g.enemyHeroes = [e]
         XCTAssertEqual(g.armyCursor(for: shore, at: 190, 107), "attack")
     }
+
+    /// Aboard, the pointer over open water the ship can sail to is Boat_Move (not blocked: the
+    /// sea is never free to walk), over the beach it can land on Anchor (0x4f6780), and the
+    /// click there plans the same route; a cell no route afloat reaches is blocked.
+    func testAfloatMoveCursorsFollowThePlannerAfloat() throws {
+        let s = SeaRouteTests()
+        let g = try s.pirateDaughter()
+        let a = try s.aboard(g)
+        let sea = try XCTUnwrap((1...4).lazy.flatMap { r in (-r...r).lazy.flatMap { dx in (-r...r).lazy.map { dy in (a.x + dx, a.y + dy) } } }
+            .first { c in c != (a.x, a.y) && g.passability.isSea(c.0, c.1) && g.boat(at: c.0, c.1) == nil && g.passability.path(from: (a.x, a.y), to: c, afloat: true) != nil })
+        XCTAssertFalse(g.passability.isFree(sea.0, sea.1))
+        XCTAssertNil(g.armyCursor(for: a, at: sea.0, sea.1))
+        XCTAssertEqual(g.afloatMoveCursor(for: a, at: sea.0, sea.1), "Boat_Move")
+        XCTAssertNotNil(g.daysToReach(a, sea))
+        g.click(hero: a, x: sea.0, y: sea.1)
+        XCTAssertEqual(a.plan.last.map { [$0.x, $0.y] }, [sea.0, sea.1])
+        // the beach the army boarded from: the landing
+        XCTAssertEqual(g.afloatMoveCursor(for: a, at: 188, 110), "Anchor")
+        // a cell far inland: no route afloat
+        let inland = try XCTUnwrap((0..<g.map.size).lazy.flatMap { x in (0..<g.map.size).lazy.map { y in (x, y) } }
+            .first { c in !g.passability.isWater(c.0, c.1) && g.passability.isFree(c.0, c.1)
+                && (-1...1).allSatisfy { dx in (-1...1).allSatisfy { dy in !g.passability.isWater(c.0 + dx, c.1 + dy) } }
+                && g.passability.path(from: (a.x, a.y), to: c, afloat: true) == nil })
+        XCTAssertEqual(g.afloatMoveCursor(for: a, at: inland.0, inland.1), "blocked")
+    }
 }

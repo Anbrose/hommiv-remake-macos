@@ -773,7 +773,10 @@ final class Renderer: NSObject, MTKViewDelegate {
         // over the shroud nothing is known: the plain pointer
         if let g = game, g.fogState(cell(at: m).0, cell(at: m).1) == GameState.fogUnexplored { return "normal" }
         var kind = pointerKind(mapPoint: m)
-        if let g = game, let e = g.enemyAt(cell(at: m).0, cell(at: m).1), g.isVisible(e) { kind = "attack" }   // an enemy army
+        // an army on the cell, on land or aboard, or an empty ship (0x521360): attack, exchange,
+        // or activate / Boat_Activate to board
+        let army = game.flatMap { g in g.heroes.first.flatMap { $0.z == g.level ? g.armyCursor(for: $0, at: cell(at: m).0, cell(at: m).1) : nil } }
+        if let a = army { kind = a }
         // a free cell where a wandering stack would fall on the hero: the danger pointer
         // a fight there -- a stack, an enemy army, or a cell in the guard zone of a stack the player
         // sees -- the crossed swords (cursor.attack; 0x4f6780 never uses the single sword)
@@ -781,12 +784,12 @@ final class Renderer: NSObject, MTKViewDelegate {
             let c = cell(at: m)
             if g.seenThreat(to: h, at: c.0, c.1) != nil { kind = "attack" }
         }
-        guard ["move", "attack", "activate", "Danger_Zone"].contains(kind), let g = game, let h = g.heroes.first else { return kind }
+        guard ["move", "attack", "activate", "exchange", "Boat_Activate", "Danger_Zone"].contains(kind), let g = game, let h = g.heroes.first else { return kind }
         guard h.z == g.level else { return "normal" }
         // the days to get there pick the frame; an object is reached from the cell before it
         var c = cell(at: m)
-        var onThing = g.enemyAt(c.0, c.1) != nil
-        if kind != "move", let p = scene.placed.last(where: { g.isVisitable($0) && (underCursor($0, m) || onFootprint($0, c)) }) {
+        var onThing = army != nil
+        if kind != "move", army == nil, let p = scene.placed.last(where: { g.isVisitable($0) && (underCursor($0, m) || onFootprint($0, c)) }) {
             c = g.monster(for: p) != nil || g.town(for: p) == nil ? (p.cellX, p.cellY) : g.gateCells(p)[0]
             onThing = true
         }
@@ -970,6 +973,18 @@ final class Renderer: NSObject, MTKViewDelegate {
         return (f, sh)
     }
 
+    /// The hero models' adv_actor offset (the median of the 23 hero.* models: x -5..-3,
+    /// y -26..-23), the point the remake's hero images are drawn from being the cell's top vertex.
+    static let heroModelOffset = (x: -4, y: -25)
+    /// Where a ship's images are drawn from relative to the cell's top vertex: its adv_actor model
+    /// offset less the hero models' (heroes4.exe draws both from the army's position plus the
+    /// model offset, 0x429100 / 0x429fd0). Zero for any other actor, whose images the remake
+    /// draws from the top vertex itself.
+    static func shipImageOffset(_ actor: String, _ model: AdvActor?) -> (x: Int, y: Int) {
+        guard actor.hasPrefix("ships."), let m = model else { return (0, 0) }
+        return (m.offset.x - heroModelOffset.x, m.offset.y - heroModelOffset.y)
+    }
+
     /// The pieces of one army at time t (heroes4.exe t_abstract_adv_actor): the selection ring
     /// under it, its shadow (drawn with the other shadows), the current sequence frame, and the
     /// owner's flag.
@@ -987,20 +1002,19 @@ final class Renderer: NSObject, MTKViewDelegate {
         let (px, py) = h.position
         let (sx, sy0) = screen(px, py)
         let sy = sy0 - (game.map { h.elevation(in: $0.passability) } ?? 0)   // raised on bridges
-        // The actor's position is the cell's top vertex (as an object's anchor); its sequence
-        // images (body and shadow) are drawn from the position plus the adv_actor model offset
-        // (0x429100 / 0x429fd0: model +4 / +8), the sequence origin being from that point.
-        let off = model?.offset ?? (x: 0, y: 0)
-        let posX = Int(sx), posY = Int(sy) - 16
-        let ox = posX + off.x + Int(s.origin.x), oy = posY + off.y + Int(s.origin.y)
+        // The images' reference: the cell's top vertex for a hero or a heroless army (their
+        // images are authored for it). heroes4.exe draws every actor's images from its position
+        // plus the adv_actor model offset (0x429100 / 0x429fd0: model +4 / +8); a hero model's
+        // offset is about (-4, -25) and a ship's about (0, 0), so a ship (afloat, or empty) is
+        // drawn its offset less the hero reference from that vertex -- 25 px lower and 4 to the
+        // right -- and sits on the ring as a hero on land does, as the original's ships do.
+        let off = Renderer.shipImageOffset(actorName, model)
+        let ox = Int(sx) + off.x + Int(s.origin.x), oy = Int(sy) - 16 + off.y + Int(s.origin.y)   // origin is from the cell's top vertex
         var parts: (ring: Quad?, shadow: Quad?, body: Quad?, flag: Quad?) = (nil, nil, nil, nil)
-        // the selected army's ring (adv_object.internal.selected.army, 8 turning frames): the
-        // highlight subimage (0x4034b0 / 0x402940) puts the centre of its images' union box at
-        // the position + (0, 16), the cell's centre, whatever the actor model's offset
-        if h === game?.heroes.first, let ring = arrowSprite("selected.army"), let first = ring.frames.first {
+        // the selected army's ring (adv_object.internal.selected.army, 8 turning frames) under its feet
+        if h === game?.heroes.first, let ring = arrowSprite("selected.army"), !ring.frames.isEmpty {
             let f = ring.frames[Int(t / 0.1) % ring.frames.count]
-            let u = ring.frames.reduce(first.box) { b, g in (min(b.left, g.box.left), min(b.top, g.box.top), max(b.right, g.box.right), max(b.bottom, g.box.bottom)) }
-            let rx = posX - (u.0 + (u.2 - u.0) / 2), ry = posY + 16 - (u.1 + (u.3 - u.1) / 2)
+            let rx = Int(sx) + Int(ring.origin.x), ry = Int(sy) + Int(ring.origin.y)   // (centred under the feet: the cell's bottom vertex)
             parts.ring = Quad(texture: texture(for: f, of: "selected.army"), x: rx + f.box.left, y: ry + f.box.top, w: f.bitmap.width, h: f.bitmap.height)
         }
         if let sh = shadow { parts.shadow = Quad(texture: texture(for: sh, of: entry), x: ox + sh.box.left, y: oy + sh.box.top, w: sh.bitmap.width, h: sh.bitmap.height) }
@@ -1008,7 +1022,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         // the owner's flag at the actor model's flag point (an army with no owner, 6, has none)
         // (its phase keyed by the army, an empty ship's by its cell, so it does not jump as it walks)
         let id = ObjectIdentifier(h).hashValue, phase = h.actor.isEmpty ? (h.x, h.y) : (id & 0xffff, (id >> 16) & 0xffff)
-        parts.flag = actorFlag(actor: actorName, owner: h.owner, imageX: posX + off.x, imageY: posY + off.y, cellX: phase.0, cellY: phase.1, at: t)
+        parts.flag = actorFlag(actor: actorName, owner: h.owner, imageX: Int(sx) + off.x, imageY: Int(sy) - 16 + off.y, cellX: phase.0, cellY: phase.1, at: t)
         if ProcessInfo.processInfo.environment["H4DEBUG"] != nil {
             let out = [parts.ring, parts.shadow, parts.body, parts.flag].compactMap { $0 }
             print("hero: \(entry) at cell (\(px),\(py)) screen (\(sx),\(sy)) origin \(s.origin) frame \(frame?.name ?? "-") box \(frame.map { "\($0.box)" } ?? "-") -> \(out.map { "(\($0.x),\($0.y) \($0.w)x\($0.h))" })")
@@ -1146,15 +1160,11 @@ final class Renderer: NSObject, MTKViewDelegate {
             if let g = game, g.fogEnabled {
                 if p.type == "random_monster" || p.type == "monster" || p.type == "army", let i = g.monster(for: p), !g.monsterSeen(i) { continue }
             }
-            // a wandering stack stands in the turning dashed ring (animation.highlight_ring): an
-            // actor's highlight subimage (0x4034b0 / 0x402940) puts the centre of its images' union
-            // box at the position + (0, 16), the cell's centre -- where the route's X lands too
+            // a wandering stack stands in the turning dashed ring (animation.highlight_ring), centred under its feet
             var ring: Quad? = nil
-            if let g = game, let i = g.monster(for: p), g.monsters[i].bank == nil, let r = highlightRing, let first = r.frames.first {
+            if let g = game, let i = g.monster(for: p), g.monsters[i].bank == nil, let r = highlightRing, !r.frames.isEmpty {
                 let f = r.frames[Int(t / 0.08) % r.frames.count]
-                let u = r.frames.reduce(first.box) { b, g in (min(b.left, g.box.left), min(b.top, g.box.top), max(b.right, g.box.right), max(b.bottom, g.box.bottom)) }
-                let rx = p.anchorX - (u.0 + (u.2 - u.0) / 2), ry = p.anchorY + 16 - (u.1 + (u.3 - u.1) / 2)
-                ring = Quad(texture: texture(for: f, of: "highlight_ring"), x: rx + f.box.left, y: ry + f.box.top, w: f.bitmap.width, h: f.bitmap.height)
+                ring = Quad(texture: texture(for: f, of: "highlight_ring"), x: p.anchorX - f.bitmap.width / 2, y: p.anchorY - 2 - f.bitmap.height / 2, w: f.bitmap.width, h: f.bitmap.height)
             }
             var (f, sh) = frame(of: p, at: t)
             var ax = p.anchorX, ay = p.anchorY, cell = (x: p.cellX, y: p.cellY)
@@ -1162,10 +1172,6 @@ final class Renderer: NSObject, MTKViewDelegate {
             // a wandering stack walking up to a hero: drawn where it has got to in its walk
             // sequences, sorted as an army is; one turned toward an army: its wait sequence that way
             if let g = game, let i = g.monster(for: p), let model = g.monsters[i].model {
-                // a stack is an actor (a t_army): its images are drawn from its position plus the
-                // adv_actor model offset (0x429100 / 0x429fd0), as a hero's are (heroParts)
-                let off = actorModel(model)?.offset ?? (x: 0, y: 0)
-                defer { ax += off.x; ay += off.y }
                 var seq: (state: String, facing: String, frame: Int)? = g.monsters[i].facing.map { ("wait", $0, 0) }
                 if let c = g.charge, c.monster == i, let cp = g.chargePosition {
                     let (sx, sy) = screen(cp.x, cp.y)

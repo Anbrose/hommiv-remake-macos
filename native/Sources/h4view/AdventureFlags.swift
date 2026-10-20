@@ -51,8 +51,8 @@ extension Renderer {
     }
 
     /// An owned army's flag (0x403ec0): the actor model's flag point from the actor's position,
-    /// the point its images are offset from by the model offset. (ix, iy) is the images'
-    /// reference, position + model offset.
+    /// the point its images are offset from by the model offset. (ix, iy) is where this renderer
+    /// puts the images' reference (the cell's top vertex), taken as position + model offset.
     func actorFlag(actor: String, owner: Int, imageX ix: Int, imageY iy: Int, cellX: Int, cellY: Int, at t: Double) -> Quad? {
         guard let m = actorModel(actor), let fp = m.flagPoint else { return nil }
         return flagQuad(colour: owner, x: ix - m.offset.x + fp.x, y: iy - m.offset.y + fp.y, cellX: cellX, cellY: cellY, at: t)

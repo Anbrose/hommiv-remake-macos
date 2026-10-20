@@ -199,7 +199,7 @@ extension GameState {
         level = c[0]
         guard let q = scene.placed.first(where: { $0.cellX == c[1] && $0.cellY == c[2] }) else { level = back; return }
         // the first free approach cell in the landing order (0x723e70), else further out
-        var cell: (Int, Int)? = approachCells(q, water: hero.boat != nil).first { isVacant($0, for: hero) || hero.boat != nil }
+        var cell: (Int, Int)? = approachCells(q, water: hero.boat != nil).first { isVacant($0, for: hero) }
         for r in 1...3 where cell == nil {
             for dx in -r...q.sprite.footprint.w - 1 + r { for dy in -r...q.sprite.footprint.h - 1 + r where cell == nil {
                 let x = q.cellX + dx, y = q.cellY + dy

@@ -196,11 +196,11 @@ public struct Passability {
     /// The planner (heroes4.exe 0x4ff180, adventure_pathing_spec.md; Pathing.swift): the route
     /// from one cell to another, excluding the start and including the goal, or nil. A goal
     /// that is an object's cell is reached by a step through one of its entry edges.
-    public func path(from start: (Int, Int), to goal: (Int, Int)) -> [(x: Int, y: Int)]? {
+    public func path(from start: (Int, Int), to goal: (Int, Int), afloat: Bool = false) -> [(x: Int, y: Int)]? {
         guard start != goal, goal.0 >= 0, goal.1 >= 0, goal.0 < size, goal.1 < size,
-              isFree(goal.0, goal.1) || trigger[goal.0 * size + goal.1] >= 0 else { return nil }
+              isFree(goal.0, goal.1) || trigger[goal.0 * size + goal.1] >= 0 || afloat && isFreeWater(goal.0, goal.1) else { return nil }
         let t = goal.0 * size + goal.1
-        return route(to: t, in: search(from: start, goals: [t]), from: start)
+        return route(to: t, in: search(from: start, goals: [t], afloat: afloat), from: start)
     }
     /// A step's cost in hundredths (the planner's integers): diagonal cost += cost >> 1.
     func stepCost100(from x0: Int, _ y0: Int, to x1: Int, _ y1: Int) -> Int {
@@ -1345,9 +1345,9 @@ public final class GameState {
         return cells.contains { GameState.adjacent(c, $0) && passability.enters(from: c.0, c.1, to: $0.0, $0.1) }
     }
 
-    /// Is the cell free to stand on: passable and no other hero on it?
+    /// Is the cell free to stand on: passable on the army's medium (open water for a ship) and no other hero on it?
     func isVacant(_ c: (Int, Int), for hero: Hero) -> Bool {
-        passability.isFree(c.0, c.1) && !heroes.contains { $0 !== hero && $0.z == level && standingCell($0) == c }
+        (hero.boat != nil ? passability.isFreeWater(c.0, c.1) : passability.isFree(c.0, c.1)) && !heroes.contains { $0 !== hero && $0.z == level && standingCell($0) == c }
     }
 
     /// Click on a visitable object (heroes4.exe 0x4f5c80, adventure_guards_spec §6): the first
@@ -1384,7 +1384,7 @@ public final class GameState {
         if !cells.isEmpty {
             // the exe's route ends on the object's cell, entered through an entry edge (0x4ff180 /
             // 0x4fe990); the hero walks to the cell before it and uses the object from there
-            if let r = passability.routeInto(cells, from: from), let last = r.route.last {
+            if let r = passability.routeInto(cells, from: from, afloat: hero.boat != nil), let last = r.route.last {
                 hero.plan = Array(r.route.dropLast())
                 hero.target = (p.cellX, p.cellY, p.name); hero.targetCell = (last.x, last.y)
             } else { hero.plan = []; hero.target = nil; hero.targetCell = nil }   // no way in: no route (0x500160 fails)
@@ -1395,7 +1395,7 @@ public final class GameState {
         for c in candidates {
             guard isVacant(c, for: hero) else { continue }
             if c == from { best = []; bestCost = 0; continue }
-            guard let path = passability.path(from: from, to: c) else { continue }
+            guard let path = passability.path(from: from, to: c, afloat: hero.boat != nil) else { continue }
             var cost: Float = 0
             var px = from.0, py = from.1
             for s in path { cost += passability.stepCost(from: px, py, to: s.x, s.y); px = s.x; py = s.y }
@@ -1466,20 +1466,11 @@ public final class GameState {
         if let e = enemyAt(x, y) { attack(e, with: hero); return }
         if let f = heroes.first(where: { $0 !== hero && $0.z == level && standingCell($0) == (x, y) }), hero.boat == nil, f.boat == nil { meet(f, with: hero); return }
         hero.attackTarget = nil; hero.tradeTarget = nil
-        if hero.boat != nil {   // at sea: sail over water; a coast cell to land on
+        if hero.boat != nil {   // at sea: the planner afloat sails over water; a coast cell is the landing
             let from = standingCell(hero)
-            var route: [(x: Int, y: Int)]? = nil
-            if passability.isFreeWater(x, y) { route = seaPath(from: from, to: (x, y)) }
-            else if passability.isFree(x, y) {
-                var best: [(x: Int, y: Int)]? = nil
-                for dx in -1...1 { for dy in -1...1 where passability.isFreeWater(x + dx, y + dy) || (x + dx, y + dy) == from {
-                    if let r = (x + dx, y + dy) == from ? [] : seaPath(from: from, to: (x + dx, y + dy)), best == nil || r.count < best!.count { best = r }
-                } }
-                route = best.map { $0 + [(x, y)] }
-            }
-            guard let r = route else { return }
-            if let last = hero.plan.last, last.x == x, last.y == y { hero.path = hero.plan; hero.plan = []; hero.progress = 0 }
-            else { hero.plan = r }
+            guard let r = passability.path(from: from, to: (x, y), afloat: true) else { return }
+            if let last = hero.plan.last, last.x == x, last.y == y, hero.target == nil { hero.path = hero.plan; hero.plan = []; hero.progress = 0 }
+            else { hero.plan = r; hero.target = nil; hero.targetCell = nil; hero.planGoal = nil }
             return
         }
         if let b = boat(at: x, y) {   // an empty ship: walk to the shore beside it, then board
@@ -1746,7 +1737,7 @@ public final class GameState {
     public func daysToReach(_ h: Hero, _ goal: (Int, Int)) -> Int? {
         preparePlanner(for: h)
         if jumpsLevel != level { refreshJumps(); jumpsLevel = level }
-        guard let route = passability.path(from: (h.x, h.y), to: goal) else { return nil }
+        guard let route = passability.path(from: (h.x, h.y), to: goal, afloat: h.boat != nil) else { return nil }
         var left = h.movement, days = 1, px = h.x, py = h.y
         for c in route {
             let step = GameState.adjacent((px, py), (c.x, c.y)) ? passability.stepCost(from: px, py, to: c.x, c.y) : 1

@@ -494,7 +494,7 @@ if let out = snapshot {
     }
     if ProcessInfo.processInfo.environment["H4HIRE"] != nil { renderer.hire = game.hireOffer(town: game.towns.firstIndex { $0.owned }) }   // snapshot: the tavern
     if ProcessInfo.processInfo.environment["H4BOAT"] != nil, let h = game.heroes.first, let c = game.debugBoard(h) {   // snapshot: a hero at sea
-        print("boarded at \(c): sea movement \(game.armyMovement(h)), path to (c+6): \(game.seaPath(from: c, to: (c.0 + 3, c.1 + 3))?.count ?? -1)")
+        print("boarded at \(c): sea movement \(game.armyMovement(h)), path to (c+3): \(game.passability.path(from: c, to: (c.0 + 3, c.1 + 3), afloat: true)?.count ?? -1)")
         aim(renderer, at: c)
     }
     if let n = ProcessInfo.processInfo.environment["H4PUZZLE"].flatMap({ Int($0) }), let h = game.heroes.first,

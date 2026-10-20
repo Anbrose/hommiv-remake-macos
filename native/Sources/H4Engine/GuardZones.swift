@@ -62,7 +62,7 @@ extension GameState {
         struct Entry { var x: Int, y: Int, mark: GuardMark, parent: (Int, Int)? }
         marks[m.x * n + m.y] = GuardMark(dir: 0, dist: 0, clean: true)   // applied without the test
         guard scouting(of: m) + 1 >= stealth else { return }
-        let atSea = p.isWater(m.x, m.y) && p.bridgeAxis[m.x * n + m.y] == 0
+        let atSea = p.isSea(m.x, m.y)
         var local = [GuardMark?](repeating: nil, count: 25)
         local[12] = GuardMark(dir: 0, dist: 0, clean: true)
         // the open list, kept by distance with the largest first; the last entry is taken next
@@ -73,7 +73,9 @@ extension GameState {
                 let cx = e.x + step.dx, cy = e.y + step.dy
                 guard cx >= 0, cy >= 0, cx < n, cy < n else { continue }
                 // flagged as 0x497810 does: the step is refused or the cell stops routes
-                let flagged = !p.canStep(from: e.x, e.y, to: cx, cy) || p.isTrigger(cx, cy)
+                // (at sea the step over water: the water's terrain is no stop, 0x4cbc10)
+                let flagged = (atSea ? p.occupied[cx * n + cy] || (d % 2 == 1 && (p.edgeAt(cx, e.y) || p.edgeAt(e.x, cy)))
+                                     : !p.canStep(from: e.x, e.y, to: cx, cy)) || p.isTrigger(cx, cy)
                 var clean = true
                 if flagged {
                     if d % 2 == 1, p.cornerBlocked(from: e.x, e.y, to: cx, cy) { clean = false }
@@ -242,7 +244,8 @@ extension GameState {
               !h.army.isEmpty || !h.members.isEmpty, let i = threat(to: h, at: h.x, h.y) else { return }
         var p = passability
         p.forcedExit = [:]; p.relief = 0; p.jumps = [:]
-        guard let r = p.path(from: (monsters[i].x, monsters[i].y), to: (h.x, h.y)), !r.isEmpty else { return }
+        let afloat = p.isSea(monsters[i].x, monsters[i].y)   // a stack of sea creatures (0x642910)
+        guard let r = p.path(from: (monsters[i].x, monsters[i].y), to: (h.x, h.y), afloat: afloat), !r.isEmpty else { return }
         log.append("\(tables?.creature(monsters[i].creature)?.plural ?? monsters[i].creature) attack \(h.name)!")
         h.target = nil
         // t_enemy_army_attack: the stack's walk list stops before the army (its cell is the stop)

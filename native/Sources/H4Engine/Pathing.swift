@@ -122,13 +122,35 @@ extension Passability {
     /// replaced only by a strictly cheaper one. A step the plain rules refuse may still enter an
     /// object through its entry edges (0x4fe990); object cells are reached but never left
     /// (0x4cbc10); a cell with a forced exit (the zone of a stack the player sees, 0x4ff856) is
-    /// left only in that direction. Returns the cost and predecessor of every cell.
-    public func search(from start: (Int, Int), goals: Set<Int> = []) -> (cost: [Int32], prev: [Int32]) {
-        search(fromAll: [start], goals: goals)
+    /// left only in that direction. `afloat`: the army is aboard a ship (0x4ff180's at-sea test,
+    /// army vtable+0x38 or a stack of sea creatures 0x642910): it sails over water at 100 a step
+    /// (150 diagonally), a node on land is not expanded (the landing ends the route) and an
+    /// object is entered on its own medium only (0x4fea80). Returns the cost and predecessor of
+    /// every cell.
+    public func search(from start: (Int, Int), goals: Set<Int> = [], afloat: Bool = false) -> (cost: [Int32], prev: [Int32]) {
+        search(fromAll: [start], goals: goals, afloat: afloat)
+    }
+
+    /// Open water: water terrain and not a bridge's deck (the medium of 0x405350's land test).
+    public func isSea(_ x: Int, _ y: Int) -> Bool { isWater(x, y) && bridgeAxis[x * size + y] == 0 }
+    /// May an army afloat step from one cell to a neighbouring one (0x497810 / 0x4fea80)? Onto
+    /// open water nothing stands on, a diagonal only between two water cells (no sailing past a
+    /// land corner); or onto free land, the landing. No diagonal past an object's cell.
+    public func canSail(from x0: Int, _ y0: Int, to x1: Int, _ y1: Int) -> Bool {
+        guard x1 >= 0, y1 >= 0, x1 < size, y1 < size, !occupied[x1 * size + y1] else { return false }
+        let dx = x1 - x0, dy = y1 - y0
+        if dx != 0, dy != 0, edgeAt(x1, y0) || edgeAt(x0, y1) { return false }
+        if isSea(x1, y1) { return dx == 0 || dy == 0 || (isWater(x1, y0) && isWater(x0, y1)) }
+        return isFree(x1, y1) && !isWater(x1, y1)
+    }
+    /// Does a step enter an object on the walker's medium (0x4fea80: afloat onto the water's
+    /// objects and stacks; on land onto the land's)?
+    func entersOnMedium(from x0: Int, _ y0: Int, to x1: Int, _ y1: Int, afloat: Bool) -> Bool {
+        enters(from: x0, y0, to: x1, y1) && (!afloat || isSea(x1, y1))
     }
     /// The same search started from several cells at once (each at cost 0); cells in `avoid`
     /// are never entered (a caravan's safe route, Caravans.swift).
-    public func search(fromAll starts: [(Int, Int)], goals: Set<Int> = [], avoid: Set<Int> = []) -> (cost: [Int32], prev: [Int32]) {
+    public func search(fromAll starts: [(Int, Int)], goals: Set<Int> = [], avoid: Set<Int> = [], afloat: Bool = false) -> (cost: [Int32], prev: [Int32]) {
         let n = size * size
         var g = [Int32](repeating: .max, count: n)
         var prev = [Int32](repeating: -1, count: n)
@@ -143,17 +165,20 @@ extension Passability {
             let (c, ii) = heap.pop(); let i = Int(ii)
             if c > g[i] { continue }   // a stale record
             if !goals.isEmpty { pending.remove(i); if pending.isEmpty { break } }
-            if !sources.contains(i), blocked[i] { continue }   // entered, not left
+            if !sources.contains(i) {   // entered, not left: an object's cell, or the other medium
+                if afloat ? occupied[i] || trigger[i] >= 0 || !isSea(i / size, i % size) : blocked[i] { continue }
+            }
             let x = i / size, y = i % size
             let forced = forcedExit[i]
             for (k, d) in Passability.directions.enumerated() {
                 if let f = forced, f != k { continue }
                 let nx = x + d.dx, ny = y + d.dy
                 guard nx >= 0, ny >= 0, nx < size, ny < size else { continue }
-                guard canStep(from: x, y, to: nx, ny) || enters(from: x, y, to: nx, ny) else { continue }
+                guard afloat ? canSail(from: x, y, to: nx, ny) || entersOnMedium(from: x, y, to: nx, ny, afloat: true)
+                             : canStep(from: x, y, to: nx, ny) || enters(from: x, y, to: nx, ny) else { continue }
                 let j = nx * size + ny
                 if !avoid.isEmpty, avoid.contains(j) { continue }
-                let ng = c + Int32(stepCost100(from: x, y, to: nx, ny))
+                let ng = c + Int32(afloat ? (d.dx != 0 && d.dy != 0 ? 150 : 100) : stepCost100(from: x, y, to: nx, ny))
                 if ng < g[j] { g[j] = ng; prev[j] = Int32(i); heap.push(ng, j) }
             }
             for j in forced == nil ? jumps[i] ?? [] : [] where !blocked[j] && !avoid.contains(j) {
@@ -176,10 +201,10 @@ extension Passability {
 
     /// The cheapest route into one of an object's trigger cells (it ends on the object's cell;
     /// the walker stops on the cell before it), with its cost; on equal costs the cell listed first.
-    public func routeInto(_ cells: [(Int, Int)], from start: (Int, Int)) -> (route: [(x: Int, y: Int)], cost: Int)? {
+    public func routeInto(_ cells: [(Int, Int)], from start: (Int, Int), afloat: Bool = false) -> (route: [(x: Int, y: Int)], cost: Int)? {
         let keys = cells.filter { $0.0 >= 0 && $0.1 >= 0 && $0.0 < size && $0.1 < size }.map { $0.0 * size + $0.1 }
         guard !keys.isEmpty else { return nil }
-        let r = search(from: start, goals: Set(keys))
+        let r = search(from: start, goals: Set(keys), afloat: afloat)
         var best: (route: [(x: Int, y: Int)], cost: Int)? = nil
         for k in keys where r.cost[k] < .max && (best == nil || Int(r.cost[k]) < best!.cost) {
             if let p = route(to: k, in: r, from: start), !p.isEmpty { best = (p, Int(r.cost[k])) }

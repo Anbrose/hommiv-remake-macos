@@ -727,6 +727,12 @@ public final class GameState {
         // (event triggers add nothing: no blocked cell, and their trigger cells neither stop routes nor
         // are entered -- 0x4cbc10 / 0x4d7580 ask vtable +0x18 / +0x4c, false for them)
         passabilities = scenes.map { Passability(map: map, level: $0.level, objects: $0.placed) }
+        // the map's empty ships (t_army records with a ship and no creatures)
+        for o in map.objects where o.type == "boat" {
+            guard let b = o.boat else { continue }
+            boats.append(Boat(x: o.x, y: o.y, z: o.level, alignment: Battle.alignments[b], owner: o.owner))
+            if o.level < passabilities.count { passabilities[o.level].block(o.x, o.y) }
+        }
     }
 
     /// A 1x1 object with a "step here to use" mask: resources, chests, artifacts, campfires.

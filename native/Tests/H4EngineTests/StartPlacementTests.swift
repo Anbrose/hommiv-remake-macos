@@ -70,4 +70,33 @@ final class StartPlacementTests: XCTestCase {
         XCTAssertEqual([o.x, o.y], [76, 5])
         XCTAssertEqual(o.boat, 5)
     }
+
+    /// Daughter of the Sea (campaign 4, scenario 0): an empty chaos ship waits at (189,108) by the
+    /// starting army (188,110) -- a t_army record with a ship and no creatures. Every such record
+    /// of every shipped map lies on water (terrain 0 or 9, the cell land test 0x405350's water).
+    func testEmptyShipsAreReadAndLieOnWater() throws {
+        let (a, names) = try archive()
+        let m = try MapFile(data: CampaignFile.load(4, from: a).scenario(0), objectNames: names)
+        XCTAssertEqual(m.objects.filter { $0.type == "boat" }.map { [$0.x, $0.y, $0.level, $0.boat ?? -1] }, [[189, 108, 0, 3]])
+        let masks = try TransitionMasks(data: a.payload("transition.Transitions.h4d"))
+        let game = GameState(map: m, level: 0, scenes: [try MapScene(map: m, level: 0, archive: a, masks: masks)])
+        XCTAssertEqual(game.boats.map { "\($0.x),\($0.y) \($0.alignment)" }, ["189,108 chaos"])
+        XCTAssertTrue(game.passability.isFreeWater(189, 108) == false)
+
+        var maps: [(String, Data)] = []
+        let dir = StartPlacementTests.root.appendingPathComponent("maps")
+        if let en = FileManager.default.enumerator(atPath: dir.path) { for case let f as String in en where f.hasSuffix(".h4c") { maps.append((f, try Data(contentsOf: dir.appendingPathComponent(f)))) } }
+        for id in CampaignFile.resources.keys.sorted() { if let c = try? CampaignFile.load(id, from: a) { for i in 0..<c.count { maps.append(("campaign \(id) #\(i)", try c.scenario(i))) } } }
+        var total = 0, off: [String] = []
+        for (name, d) in maps {
+            let mm = try MapFile(data: d, objectNames: names)
+            for o in mm.objects where o.type == "boat" {
+                total += 1
+                let t = mm.cells[o.level][o.x * mm.size + o.y].map { Int($0.type) } ?? -1
+                if t != 0 && t != 9 { off.append("\(name) (\(o.x),\(o.y),\(o.level)) terrain \(t)") }
+            }
+        }
+        XCTAssertEqual(total, 128)
+        XCTAssertEqual(off, [])
+    }
 }

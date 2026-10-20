@@ -412,7 +412,17 @@ public struct MapFile {
             guard (3...9).contains(v), owner <= 6 else { continue }
             var rd = ByteReader(d, at: p + 16)
             var heroes: [MapHero] = []
-            guard let stacks = MapFile.parseCreatureArray(&rd, heroes: &heroes), stacks.contains(where: { $0 != nil }) || !heroes.isEmpty else { continue }
+            guard let stacks = MapFile.parseCreatureArray(&rd, heroes: &heroes) else { continue }
+            if !stacks.contains(where: { $0 != nil }) && heroes.isEmpty {
+                // an army with no creatures and a ship is an empty ship waiting on the water (the
+                // editor's boats are t_army records; 0x523a30 reads them like any other army)
+                guard let b = armyBoat(d, at: rd.pos, version: v) else { continue }
+                var o = MapObject(name: "boat", type: "boat", subtype: "", terrain: "", x: x, y: y, level: lv)
+                o.owner = owner == 6 ? nil : owner
+                o.boat = b
+                out.append(o)
+                continue
+            }
             // a player's army carries its heroes; a neutral one is a stack to fight
             guard owner == 6 || !heroes.isEmpty else { continue }
             var o = MapObject(name: "army", type: owner == 6 ? "army" : "hero_army", subtype: "", terrain: "", x: x, y: y, level: lv)

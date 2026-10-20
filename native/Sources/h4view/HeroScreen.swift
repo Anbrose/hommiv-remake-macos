@@ -70,9 +70,15 @@ extension Renderer {
         let dx = ox + inv.x, dy = oy + inv.y   // (top-left, 0x597f50)
         return (0..<14).compactMap { i in m[Renderer.slotLayers[i]].map { (i, dx + $0.x, dy + $0.y) } }
     }
-    /// The ten backpack places ("backpack %i slot", 0x52f12b) with the backpack index each shows.
-    func backpackPlaces(_ d: LayerFile, _ ox: Int, _ oy: Int) -> [(index: Int, x: Int, y: Int)] {
-        (0..<10).compactMap { k in d["backpack \(k + 1) slot"].map { (backpackOffset + k, ox + $0.x, oy + $0.y) } }
+    /// The ten backpack places ("backpack %i slot", 0x52f12b) with the backpack index each shows: the
+    /// display order puts potions last while "sort potions" is on (0x5362c0); a place past the end
+    /// keeps its own position as its index.
+    func backpackPlaces(_ h: Hero, _ d: LayerFile, _ ox: Int, _ oy: Int) -> [(index: Int, x: Int, y: Int)] {
+        let order = ArtifactRules.backpackOrder(h.backpack, potionsLast: armySession?.potionMode ?? false, tables: game?.tables)
+        return (0..<10).compactMap { k in
+            let p = backpackOffset + k
+            return d["backpack \(k + 1) slot"].map { (p < order.count ? order[p] : p, ox + $0.x, oy + $0.y) }
+        }
     }
     /// Where the paper doll and backpack artifacts go: (artifact id, x, y) of 44x44 slots.
     func heroArtifactSlots(_ h: Hero, _ d: LayerFile, _ ox: Int, _ oy: Int) -> (doll: (x: Int, y: Int)?, items: [(id: Int, x: Int, y: Int)]) {
@@ -80,7 +86,7 @@ extension Renderer {
         var doll: (Int, Int)? = nil
         if let inv = d["hero_inventory"], dollLayout(h)?["Background"] != nil { doll = (ox + inv.x, oy + inv.y) }
         for s in dollSlots(h, d, ox, oy) { if let a = h.equipped[s.slot] { items.append((a, s.x, s.y)) } }
-        for p in backpackPlaces(d, ox, oy) where h.backpack.indices.contains(p.index) { items.append((h.backpack[p.index], p.x, p.y)) }
+        for p in backpackPlaces(h, d, ox, oy) where h.backpack.indices.contains(p.index) { items.append((h.backpack[p.index], p.x, p.y)) }
         return (doll, items)
     }
 
@@ -141,7 +147,7 @@ extension Renderer {
     func heroArtifactPlace(_ h: Hero, _ d: LayerFile, _ ox: Int, _ oy: Int, x: Float, y: Float) -> ArtifactPlace? {
         func at(_ sx: Int, _ sy: Int) -> Bool { x >= Float(sx) && x < Float(sx + 44) && y >= Float(sy) && y < Float(sy + 44) }
         for s in dollSlots(h, d, ox, oy) where at(s.x, s.y) { return .worn(h, s.slot) }
-        for p in backpackPlaces(d, ox, oy) where at(p.x, p.y) { return .backpack(h, p.index) }
+        for p in backpackPlaces(h, d, ox, oy) where at(p.x, p.y) { return .backpack(h, p.index) }
         return nil
     }
 }

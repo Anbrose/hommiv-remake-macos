@@ -22,6 +22,13 @@ final class ArtifactDragTests: XCTestCase {
         XCTAssertEqual(ArtifactRules.slotType(id("ring_of_regeneration"), tables: tables), ArtifactRules.ring)
     }
 
+    /// "Sort potions" (0x5362c0 with dialog +0x184): the others first, then the potions, each in order.
+    func testSortPotionsPutsPotionsLast() {
+        let b = [id("binding_liquid"), id("crown"), id("binding_liquid"), id("telescope")]
+        XCTAssertEqual(ArtifactRules.backpackOrder(b, potionsLast: false, tables: tables), [0, 1, 2, 3])
+        XCTAssertEqual(ArtifactRules.backpackOrder(b, potionsLast: true, tables: tables), [1, 3, 0, 2])
+    }
+
     func testWhichSlotsTakeWhat() {
         let h = hero()
         XCTAssertEqual(ArtifactRules.takingSlots(id("helm_of_command"), of: h, tables: tables), [2])

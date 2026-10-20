@@ -56,6 +56,14 @@ public enum ArtifactRules {
         return slotNames.firstIndex(of: a.slot.lowercased()) ?? invalid
     }
 
+    /// The backpack in display order (0x5362c0): as it is, or with "sort potions" on (dialog +0x184,
+    /// the potion button 0x538180) the other artifacts first and the potions after, each keeping its order.
+    public static func backpackOrder(_ backpack: [Int], potionsLast: Bool, tables: RuleTables?) -> [Int] {
+        guard potionsLast else { return Array(backpack.indices) }
+        let potion = backpack.indices.filter { slotType(backpack[$0], tables: tables) == ArtifactRules.potion }
+        return backpack.indices.filter { !potion.contains($0) } + potion
+    }
+
     /// Can worn slot `slot` of `h` take artifact `id` (0x537b00)? `strict` is the not-the-player's
     /// army case: only an empty slot, a two-handed one only with both hands empty, no left hand
     /// beside a two-handed one.

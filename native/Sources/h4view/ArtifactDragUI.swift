@@ -66,7 +66,9 @@ extension Renderer {
 
     /// A right click on the army screen: a worn or backpack artifact's text while the button is held.
     func armyScreenRightDown(x: Float, y: Float) -> Bool {
-        guard let s = armySession, s.artDrag == nil, let h = sessionHero, let d = ui?.dialog("army.layout") else { return false }
+        guard let s = armySession, s.artDrag == nil, spellBook == nil else { return false }
+        if armyButtonRightDown(x: x, y: y) { return true }
+        guard let h = sessionHero, let d = ui?.dialog("army.layout") else { return false }
         let (ox, oy) = armyOrigin
         guard let t = heroArtifactHelp(h, d, ox, oy, x: x, y: y) else { return false }
         heldHelp = (t.text, t.x, t.y)

@@ -22,6 +22,8 @@ struct SpellBookState {
     var detail: Int? = nil       // the detail view: the first of the two spells shown
     var powers: [Int: Int] = [:] // each spell's power for the caster (the hero text's %power)
     var scroll = [0, 0]          // the detail pages' description scroll, in lines
+    var caster: Hero? = nil      // the adventure book's hero (the army screen's selected one; else the first)
+    var potions: [Int: Int] = [:] // backpack potions by the spell they cast: how many
     init(spells: [Int], castable: Set<Int>, points: Int, combat: Bool, costs: [Int: Int] = [:], items: Set<Int> = []) {
         self.spells = spells; self.castable = castable; self.points = points; self.costs = costs; self.items = items
         tab = combat ? "Combat" : "Adventure"
@@ -97,10 +99,15 @@ extension Renderer {
         t = t.replacingOccurrences(of: "%lives", with: power == 1 ? "1 life" : "\(max(1, power)) lives")
         return t
     }
-    func bookCostText(_ sb: SpellBookState, _ sp: Int) -> String { "\(text("cost.mage_guild", "Cost")) \(bookCost(sb, sp))" }
+    func bookCostText(_ sb: SpellBookState, _ sp: Int) -> String {
+        if sb.costs[sp] == 0, let n = sb.potions[sp], n > 0 {   // a potion pays for itself: how many there are
+            return "\(n) \(n == 1 ? text("potion.spellbook", "potion") : text("potions.spellbook", "potions"))"
+        }
+        return "\(text("cost.mage_guild", "Cost")) \(bookCost(sb, sp))"
+    }
     /// Fill the powers of the adventure book's caster (the first hero), once.
     func bookPowers(_ sb: inout SpellBookState) {
-        guard sb.powers.isEmpty, let g = game, let h = g.heroes.first else { return }
+        guard sb.powers.isEmpty, let g = game, let h = sb.caster ?? g.heroes.first else { return }
         let c = Caster(hero: h, spellPoints: sb.points)
         for sp in sb.spells { sb.powers[sp] = bookPower(sp, caster: c) }
     }
@@ -266,10 +273,10 @@ extension Renderer {
         case .index: if let first = sb.detail { sb.page = first / 12; sb.detail = nil }
         case .info(let i): sb.detail = i - i % 2; sb.scroll = [0, 0]
         case .cell(let i):
-            if sb.castable.contains(list[i]), bookAffordable(sb, list[i]) { spellBook = nil; castPicked(list[i]); return }
+            if sb.castable.contains(list[i]), bookAffordable(sb, list[i]) { spellBook = nil; castPicked(list[i], from: sb); return }
         case .cast(let k):
             if let first = sb.detail, first + k < list.count, sb.castable.contains(list[first + k]), bookAffordable(sb, list[first + k]) {
-                spellBook = nil; castPicked(list[first + k]); return
+                spellBook = nil; castPicked(list[first + k], from: sb); return
             }
         case .scrollUp(let k): sb.scroll[k] = max(0, sb.scroll[k] - 1)
         case .scrollDown(let k):
@@ -330,16 +337,19 @@ extension Renderer {
         spellBook = sb
     }
     /// A spell picked from the book: cast now if it needs no target, else aim it.
-    func castPicked(_ spell: Int) {
+    func castPicked(_ spell: Int, from sb: SpellBookState? = nil) {
         guard let cs = combat, let b = cs.battle else {
-            castAdventure(spell); return
+            castAdventure(spell, from: sb); return
         }
         if Battle.untargeted(spell) { b.cast(spell, on: nil, tables: game?.tables); cs.pump() }
         else { casting = spell; castFirst = nil }
     }
     /// Adventure-map casting (heroes' map spells).
-    func castAdventure(_ spell: Int) {
-        guard let g = game, let h = g.heroes.first else { return }
-        g.castAdventureSpell(spell, by: h)
+    /// A spell the hero cannot cast otherwise comes from a backpack potion: it is drunk.
+    func castAdventure(_ spell: Int, from sb: SpellBookState? = nil) {
+        guard let g = game, let h = sb?.caster ?? g.heroes.first else { return }
+        if sb?.costs[spell] == 0, let k = g.backpackPotions(h)[spell]?.first { g.drink(h, backpackIndex: k) }
+        else { g.castAdventureSpell(spell, by: h) }
+        if armySession != nil { armyBookCast(spell) }
     }
 }

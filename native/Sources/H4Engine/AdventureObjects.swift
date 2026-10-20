@@ -393,6 +393,7 @@ extension GameState {
                 st.artifacts = []
                 say(p, "Initial", ["%artifact_list": list])
             }
+            remove(p)   // the wagon goes once its potions are handed out (0x446d2e, vtable +0x1c)
         case "windmill", "weekly_material_generator", "random_weekly_material_generator":
             st.owner = actingColour
             if st.countdown == 0 {

@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import H4Engine
 
 /// The adventure frame (t_adventure_frame, adventure_frame_spec.md) as heroes4.exe's builder 0x4acbb0
@@ -12,10 +13,14 @@ extension Renderer {
     static let framePieces = ["Top", "Top_Border", "Left", "Left_Border", "Right", "Right_Border", "Bottom", "Bottom_Border"]
     /// t_material_display: resources in table order with the font the field's height picks.
     static let materialFields: [(name: String, font: Int)] = [("Gold", 16), ("Wood", 14), ("Ore", 14), ("Crystal", 16), ("Sulfur", 14), ("Mercury", 16), ("Gems", 14)]
-    /// The selected army's ring slots (style 3): each piece and its window origin (piece top-left minus its box).
+    /// The selected army's ring slots (style 3, table 0x984b50 + 3*56: (row, col) into
+    /// top_left..bottom_right): each piece and its ring box (piece top-left minus its offset).
+    /// 0x6439c0 lays the pieces out from the `army` hotspot (736,575): a top piece moves the pen
+    /// down by its height (72), any other right by the previous slot's width and up by 72, so the
+    /// pieces' pixels touch: Top_Left 736 (70 wide), Top 806 (59), Top 865 (59), Right 924.
     static let armyRingPieces: [(piece: String, x: Int, y: Int)] = [
         ("Top_Left", 736, 574), ("Bottom_Left", 736, 638), ("Top", 795, 574), ("Bottom", 795, 638),
-        ("Top", 854, 574), ("Bottom_Right", 853, 638), ("Right", 923, 574)]
+        ("Top", 854, 574), ("Bottom_Right", 853, 638), ("Right", 912, 574)]
 
     /// A frame layer by name, whatever its case ("LEft").
     func frameLayer(_ ui: AdventureUI, _ name: String) -> UILayer? {
@@ -127,18 +132,24 @@ extension Renderer {
         }
         // the selected army's rings (the first hero's army)
         if let h = g.heroes.first {
-            let heroes = h.members
-            var items: [(UILayer?, String?)] = heroes.map { (ui.portrait(keyword: $0.keyword, alignment: $0.alignment), String?.none) }
-            items += h.army.map { (ui.creatureIcon($0.creature), String($0.count)) }
-            for (k, s) in Renderer.armyRingPieces.enumerated() {
-                let cx = s.x + 41, cy = s.y + 41
-                if k < items.count, let icon = items[k].0 {
-                    out.append(Quad(texture: uiTexture("icon|\(icon.name)", { icon.bitmap }), x: cx - icon.width / 2, y: cy - icon.height / 2, w: icon.width, h: icon.height))
+            // each place where the army keeps it (t_creature_array slots); a lifted stack leaves its place
+            let row = g.armySlots(h), lifting = panelDrag?.at != nil ? panelDrag : nil
+            let items: [(icon: UILayer?, count: String?, hero: Bool)] = row.enumerated().map { k, slot in
+                guard let s = slot else { return (nil, nil, false) }
+                if let l = lifting, l.k == k, !(l.split && (s.stack?.count ?? 0) > 1) { return (nil, nil, false) }
+                let (icon, count) = slotIcon(s, ui: ui)
+                return (icon, count, s.hero != nil)
+            }
+            out += ringRowQuads(Renderer.armyRingPieces.map { ($0.piece, $0.x, $0.y) }, items: items, selected: nil)
+            if let l = lifting, let at = l.at, let s = row[safe: l.k] ?? nil {
+                // the drop target's drag_border (slot vfuncs 0x643460 / 0x6433f0), then the carried picture
+                if let t = panelRing(at: at.0, at.1), t != l.k, let b = ui.creatureRing("drag_border") {
+                    let o = Renderer.armyRingPieces[t]
+                    out.append(Quad(texture: uiTexture("cring|\(b.name)", { b.bitmap }), x: o.x + b.x, y: o.y + b.y, w: b.width, h: b.height))
                 }
-                if let p = ui.creatureRing(s.piece) {
-                    out.append(Quad(texture: uiTexture("cring|\(p.name)", { p.bitmap }), x: s.x + p.x, y: s.y + p.y, w: p.width, h: p.height))
-                }
-                if k < items.count { ringLabel(&out, ui: ui, cx: cx, cy: cy, count: items[k].1, hero: k < heroes.count) }
+                let (icon, count) = slotIcon(s, ui: ui)
+                if let icon = icon { out.append(Quad(texture: uiTexture("icon|\(icon.name)", { icon.bitmap }), x: Int(at.0) - icon.width / 2, y: Int(at.1) - icon.height / 2, w: icon.width, h: icon.height)) }
+                ringLabel(&out, ui: ui, cx: Int(at.0), cy: Int(at.1), count: l.split ? nil : count, hero: s.hero != nil)
             }
         }
         // the town list: rows at (837, 354 + 72k)
@@ -179,5 +190,83 @@ extension Renderer {
             }
         }
         return out
+    }
+}
+
+/// A stack lifted out of the adventure panel's rings (t_drag_creature, 0x6434d0): its place, the
+/// pointer once it moved, and whether it is a split drag (Shift: the source keeps its creatures).
+var panelDrag: (k: Int, at: (Float, Float)?, split: Bool)?
+
+/// The adventure panel's rings act as the exe's t_creature_array_window built with drag enabled
+/// (0x4ae5bb: style 3, +0xc4 = +0xcc = 1): a drop moves, merges or swaps inside the army
+/// (0x646d40), Shift splits through the split dialog (0x6467f0), a double click opens the army
+/// screen on the slot (0x4af170).
+extension Renderer {
+    /// The panel slot under a canvas point: the slot window has its piece's rectangle (0x597e50
+    /// with the image's rect); the later slot lies on top.
+    func panelRing(at x: Float, _ y: Float) -> Int? {
+        guard let ui = ui else { return nil }
+        for (k, s) in Renderer.armyRingPieces.enumerated().reversed() {
+            guard let p = ui.creatureRing(s.piece) else { continue }
+            let px = Float(s.x + p.x), py = Float(s.y + p.y)
+            if x >= px, x < px + Float(p.width), y >= py, y < py + Float(p.height) { return k }
+        }
+        return nil
+    }
+    /// The adventure screen with nothing open over it: its panel takes the mouse.
+    var panelIdle: Bool {
+        guard let g = game, ui != nil, !inCombat, !computerTurnBusy, endGame == nil, townOpen == nil, armySession == nil, caravanUI == nil,
+              splitDialog == nil, puzzle == nil, !thievesGuildOpen, shop == nil, sanctuary == nil, hire == nil, mapRecruit == nil, optionsOpen == nil,
+              spellBook == nil, menu == nil, !Renderer.scenarioInfoOpen, saveDialog == nil, prompt == nil, g.scripts.messages.isEmpty, g.choice == nil,
+              g.heroPick == nil, g.skillDialog == nil, g.teleportChoice == nil, g.levelUp == nil, market == nil, overview == nil, armyPopup == nil,
+              popup == nil, adventureDialog == nil, creatureDialog == nil else { return false }
+        return true
+    }
+    /// A press on an occupied ring of the selected army: the stack may be dragged.
+    func panelPress(x: Float, y: Float, shift: Bool) {
+        panelDrag = nil
+        guard panelIdle, let g = game, let h = g.heroes.first, let k = panelRing(at: x, y), (g.armySlots(h)[safe: k] ?? nil) != nil else { return }
+        panelDrag = (k, nil, shift)
+    }
+    /// The pointer moved with a stack held.
+    func panelDragged(x: Float, y: Float, shift: Bool) -> Bool {
+        guard var d = panelDrag else { return false }
+        if d.at == nil { d.split = d.split || shift; NSCursor.hide() }
+        d.at = (x, y); panelDrag = d
+        return true
+    }
+    /// The button came up: a drop when the stack was carried. True when it was a drag.
+    func panelRelease(x: Float, y: Float, shift: Bool) -> Bool {
+        guard let d = panelDrag else { return false }
+        panelDrag = nil
+        guard d.at != nil else { return false }
+        NSCursor.unhide()
+        if let to = panelRing(at: x, y) { panelDrop(from: d.k, to: to, split: d.split || shift) }
+        return true
+    }
+    /// 0x646d40 inside one army: a split drop onto an empty place or the same creature opens the
+    /// split dialog; otherwise an empty place takes the stack, the same creature merges, anything
+    /// else (a hero included) swaps. One army: no movement cost, nothing can leave it.
+    func panelDrop(from: Int, to: Int, split: Bool) {
+        guard from != to, let g = game, let h = g.heroes.first else { return }
+        let row = g.armySlots(h)
+        guard let src = row[safe: from] ?? nil, to < row.count else { return }
+        let dst = row[to]
+        if split, let a = src.stack, dst == nil || dst?.stack?.creature == a.creature, a.count > 1 || dst != nil {
+            let have = dst?.stack?.count ?? 0
+            let o = Renderer.armyRingPieces[to]
+            openSplit(creature: a.creature, source: a.count, destination: have, at: (o.x + 41, o.y + 41)) { [weak self] n in
+                let delta = n - have
+                if delta > 0 { self?.panelMove(from, to, count: delta) } else if delta < 0 { self?.panelMove(to, from, count: -delta) }
+            }
+            return
+        }
+        panelMove(from, to, count: nil)
+    }
+    func panelMove(_ from: Int, _ to: Int, count: Int?) {
+        guard let g = game, let h = g.heroes.first else { return }
+        let x = g.singleRow(h)
+        guard x.move(from: (0, from), to: (0, to), split: count) == nil else { return }
+        g.setArmy(h, x.rows[0])
     }
 }

@@ -798,7 +798,8 @@ final class MapView: MTKView {
         if renderer.cheatBoxClick(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale) { return }
         if armySession != nil { renderer.armyScreenPress(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale); return }
         if renderer.caravanUI != nil { renderer.caravanPress(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale); return }
-        if renderer.townOpen != nil { renderer.townPress(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale) }
+        if renderer.townOpen != nil { renderer.townPress(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale); return }
+        renderer.panelPress(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale, shift: e.modifierFlags.contains(.shift))   // a stack of the army panel
     }
     override func mouseDragged(with e: NSEvent) {
         dragged += abs(Float(e.deltaX)) + abs(Float(e.deltaY))
@@ -828,6 +829,13 @@ final class MapView: MTKView {
             }
             return
         }
+        if panelDrag != nil {   // a stack lifted from the army panel
+            if dragged >= 4 {
+                let p = convert(e.locationInWindow, from: nil), sc = Float(window?.backingScaleFactor ?? 1)
+                _ = renderer.panelDragged(x: Float(p.x) * sc / renderer.uiScale, y: Float(bounds.height - p.y) * sc / renderer.uiScale, shift: e.modifierFlags.contains(.shift))
+            }
+            return
+        }
         renderer.pan -= SIMD2(Float(e.deltaX), Float(e.deltaY)) / renderer.zoom
     }
     override func mouseUp(with e: NSEvent) {
@@ -845,6 +853,7 @@ final class MapView: MTKView {
             if dragged >= 4 { renderer.townDrop(x: x, y: y, split: e.modifierFlags.contains(.shift) || renderer.townDragSplit); return }
             renderer.townDrag = nil
         }
+        if panelDrag != nil, renderer.panelRelease(x: Float(p0.x) * sc / renderer.uiScale, y: Float(bounds.height - p0.y) * sc / renderer.uiScale, shift: e.modifierFlags.contains(.shift)) { return }
         guard dragged < 4, let g = renderer.game else { return }
         // (with every hero in a garrison there is no army to act for: a stand-in)
         let hero = g.heroes.first ?? Hero(actor: "", x: -1, y: -1, movement: 0)
@@ -927,10 +936,9 @@ final class MapView: MTKView {
                         if e.clickCount >= 2 { renderer.townOpen = i } else { renderer.centre(onTown: i) }
                     }
                 }
-                else if e.clickCount >= 2, let k = AdventureUI.armySlots.firstIndex(where: { abs(cx - Float($0.0)) < 28 && abs(cy - Float($0.1)) < 28 }),
-                        let a = g.heroes.first, k < a.members.count + a.army.count {
+                else if e.clickCount >= 2, let k = renderer.panelRing(at: cx, cy), let a = g.heroes.first, (g.armySlots(a)[safe: k] ?? nil) != nil {
                     // a stack of the selected army: the army screen on it (0x4af170)
-                    renderer.openArmyScreen(a, item: k)
+                    renderer.openArmyScreen(a, slot: k)
                 }
                 else if ui.hit("Hero_List", x: cx, y: cy) {   // a portrait: one click selects the army and centres the map on it, a double click opens the army screen
                     let armies = g.armyList

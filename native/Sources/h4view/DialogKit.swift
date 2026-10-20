@@ -154,7 +154,7 @@ extension Renderer {
             if let p = ui.creatureRing(k == selected ? s.piece + "_Highlight" : s.piece) ?? ui.creatureRing(s.piece) {
                 out.append(Quad(texture: uiTexture("cring|\(p.name)", { p.bitmap }), x: s.fx + p.x, y: s.fy + p.y, w: p.width, h: p.height))
             }
-            if k < items.count { ringLabel(&out, ui: ui, cx: cx, cy: cy, count: items[k].count, hero: items[k].hero) }
+            if k < items.count, items[k].icon != nil || items[k].count != nil || items[k].hero { ringLabel(&out, ui: ui, cx: cx, cy: cy, count: items[k].count, hero: items[k].hero) }   // an empty place: no inset
         }
         return out
     }

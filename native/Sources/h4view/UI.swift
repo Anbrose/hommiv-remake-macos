@@ -31,10 +31,6 @@ final class AdventureUI {
     /// Where the hero list's round slots are on the panel (centres, top to bottom).
     /// (Hero_List rows at (747, 344 + 77k), the 52-px portrait at (19, 11) of each: centres.)
     static let heroSlots = [(792, 381), (792, 458), (792, 535)]
-    /// The seven rings of the army panel: the centres of the ring holes of the "IGNORE" image
-    /// (737,575) of layers.adventure.1024 -- four on top, three below the first three.
-    /// (Style 3 of t_creature_array_window: TL, BL, T, B, T, BR, R from (736,575); portrait centres.)
-    static let armySlots = [(777, 615), (777, 679), (836, 615), (836, 679), (895, 615), (894, 679), (964, 615)]
     /// The stack labels' font: the game takes the largest Prose Antique no taller than the
     /// inset_text box (11 px; heroes4.exe 0x875bc0 and its size table at 0xa84798).
     lazy var ringFont: H4Font = font(11)

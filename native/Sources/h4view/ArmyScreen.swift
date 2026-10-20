@@ -86,12 +86,13 @@ extension Renderer {
     /// The army screen for an army (a double click in the army list or on the panel, 0x4b63e0):
     /// with the empty new army below when a split is possible; `item` picks the shown member
     /// (heroes, then stacks, as the panel orders them).
-    func openArmyScreen(_ h: Hero, item: Int = 0) {
+    func openArmyScreen(_ h: Hero, item: Int = 0, slot: Int? = nil) {
         guard let g = game else { return }
         g.select(h)
         let x = g.exchange(for: h) ?? g.singleRow(h)
         let s = ArmySession(leader: h, x: x, double: !x.isSingle)
-        s.selected = slotOf(item: item, in: h, rows: x.rows) ?? firstFilled(x.rows) ?? (0, 0)
+        let place = slot.flatMap { k in x.rows[0][safe: k] ?? nil != nil ? (row: 0, k: k) : nil }   // a ring of the army panel: the same place
+        s.selected = place ?? slotOf(item: item, in: h, rows: x.rows) ?? firstFilled(x.rows) ?? (0, 0)
         armySession = s
         adventureDialog = .hero(0)
     }

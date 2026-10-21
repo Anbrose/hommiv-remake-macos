@@ -15,7 +15,7 @@ public final class MapScene {
         public let image: SpriteImage  // base frame (or first frame)
         public let shadow: SpriteImage?
         public let x: Int, y: Int      // screen position of the image's top-left
-        public let anchorX: Int, anchorY: Int   // screen position of the anchor cell centre
+        public let anchorX: Int, anchorY: Int   // screen position of the anchor cell's top vertex (its centre is 16 px lower)
         public let cellX: Int, cellY: Int       // anchor cell (top corner of the footprint)
         public let category: String             // first component of the adv_object name
         public let depth: Int

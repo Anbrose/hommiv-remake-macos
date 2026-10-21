@@ -979,42 +979,19 @@ final class Renderer: NSObject, MTKViewDelegate {
         return (f, sh)
     }
 
-    /// The hero models' adv_actor offset (the median of the 23 hero.* models: x -5..-3,
-    /// y -26..-23), the point the remake's hero images are drawn from being the cell's top vertex.
-    static let heroModelOffset = (x: -4, y: -25)
-    /// Where a ship's images are drawn from relative to the cell's top vertex: its adv_actor model
-    /// offset less the hero models' (heroes4.exe draws both from the army's position plus the
-    /// model offset, 0x429100 / 0x429fd0). Zero for any other actor, whose images the remake
-    /// draws from the top vertex itself.
-    static func shipImageOffset(_ actor: String, _ model: AdvActor?) -> (x: Int, y: Int) {
-        guard actor.hasPrefix("ships."), let m = model else { return (0, 0) }
-        return (m.offset.x - heroModelOffset.x, m.offset.y - heroModelOffset.y)
+    /// The adv_actor model offset an actor's images are drawn at from its position (the cell's
+    /// top vertex; 0x429100 / 0x429fd0); zero without a model.
+    static func actorImageOffset(_ model: AdvActor?) -> (x: Int, y: Int) { model.map { ($0.offset.x, $0.offset.y) } ?? (0, 0) }
+    /// Where a ring (an army's highlight subimage) is drawn from so that the centre of its
+    /// images' union box lies on `centre`, the cell centre: 0x4034b0 keeps the union box's
+    /// centre (left + (right - left) / 2, truncated) and 0x402940 draws each frame at the actor's
+    /// position + (0, 16) less that centre plus the frame's box. The same cell point anchors the
+    /// path arrows and the X (t_path_arrow objects drawn from the cell's top vertex, 0x4d8250),
+    /// so arrows, X and rings line up.
+    static func ringOrigin(_ ring: Sprite, centre: (x: Int, y: Int)) -> (x: Int, y: Int)? {
+        guard let b = unionBox(ring) else { return nil }
+        return (centre.x - (b.left + (b.right - b.left) / 2), centre.y - (b.top + (b.bottom - b.top) / 2))
     }
-
-    /// The ring centre of the army a route ends on at `cell` (a wandering stack, an enemy army,
-    /// another of the player's armies or an ally's, an empty ship); nil when none stands there.
-    func armyRingCentre(at cell: (Int, Int), for h: Hero) -> (x: Int, y: Int)? {
-        guard let g = game else { return nil }
-        if let p = scene.placed.first(where: { $0.cellX == cell.0 && $0.cellY == cell.1 && g.monster(for: $0) != nil }),
-           let i = g.monster(for: p), g.monsters[i].bank == nil { return Renderer.stackRingCentre(p) }
-        if let e = g.enemyAt(cell.0, cell.1) { return ringCentre(army: e) }
-        if let f = g.heroes.first(where: { $0 !== h && $0.z == g.level && $0.x == cell.0 && $0.y == cell.1 }) { return ringCentre(army: f) }
-        if let b = g.boat(at: cell.0, cell.1) { let ship = Hero(actor: "", x: g.boats[b].x, y: g.boats[b].y, movement: 0); return ringCentre(army: ship) }
-        return nil
-    }
-    /// Where the selected army's ring (adv_object.internal.selected.army) is drawn from for an
-    /// army whose cell point is (x, y): centred under its feet, the cell's bottom vertex.
-    static func armyRingOrigin(_ ring: Sprite, x: Int, y: Int) -> (x: Int, y: Int) { (x + Int(ring.origin.x), y + Int(ring.origin.y)) }
-    /// The centre of an army's (selected.army) ring on the map, where a route's X on it goes.
-    func ringCentre(army h: Hero) -> (x: Int, y: Int)? {
-        guard let ring = arrowSprite("selected.army"), let b = Renderer.unionBox(ring) else { return nil }
-        let (sx, sy0) = screen(h.position.x, h.position.y)
-        let sy = sy0 - (game.map { h.elevation(in: $0.passability) } ?? 0)
-        let o = Renderer.armyRingOrigin(ring, x: Int(sx), y: Int(sy))
-        return (o.x + (b.left + b.right) / 2, o.y + (b.top + b.bottom) / 2)
-    }
-    /// The centre of a wandering stack's turning dashed ring (animation.highlight_ring), under its feet.
-    static func stackRingCentre(_ p: MapScene.Placed) -> (x: Int, y: Int) { (p.anchorX, p.anchorY - 2) }
     /// The union of a sprite's frame boxes (nil without frames).
     static func unionBox(_ s: Sprite) -> (left: Int, top: Int, right: Int, bottom: Int)? {
         guard let first = s.frames.first else { return nil }
@@ -1039,19 +1016,19 @@ final class Renderer: NSObject, MTKViewDelegate {
         let (px, py) = h.position
         let (sx, sy0) = screen(px, py)
         let sy = sy0 - (game.map { h.elevation(in: $0.passability) } ?? 0)   // raised on bridges
-        // The images' reference: the cell's top vertex for a hero or a heroless army (their
-        // images are authored for it). heroes4.exe draws every actor's images from its position
-        // plus the adv_actor model offset (0x429100 / 0x429fd0: model +4 / +8); a hero model's
-        // offset is about (-4, -25) and a ship's about (0, 0), so a ship (afloat, or empty) is
-        // drawn its offset less the hero reference from that vertex -- 25 px lower and 4 to the
-        // right -- and sits on the ring as a hero on land does, as the original's ships do.
-        let off = Renderer.shipImageOffset(actorName, model)
-        let ox = Int(sx) + off.x + Int(s.origin.x), oy = Int(sy) - 16 + off.y + Int(s.origin.y)   // origin is from the cell's top vertex
+        // The actor's position is the cell's top vertex (the anchor objects are drawn from);
+        // heroes4.exe draws every actor's images (heroes, heroless armies, ships, wandering
+        // stacks) from the position plus the adv_actor model offset (0x429100 / 0x429fd0:
+        // model +4 / +8) -- about (-4, -25) for a hero model, (0, 0) for a ship -- and its ring
+        // centred on the cell centre (ringOrigin).
+        let off = Renderer.actorImageOffset(model)
+        let posX = Int(sx), posY = Int(sy) - 16
+        let ox = posX + off.x + Int(s.origin.x), oy = posY + off.y + Int(s.origin.y)
         var parts: (ring: Quad?, shadow: Quad?, body: Quad?, flag: Quad?) = (nil, nil, nil, nil)
-        // the selected army's ring (adv_object.internal.selected.army, 8 turning frames) under its feet
-        if h === game?.heroes.first, let ring = arrowSprite("selected.army"), !ring.frames.isEmpty {
+        // the selected army's ring (adv_object.internal.selected.army, 8 turning frames) on the cell centre
+        if h === game?.heroes.first, let ring = arrowSprite("selected.army"), !ring.frames.isEmpty,
+           let (rx, ry) = Renderer.ringOrigin(ring, centre: (Int(sx), Int(sy))) {
             let f = ring.frames[Int(t / 0.1) % ring.frames.count]
-            let (rx, ry) = Renderer.armyRingOrigin(ring, x: Int(sx), y: Int(sy))
             parts.ring = Quad(texture: texture(for: f, of: "selected.army"), x: rx + f.box.left, y: ry + f.box.top, w: f.bitmap.width, h: f.bitmap.height)
         }
         if let sh = shadow { parts.shadow = Quad(texture: texture(for: sh, of: entry), x: ox + sh.box.left, y: oy + sh.box.top, w: sh.bitmap.width, h: sh.bitmap.height) }
@@ -1059,7 +1036,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         // the owner's flag at the actor model's flag point (an army with no owner, 6, has none)
         // (its phase keyed by the army, an empty ship's by its cell, so it does not jump as it walks)
         let id = ObjectIdentifier(h).hashValue, phase = h.actor.isEmpty ? (h.x, h.y) : (id & 0xffff, (id >> 16) & 0xffff)
-        parts.flag = actorFlag(actor: actorName, owner: h.owner, imageX: Int(sx) + off.x, imageY: Int(sy) - 16 + off.y, cellX: phase.0, cellY: phase.1, at: t)
+        parts.flag = actorFlag(actor: actorName, owner: h.owner, imageX: posX + off.x, imageY: posY + off.y, cellX: phase.0, cellY: phase.1, at: t)
         if ProcessInfo.processInfo.environment["H4DEBUG"] != nil {
             let out = [parts.ring, parts.shadow, parts.body, parts.flag].compactMap { $0 }
             print("hero: \(entry) at cell (\(px),\(py)) screen (\(sx),\(sy)) origin \(s.origin) frame \(frame?.name ?? "-") box \(frame.map { "\($0.box)" } ?? "-") -> \(out.map { "(\($0.x),\($0.y) \($0.w)x\($0.h))" })")
@@ -1179,12 +1156,7 @@ final class Renderer: NSObject, MTKViewDelegate {
                     let raise = g.passability.elevation(a.x, a.y)
                     let (sx, sy) = screen(Float(a.x), Float(a.y))
                     let ax = Int(sx), ay = Int(sy - raise) - 16
-                    var ox = ax + Int(s.origin.x), oy = ay + Int(s.origin.y)
-                    // the X on an army (0x4d8250 puts it on the army's own cell point, where the
-                    // game centres the army's ring): centred on the ring the remake draws it in
-                    if a.name.hasSuffix(".dest"), let c = armyRingCentre(at: (a.x, a.y), for: h), let b = Renderer.unionBox(s) {
-                        ox = c.x - (b.left + b.right) / 2; oy = c.y - (b.top + b.bottom) / 2
-                    }
+                    let ox = ax + Int(s.origin.x), oy = ay + Int(s.origin.y)
                     if let sh = s.shadow(for: f) { shadows.append(Quad(texture: texture(for: sh, of: a.name), x: ox + sh.box.left, y: oy + sh.box.top, w: sh.bitmap.width, h: sh.bitmap.height)) }
                     let q = Quad(texture: texture(for: f, of: a.name), x: ox + f.box.left, y: oy + f.box.top, w: f.bitmap.width, h: f.bitmap.height)
                     pieces += columnPieces(sprite: s, quads: [q], flag: nil, anchorX: ax, anchorY: ay, cellX: a.x, cellY: a.y, seq: Renderer.arrowSeq + arrowIndex)
@@ -1202,19 +1174,24 @@ final class Renderer: NSObject, MTKViewDelegate {
             if let g = game, g.fogEnabled {
                 if p.type == "random_monster" || p.type == "monster" || p.type == "army", let i = g.monster(for: p), !g.monsterSeen(i) { continue }
             }
-            // a wandering stack stands in the turning dashed ring (animation.highlight_ring), centred under its feet
+            // a wandering stack stands in the turning dashed ring (animation.highlight_ring), centred
+            // on its cell centre as an army's ring is (p.anchor is the cell's top vertex)
             var ring: Quad? = nil
-            if let g = game, let i = g.monster(for: p), g.monsters[i].bank == nil, let r = highlightRing, !r.frames.isEmpty {
+            if let g = game, let i = g.monster(for: p), g.monsters[i].bank == nil, let r = highlightRing, !r.frames.isEmpty,
+               let (rx, ry) = Renderer.ringOrigin(r, centre: (p.anchorX, p.anchorY + 16)) {
                 let f = r.frames[Int(t / 0.08) % r.frames.count]
-                let c = Renderer.stackRingCentre(p)
-                ring = Quad(texture: texture(for: f, of: "highlight_ring"), x: c.x - f.bitmap.width / 2, y: c.y - f.bitmap.height / 2, w: f.bitmap.width, h: f.bitmap.height)
+                ring = Quad(texture: texture(for: f, of: "highlight_ring"), x: rx + f.box.left, y: ry + f.box.top, w: f.bitmap.width, h: f.bitmap.height)
             }
             var (f, sh) = frame(of: p, at: t)
             var ax = p.anchorX, ay = p.anchorY, cell = (x: p.cellX, y: p.cellY)
-            var origin = p.sprite.origin
+            var origin = p.sprite.origin, off = (x: 0, y: 0)
             // a wandering stack walking up to a hero: drawn where it has got to in its walk
-            // sequences, sorted as an army is; one turned toward an army: its wait sequence that way
+            // sequences, sorted as an army is; one turned toward an army: its wait sequence that way.
+            // A stack is an actor (t_army): its images are drawn at its model's offset from the
+            // cell's top vertex, as a hero's are (0x429100 / 0x429fd0).
             if let g = game, let i = g.monster(for: p), let model = g.monsters[i].model {
+                let modelOffset = Renderer.actorImageOffset(actorModel(model))
+                if !p.sprite.isAdvObject { off = modelOffset }
                 var seq: (state: String, facing: String, frame: Int)? = g.monsters[i].facing.map { ("wait", $0, 0) }
                 if let c = g.charge, c.monster == i, let cp = g.chargePosition {
                     let (sx, sy) = screen(cp.x, cp.y)
@@ -1225,10 +1202,10 @@ final class Renderer: NSObject, MTKViewDelegate {
                 if let q = seq, let r = resolver, let e = r.sequence(actor: model, state: q.state, facing: q.facing) ?? r.sequence(actor: model, state: "wait", facing: q.facing),
                    let sp = actorSprite(e), let first = sp.frames.first {
                     let (af, ash) = actorFrame(sp, state: q.state, frame: q.frame, at: t)
-                    f = af ?? first; sh = ash ?? sp.shadow(for: f); origin = sp.origin
+                    f = af ?? first; sh = ash ?? sp.shadow(for: f); origin = sp.origin; off = modelOffset
                 }
             }
-            let ox = ax + Int(origin.x), oy = ay + Int(origin.y)
+            let ox = ax + off.x + Int(origin.x), oy = ay + off.y + Int(origin.y)
             var qs: [Quad] = []
             if let base = p.sprite.baseFrame, f.name != base.name {   // animated towns: frames are deltas over base_frame
                 qs.append(Quad(texture: texture(for: base, of: p.name), x: ox + base.box.left, y: oy + base.box.top, w: base.bitmap.width, h: base.bitmap.height))

@@ -982,6 +982,11 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// The adv_actor model offset an actor's images are drawn at from its position (the cell's
     /// top vertex; 0x429100 / 0x429fd0); zero without a model.
     static func actorImageOffset(_ model: AdvActor?) -> (x: Int, y: Int) { model.map { ($0.offset.x, $0.offset.y) } ?? (0, 0) }
+    /// The remake's anchor correction, matched to the original's screenshots (the hooves and a
+    /// stack's feet on their ring, the ring on the cell centre with the arrows): a hero-type
+    /// actor (hero, ship) sits (4, 10) below its model offset, a wandering stack (-1, 25) below
+    /// (an adv_object picture of a stack: (0, 18)). The exe-literal offsets drew both too high.
+    static let heroAnchorFix = (x: 4, y: 10), stackAnchorFix = (x: -1, y: 25), stackObjectAnchor = (x: 0, y: 18)
     /// Where a ring (an army's highlight subimage) is drawn from so that the centre of its
     /// images' union box lies on `centre`, the cell centre: 0x4034b0 keeps the union box's
     /// centre (left + (right - left) / 2, truncated) and 0x402940 draws each frame at the actor's
@@ -1021,7 +1026,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         // stacks) from the position plus the adv_actor model offset (0x429100 / 0x429fd0:
         // model +4 / +8) -- about (-4, -25) for a hero model, (0, 0) for a ship -- and its ring
         // centred on the cell centre (ringOrigin).
-        let off = Renderer.actorImageOffset(model)
+        let mo = Renderer.actorImageOffset(model), off = (x: mo.x + Renderer.heroAnchorFix.x, y: mo.y + Renderer.heroAnchorFix.y)
         let posX = Int(sx), posY = Int(sy) - 16
         let ox = posX + off.x + Int(s.origin.x), oy = posY + off.y + Int(s.origin.y)
         var parts: (ring: Quad?, shadow: Quad?, body: Quad?, flag: Quad?) = (nil, nil, nil, nil)
@@ -1190,8 +1195,9 @@ final class Renderer: NSObject, MTKViewDelegate {
             // A stack is an actor (t_army): its images are drawn at its model's offset from the
             // cell's top vertex, as a hero's are (0x429100 / 0x429fd0).
             if let g = game, let i = g.monster(for: p), let model = g.monsters[i].model {
-                let modelOffset = Renderer.actorImageOffset(actorModel(model))
-                if !p.sprite.isAdvObject { off = modelOffset }
+                let mo = Renderer.actorImageOffset(actorModel(model))
+                let modelOffset = (x: mo.x + Renderer.stackAnchorFix.x, y: mo.y + Renderer.stackAnchorFix.y)
+                off = p.sprite.isAdvObject ? Renderer.stackObjectAnchor : modelOffset
                 var seq: (state: String, facing: String, frame: Int)? = g.monsters[i].facing.map { ("wait", $0, 0) }
                 if let c = g.charge, c.monster == i, let cp = g.chargePosition {
                     let (sx, sy) = screen(cp.x, cp.y)

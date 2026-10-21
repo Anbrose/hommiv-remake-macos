@@ -1762,7 +1762,8 @@ public final class GameState {
         // a route of one step into an object or an army next to the hero: only the X on it
         if plan.isEmpty {
             if let e = h.attackTarget ?? h.tradeTarget, GameState.adjacent((h.x, h.y), (e.x, e.y)) {
-                return [(e.x, e.y, "\(seenThreat(to: h, at: e.x, e.y) != nil ? "yellow_arrow" : "green_arrow").dest")]
+                let onStack = monsters.indices.contains { monsters[$0].x == e.x && monsters[$0].y == e.y && monsters[$0].z == h.z && monsterSeen($0) }
+                return [(e.x, e.y, "\((onStack || seenThreat(to: h, at: e.x, e.y) != nil) ? "yellow_arrow" : "green_arrow").dest")]
             }
             guard h.target != nil, !h.isWalking else { return [] }
         }
@@ -1797,7 +1798,9 @@ public final class GameState {
             // the step into an object is costed like any other (the exe's route ends on it)
             let stepCost = passability.stepCost(from: px, py, to: c.x, c.y)
             // green while affordable, yellow inside a wandering stack's guard radius, red beyond this turn
-            let colour = left + 0.001 < stepCost ? "red_arrow" : seenThreat(to: h, at: c.x, c.y) != nil ? "yellow_arrow" : "green_arrow"
+            // the X on a seen wandering stack is in its danger too (as the original shows it)
+            let onStack = k == plan.count - 1 && monsters.indices.contains { monsters[$0].x == c.x && monsters[$0].y == c.y && monsters[$0].z == h.z && monsterSeen($0) }
+            let colour = left + 0.001 < stepCost ? "red_arrow" : (onStack || seenThreat(to: h, at: c.x, c.y) != nil) ? "yellow_arrow" : "green_arrow"
             left -= stepCost
             if k == plan.count - 1 { out.append((c.x, c.y, "\(colour).dest")); break }
             let n = plan[k + 1]

@@ -998,9 +998,22 @@ public final class GameState {
     /// Fight a wandering monster stack next to the hero: hand it to the combat screen, or
     /// resolve it at once with the quick-combat rules.
     func fight(hero: Hero, monsterAt i: Int, _ p: MapScene.Placed) {
-        guard let t = tables, let c = t.creature(monsters[i].creature) else { return }
+        guard tables?.creature(monsters[i].creature) != nil else { return }
         hero.target = nil
-        if !quickCombatOnly { pendingBattle = (hero, i, p); return }
+        if offerJoin(hero: hero, monsterAt: i, p) { return }     // Charm / Diplomacy sway some of it (0x521780)
+        if offerFlight(hero: hero, monsterAt: i, p) { return }   // a weak wandering stack turns to flee (0x52272c)
+        startBattle(hero: hero, monsterAt: i, p, quick: quickCombatOnly)
+    }
+    /// A wandering stack's question (t_dialog_enemy_runs, re/neutral_encounter_spec.md): the
+    /// hero, the stack and its map object, waiting for resolveFlee.
+    public var pendingFlee: (hero: Hero, monster: Int, placed: MapScene.Placed)?
+    /// A Charm / Diplomacy offer waiting for resolveJoin.
+    public var pendingJoin: JoinOffer?
+
+    /// The battle itself (0x80a080): the combat screen, or the quick-combat rules.
+    func startBattle(hero: Hero, monsterAt i: Int, _ p: MapScene.Placed, quick: Bool) {
+        guard let t = tables, let c = t.creature(monsters[i].creature) else { return }
+        if !quick { pendingBattle = (hero, i, p); return }
         let result = QuickCombat.fight(attackers: combatants(of: hero), defenders: [Combatant(creature: c, count: monsters[i].count)],
                                        seed: day * 131 + hero.x * 17 + hero.y)
         if ProcessInfo.processInfo.environment["H4DEBUG"] != nil { for l in result.log.prefix(12) { print("  " + l) } }

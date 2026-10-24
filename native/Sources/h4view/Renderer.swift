@@ -645,6 +645,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         out += heroPickQuads().modal()
         out += skillDialogQuads().modal()
         out += teleporterQuads().modal()
+        out += charmDialogQuads().modal()
+        out += enemyRunsQuads().modal()
         out += caravanQuads().modal()
         out += messageBoxQuads().modal()
         out += saveDialogQuads().modal()

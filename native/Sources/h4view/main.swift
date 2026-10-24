@@ -537,6 +537,11 @@ if let out = snapshot {
         print("ability press: \(renderer.abilityPress(x: q[0], y: q[1]))")
     }
     if openChest, let h = game.heroes.first { game.chestOffer = (h, 1500, 1000); renderer.adventureDialog = .chest; renderer.chestChoice = true }
+    if let c = ProcessInfo.processInfo.environment["H4CHARM"], let h = game.heroes.first, let p = game.scene.placed.first(where: { game.monster(for: $0) != nil }) {   // snapshot: a Charm / Diplomacy offer ("charm", "diplomacy" or "both")
+        let m = game.monster(for: p)!, s = [Hero.Stack(creature: game.monsters[m].creature, count: max(1, game.monsters[m].count / 4))]
+        game.pendingJoin = GameState.JoinOffer(hero: h, monster: m, placed: p, charm: c == "diplomacy" ? [] : s, diplomacy: c == "charm" ? [] : s, charmLevel: 2, diplomacyLevel: 1, cost: 250)
+    }
+    if ProcessInfo.processInfo.environment["H4ENEMYRUNS"] != nil, let h = game.heroes.first, let p = game.scene.placed.first(where: { game.monster(for: $0) != nil }) { game.pendingFlee = (h, game.monster(for: p)!, p) }   // snapshot: a wandering stack's flee question
     if openTown {
         renderer.townOpen = game.towns.firstIndex { $0.owned }
         if let i = renderer.townOpen, let h = game.heroes.first { game.townVisitor = (i, h) }   // the hero by the gate walked in
@@ -889,6 +894,8 @@ final class MapView: MTKView {
         if renderer.messageBoxClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale) { return }   // a script message: only OK
         if renderer.caravanUI != nil, renderer.townOpen == nil { renderer.caravanClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.choiceClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale, double: e.clickCount >= 2) { return }
+        if renderer.charmDialogClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale) { return }
+        if renderer.enemyRunsClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale) { return }
         if renderer.heroPickClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale) { return }
         if renderer.skillDialogClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale) { return }
         if renderer.teleporterClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale, double: e.clickCount >= 2) { return }

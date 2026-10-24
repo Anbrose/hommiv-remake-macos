@@ -226,7 +226,7 @@ extension GameState {
     }
     /// Something waits for the player (a dialog, a battle, a stack charging).
     var adventureBusy: Bool {
-        charge != nil || pendingBattle != nil || pendingHeroBattle != nil || pendingSiege != nil || pendingTrade != nil
+        charge != nil || pendingBattle != nil || pendingFlee != nil || pendingJoin != nil || pendingHeroBattle != nil || pendingSiege != nil || pendingTrade != nil
             || chestOffer != nil || question != nil || choice != nil || teleportChoice != nil || hireOpen != nil
             || dwellingOpen != nil || heroPick != nil || skillDialog != nil || shopOpen != nil || sanctuaryOpen != nil || puzzleOpen != nil || levelUp != nil || battleUnderway
             || !scripts.messages.isEmpty

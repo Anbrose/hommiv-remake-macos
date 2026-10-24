@@ -142,6 +142,7 @@ if let t = ruleTables {
     let expansion = max(0, min(2, map.version - 27))
     let sea: Set<String> = ["mermaid", "sea monster", "pirate"]
     RandomResolver.creaturePool = (1...4).map { lv in t.creatures.filter { $0.level == lv && $0.expansion <= expansion && !sea.contains($0.keyword) }.map { $0.keyword } }
+    RandomResolver.potionPool = RuleTables.artifactIds.indices.filter { i in t.artifacts[RuleTables.artifactIds[i]].map { $0.level.lowercased() == "item" && $0.slot.lowercased() == "potion" && $0.allowedByDefault } ?? false }
 }
 RandomResolver.playerAlignments = Dictionary(map.playerSpecs.map { ($0.colour, $0.alignments) }, uniquingKeysWith: { a, _ in a })
 // the new-game screen's choices: "--human <colour>", "--align <colour>:<alignment 0-5>", "--difficulty <0-4>"

@@ -45,6 +45,29 @@ public struct RandomResolver {
     /// among the creatures of the level that are not sea creatures and whose expansion the map
     /// allows; set from the creature table before the scene is built.
     public static var creaturePool: [[String]]? = nil
+    /// The potions a random potion can become (artifact ids: heroes4.exe 0x4d9c30 picks among the
+    /// potion-slot artifacts allowed by default), set from the artifact table before the scene is
+    /// built. The picture is the potion's own: the exe swaps the random potion for an artifact
+    /// object of the potion it rolled (0x431a90).
+    public static var potionPool: [Int]? = nil
+    /// The potions' adventure-map model names by artifact id (heroes4.exe 0x42f930's table at
+    /// 0x972588, prefixed "artifacts.potions."; the entries are aliases of the miscellaneous.potions
+    /// files). They follow neither the keyword nor the shown name ("Demon Fire" is "vial of kreegan fire").
+    public static let potionModels: [Int: String] = [
+        0x5a: "holy water", 0x81: "potion of cold", 0x82: "potion of endurance", 0x83: "potion of fire resistance",
+        0x84: "potion of healing", 0x85: "potion of health", 0x86: "potion of luck", 0x87: "potion of mana",
+        0x88: "potion of mirth", 0x89: "potion of precognition", 0x8a: "potion of quickness", 0x8b: "potion of resistance",
+        0x8c: "potion of restoration", 0x8d: "potion of speed", 0x8e: "potion of strength", 0xd1: "vial of acid",
+        0x13: "vial of binding liquid", 0xd2: "vial of blinding smoke", 0xd3: "vial of choking gas",
+        0x2b: "vial of cloud of despair", 0x5f: "vial of kreegan fire", 0xd4: "vial of poison"]
+    /// The potion artifact a map model shows ("adv_object.artifacts.potions.Potion of Healing.h4d", or
+    /// the miscellaneous.potions file it aliases).
+    public static func potion(ofModel entry: String) -> Int? {
+        let e = entry.lowercased()
+        guard let r = e.range(of: "potions."), e.hasSuffix(".h4d") else { return nil }
+        let n = String(e[r.upperBound..<e.index(e.endIndex, offsetBy: -4)])
+        return potionModels.first { $0.value == n }?.key
+    }
     /// The alignments each player may have (MapFile.playerSpecs), by player index.
     public static var playerAlignments: [Int: UInt8] = [:]
     /// Town factions in alignment bit order (life, order, death, chaos, nature, might).
@@ -111,6 +134,10 @@ public struct RandomResolver {
             // several picks: a few artifact files are unfinished placeholders the caller skips
             let all = index.keys.filter { $0.hasPrefix("adv_object.artifacts.") && !$0.contains("random artifact") }.sorted()
             if !all.isEmpty { return (0..<3).map { index[all[RandomResolver.seed(o, $0) % all.count]]! } }
+        case "random_potion":
+            let pool = (RandomResolver.potionPool ?? RandomResolver.potionModels.keys.sorted()).filter { RandomResolver.potionModels[$0] != nil }
+            // (the models are archive aliases, which the name index leaves out)
+            if !pool.isEmpty, let e = archive.realName("adv_object.artifacts.potions.\(RandomResolver.potionModels[RandomResolver.pick(pool, o)]!).h4d") { return [e] }
         case "random_shrine":
             name = "adv_object.shrines.\(RandomResolver.pick(RandomResolver.schools, o)) \(RandomResolver.level(o.subtype)).h4d"
         case "random_teacher":

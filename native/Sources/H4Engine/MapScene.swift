@@ -199,9 +199,8 @@ public final class MapScene {
                     let left = sx - 32, top = sy - 16 - cy
                     guard top + 32 > 0, top < bandHeight else { continue }
                     let row = x + y, col = (y - x - (x + y) % 2) / 2
-                    let ti = (MapScene.mod(row, 6) + 2) * 10 + (MapScene.mod(col, 6) + 2)
                     let base = try patch(MapScene.terrainFile(type: cell.type, variant: cell.variant, x: x, y: y) ?? "grass.2.1")
-                    MapScene.blit(&canvas, base.tiles[ti], left, top, mask: nil)
+                    MapScene.blit(&canvas, base.tile(row: row, col: col), left, top, mask: nil)
                     // overlays and road pieces interleave by their order byte (roads sit at 10..14,
                     // overlays at 0..9 and 15..19, so terrain drawn after a road nibbles its edges)
                     enum Item { case overlay(Overlay), road(Road) }
@@ -219,13 +218,13 @@ public final class MapScene {
                                 : (overWater ? (MapScene.shoreSwap ? "land_to_water \(variant)" : "water_to_land \(variant)")
                                              : (MapScene.shoreSwap ? "water_to_land \(variant)" : "land_to_water \(variant)"))
                             let set = masks.sets[setName] ?? land
-                            MapScene.blit(&canvas, try patch(f).tiles[ti], left, top, mask: set[min(ov.mask, set.count - 1)])
+                            MapScene.blit(&canvas, try patch(f).tile(row: row, col: col), left, top, mask: set[min(ov.mask, set.count - 1)])
                         case .road(let rd):
                             guard rd.mask < road.count else { continue }
                             let type = rd.kind == 0 ? roadTypes[x * n + y] : rd.kind
                             guard let f = MapScene.roadFile[type] else { continue }
                             // the body is the cell minus the mask (terrain shows in the mask), a shoulder is the mask itself
-                            MapScene.blit(&canvas, try patch("\(f).\(((x / 10) + (y / 10)) % 2 + 1)").tiles[ti], left, top, mask: road[rd.mask], invert: rd.kind == 0)
+                            MapScene.blit(&canvas, try patch("\(f).\(((x / 10) + (y / 10)) % 2 + 1)").tile(row: row, col: col), left, top, mask: road[rd.mask], invert: rd.kind == 0)
                         }
                     }
                 }
@@ -296,7 +295,7 @@ public final class MapScene {
                 if spriteCache[c] == nil, let d = try? archive.payload(c), let s = try? Sprite(data: d) { spriteCache[c] = s }
                 if let s = spriteCache[c], !s.isPlaceholder { key = c; break }
             }
-            if debug, o.type.hasPrefix("random") { print("resolve \(o.name) [\(o.type)/\(o.subtype)] -> \(candidates) => \(key)") }
+            if debug, o.type.hasPrefix("random") { print("resolve \(o.name) [\(o.type)/\(o.subtype)] at (\(o.x),\(o.y)) -> \(candidates) => \(key)") }
             if spriteCache[key] == nil {
                 guard let d = try? archive.payload(key), let s = try? Sprite(data: d) else { continue }
                 spriteCache[key] = s

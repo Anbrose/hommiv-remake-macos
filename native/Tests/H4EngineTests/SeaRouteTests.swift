@@ -83,7 +83,7 @@ final class SeaRouteTests: XCTestCase {
         g.click(hero: h, pickup: mermaid)
         walk(g, h)
         XCTAssertTrue(GameState.adjacent((h.x, h.y), (195, 98)))
-        XCTAssertEqual(g.pendingBattle?.monster, 98)
+        XCTAssertEqual(g.pendingBattle?.monster ?? g.pendingFlee?.monster, 98)   // (the flee offer, 0x522727, when the stack is worth at most a fifth of the army)
 
         // landing on the beach the army came from (one step over water first): the empty ship stays behind
         g.pendingBattle = nil

@@ -32,7 +32,9 @@ public struct SaveGame: Codable {
     public var objectStates: [String: ObjectState]? = nil
     public var enemyHeroes: [HeroState]? = nil
     public var aiResources: [Int: [String: Int]]? = nil
+    /// The human's keys (older saves); `playerKeys` has every player's.
     public var keys: [String]? = nil
+    public var playerKeys: [Int: [String]]? = nil
     public var mineOwners: [Int?]? = nil
     /// Each mine's guards (nil: none anywhere, an older save).
     public var mineGuards: [[Stack]]? = nil
@@ -170,7 +172,7 @@ extension GameState {
         s.eliminatedPlayers = eliminatedPlayers.sorted(); s.lostPlayers = lostPlayers.sorted()
         s.battlesWon = battlesWon; s.battlePoints = battlePoints; s.questsCompleted = questsCompleted; s.carriedIn = carriedIn
         s.objectStates = objectStates; s.usedArtifacts = Array(usedArtifacts).sorted()
-        s.enemyHeroes = enemyHeroes.map { SaveGame.state(of: $0) }; s.aiResources = aiResources; s.difficulty = difficulty; s.keys = Array(keys).sorted()
+        s.enemyHeroes = enemyHeroes.map { SaveGame.state(of: $0) }; s.aiResources = aiResources; s.difficulty = difficulty; s.playerKeys = keys.mapValues { Array($0).sorted() }
         s.mineOwners = mines.map { $0.owner }
         if mines.contains(where: { !$0.guards.isEmpty }) { s.mineGuards = mines.map { $0.guards.map { SaveGame.Stack(creature: $0.creature, count: $0.count) } } }
         s.boats = boats
@@ -266,7 +268,7 @@ extension GameState {
         }
         if let a = s.aiResources { aiResources = a }
         if let d = s.difficulty { difficulty = d }
-        if let k = s.keys { keys = Set(k) }
+        if let k = s.playerKeys { keys = k.mapValues { Set($0) } } else if let k = s.keys { keys = [map.humanColour: Set(k)] }
         if let o = s.obeliskVisits { obeliskVisits = o }
         if let v = s.shroudVisits { shroudVisits = v }
         if let d = s.digSites { digSites = d }
@@ -274,6 +276,7 @@ extension GameState {
         sanctuaryGuests = (s.sanctuaryGuests ?? [:]).mapValues { SaveGame.hero(from: $0) }
         sanctuaryPaid = Set(s.sanctuaryPaid ?? [])
         reapplyGarrisons()
+        applyBorderGates(for: map.humanColour)
         if let f = s.fog { fog = f.compactMap { Data(base64Encoded: $0).map { [UInt8]($0) } }; fogLevel = []; updateVision() }
         if let bs = s.boats { boats = bs; for b in bs where b.z < passabilities.count { passabilities[b.z].block(b.x, b.y) } }
         caravans = (s.caravans ?? []).compactMap { c in

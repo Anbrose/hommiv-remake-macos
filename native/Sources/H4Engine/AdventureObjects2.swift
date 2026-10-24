@@ -125,16 +125,9 @@ extension GameState {
             }
             hero.army.removeAll { $0.count <= 0 }
             teleport(hero, to: to, p)
-        case "keymaster_tent":
-            dialogueSound(17)
-            if keys.contains(p.subtype) { say(p, "Empty") } else { keys.insert(p.subtype); say(p, "Initial") }
-        case "border_gate":
-            if keys.contains(p.subtype) { remove(p) }   // the key opens it
-            else { say(p, "Denied", ["%keymaster_tent_name": tables?.objectText("keymaster_tent", p.subtype, "name") ?? "Keymaster's Tent"]); dialogueSound(17) }
-        case "border_guard":
-            dialogueSound(17)
-            if keys.contains(p.subtype) { question = (objectText(p, "Accepted") ?? "Open it?", { [weak self] in self?.remove(p) }) }
-            else { say(p, "Denied", ["%keymaster_tent_name": tables?.objectText("keymaster_tent", p.subtype, "name") ?? "Keymaster's Tent"]) }
+        case "keymaster_tent": visitKeymaster(hero, p)    // (Keymasters.swift)
+        case "border_gate": visitBorderGate(hero, p)
+        case "border_guard": visitBorderGuard(hero, p)
         case "tower", "cartographer":
             visitLookout(hero, p)   // (ShroudRemovers.swift)
         case "hut_of_the_magi":

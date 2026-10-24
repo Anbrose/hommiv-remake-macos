@@ -138,6 +138,8 @@ extension GameState {
     /// What the computer hero goes for: (path to where it stands, the target cell, what it does there).
     func aiTarget(_ h: Hero) -> (path: [(x: Int, y: Int)], stand: (Int, Int), at: (Int, Int), use: () -> Void)? {
         let ours = strength(h), ourArmy = combatants(of: h)
+        applyBorderGates(for: h.owner)   // its routes through the gates it has the keys of
+        defer { applyBorderGates(for: map.humanColour) }
         var best: (score: Float, path: [(x: Int, y: Int)], stand: (Int, Int), at: (Int, Int), use: () -> Void)? = nil
         /// `feasible`: the fight it needs is one the battle prediction says it wins (0x479000).
         func consider(_ value: Float, at cell: (Int, Int), stand: [(Int, Int)], if feasible: () -> Bool = { true }, use: @escaping () -> Void) {
@@ -206,6 +208,8 @@ extension GameState {
                 case "windmill", "weekly_material_generator", "random_weekly_material_generator": v = st?.owner == h.owner ? 0 : 900
                 case "academy", "arena", "training_grounds", "mercenary_camp", "sacred_grove", "sphinx": v = h.visitedObjects.contains(objectKey(p)) ? 0 : 700
                 case "magic_gem": v = 800
+                case "keymaster_tent": v = hasKey(h.owner, p.subtype) ? 0 : 3000   // (0x443950)
+                case "border_guard": v = hasKey(h.owner, p.subtype) ? 1500 : 0     // (0x43a140)
                 case "tower", "cartographer", "hut_of_the_magi": v = shroudRemoverValue(p, for: h.owner)   // (0x842120)
                 case "creature_bank": if let s = st, s.guardCounts.contains(where: { $0 > 0 }) { v = ours > Float(s.worth) * 2 ? Float(s.worth) : 0 }
                 default: v = 0

@@ -38,7 +38,7 @@ final class GuardZoneTests: XCTestCase {
         let m = g.monsters[i]
         guard let p = g.scene.placed.first(where: { g.monster(for: $0) == i }) else { return XCTFail("stack not placed") }
         g.passability.free(m.x, m.y)
-        g.monsters[i] = GameState.Monster(x: c.0, y: c.1, name: m.name, creature: creature, count: 3)
+        g.monsters[i] = GameState.Monster(x: c.0, y: c.1, name: m.name, creature: creature, count: 50)   // (worth over a fifth of the army: it does not flee, 0x522727)
         g.passability.block(c.0, c.1); g.passability.openTrigger(c.0, c.1, object: Int.max)
         _ = g.scene.relocate(p, toX: c.0, y: c.1)
     }
@@ -67,7 +67,7 @@ final class GuardZoneTests: XCTestCase {
     func hero(_ g: GameState, at c: (Int, Int)) -> Hero {
         let h = Hero(actor: "hero.life_might_male", x: c.0, y: c.1, movement: 30)
         h.owner = g.map.humanColour
-        h.army = [Hero.Stack(creature: g.tables?.creatures.first { $0.level == 4 }?.keyword ?? "peasant", count: 50)]
+        h.army = [Hero.Stack(creature: "peasant", count: 1)]   // (weak: a stack facing a far stronger army flees, 0x522560)
         g.heroes = [h]
         return h
     }
@@ -85,6 +85,7 @@ final class GuardZoneTests: XCTestCase {
         try scenarioStealthHidesFromLowerStacks(g)
         try scenarioEndingAMoveInAZoneIsAttacked(g)
         try scenarioRoutesGoRoundASeenZone(g)
+        try scenarioNoWayPastAStackInAPass(g)
         try scenarioClickOnAStackPlansThenAttacks(g)
         try scenarioAdjacentStackTakesTwoClicks(g)
         try scenarioPickingUpInAZoneIsAttacked(g)
@@ -174,6 +175,49 @@ final class GuardZoneTests: XCTestCase {
             prev = (c.x, c.y)
         }
         XCTAssertFalse(h.plan.dropLast().contains { map.a($0.x, $0.y) != nil })
+    }
+
+    /// The planner weighs no danger for a player's route (0x4fe640 adds the danger penalty only
+    /// for type 2): a zone shapes routes solely through its forced exits (0x4ff856). A pass whose
+    /// only cell is in a seen stack's zone cannot be crossed -- no route at all, not one through
+    /// the zone; the stack itself is still reached and attacked. Unseen (fog: no B marks, no
+    /// forced exits), the route goes through the pass at its plain cost.
+    func scenarioNoWayPastAStackInAPass(_ g: GameState) throws {
+        let strong = g.tables?.creatures.first { $0.level == 4 }?.keyword ?? "peasant"
+        let (i, m) = try stackOnOpenGround(g, creature: strong)
+        // a box of radius 6 split by a wall through the stack's column; the one gap is the cell
+        // next to the stack, (m.0, m.1 + 1)
+        var walls: [(Int, Int)] = []
+        for dx in -6...6 { for dy in -6...6 where abs(dx) == 6 || abs(dy) == 6 || (dx == 0 && dy != 0 && dy != 1) { walls.append((m.0 + dx, m.1 + dy)) } }
+        for c in walls { g.passability.block(c.0, c.1) }
+        defer { for c in walls { g.passability.free(c.0, c.1) } }
+        let h = hero(g, at: (m.0 - 4, m.1 + 3))
+        let target = (m.0 + 4, m.1 + 3)
+        XCTAssertEqual(g.guardMap(for: h).b(m.0, m.1 + 1).map { [$0.dir, $0.dist] }, [6, 2])   // clean, straight at the stack
+        XCTAssertEqual(g.guardMap(for: h).b(m.0, m.1 + 1)?.clean, true)
+        g.click(hero: h, x: target.0, y: target.1)
+        XCTAssertTrue(h.plan.isEmpty)                                 // no route past it
+        XCTAssertNil(g.daysToReach(h, target))
+        // the stack: the route ends on it and the hero attacks from the cell before it
+        guard let p = g.scene.placed.first(where: { g.monster(for: $0) == i }) else { return XCTFail() }
+        g.click(hero: h, pickup: p)
+        XCTAssertEqual(h.target.map { [$0.x, $0.y] }, [m.0, m.1])
+        g.click(hero: h, pickup: p)
+        run(g)
+        XCTAssertEqual(g.pendingBattle?.monster, i)
+        XCTAssertEqual(max(abs(h.x - m.0), abs(h.y - m.1)), 1)
+        g.pendingBattle = nil; g.charge = nil; g.pendingGuardChecks = []
+        // not seen: no forced exits, the route takes the gap at its plain cost
+        let h2 = hero(g, at: (m.0 - 4, m.1 + 3))
+        g.fogEnabled = true
+        let n = g.map.size
+        g.fog = [Array(repeating: GameState.fogUnexplored, count: n * n)]
+        g.fogLevel = [Array(repeating: -1, count: n * n)]
+        defer { g.fogEnabled = false }
+        g.click(hero: h2, x: target.0, y: target.1)
+        XCTAssertTrue(h2.plan.contains { $0.x == m.0 && $0.y == m.1 + 1 })
+        var p0 = g.passability; p0.forcedExit = [:]
+        XCTAssertEqual(h2.plan.map { [$0.x, $0.y] }, p0.path(from: (h2.x, h2.y), to: target)?.map { [$0.x, $0.y] })
     }
 
     /// Clicking on the stack: the first click plans a route into it, the second walks it and

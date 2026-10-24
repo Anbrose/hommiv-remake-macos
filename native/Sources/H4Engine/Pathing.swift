@@ -127,6 +127,10 @@ extension Passability {
     /// (150 diagonally), a node on land is not expanded (the landing ends the route) and an
     /// object is entered on its own medium only (0x4fea80). Returns the cost and predecessor of
     /// every cell.
+    /// Danger has no cost here: 0x4fe640 adds its once-per-route penalty (0x7fffffff, [0xa994ec])
+    /// only for search type 2 (the caravans' safe route, Caravans.swift); a player's route (type 0)
+    /// is shaped by the forced exits alone, so a seen zone is never crossed and a cell beyond a
+    /// pass it closes has no route (re/adventure_pathing_spec.md §6a).
     public func search(from start: (Int, Int), goals: Set<Int> = [], afloat: Bool = false) -> (cost: [Int32], prev: [Int32]) {
         search(fromAll: [start], goals: goals, afloat: afloat)
     }

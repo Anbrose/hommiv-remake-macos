@@ -93,6 +93,139 @@ final class GuardZoneTests: XCTestCase {
         try scenarioClickWhileWalkingStops(g)
     }
 
+    /// Another player's army on open ground: the cleared spot of a wandering stack (put out of
+    /// the way), an enemy hero of another team with a strong army standing there.
+    func enemyOnOpenGround(_ g: GameState) throws -> (Hero, (Int, Int)) {
+        let me = g.map.humanColour
+        guard let foe = (0..<8).first(where: { $0 != me && g.team(of: $0) != g.team(of: me) }) else { throw XCTSkip("no foe") }
+        let (i, m) = try stackOnOpenGround(g)
+        g.monsters[i].count = 0; g.passability.free(m.0, m.1)
+        g.enemyHeroes = []; g.armyCharge = nil; g.pendingHeroBattle = nil; g.aiAttacking = false
+        let e = Hero(actor: "hero.death_might_male", x: m.0, y: m.1, movement: 30)
+        e.owner = foe; e.name = "Foe"
+        e.army = [Hero.Stack(creature: "peasant", count: 50)]
+        g.place(enemy: e)
+        return (e, m)
+    }
+
+    /// The zones of other players' armies (0x498460 floods every army of another team): an enemy
+    /// hero's army marks, forces routes and falls on the player's army that ends its move in its
+    /// zone (0x4f81e0, the enemy the attacker); the player's army falls on a computer army that
+    /// ends its move in his; an enemy the player does not see does not attack.
+    func testEnemyHeroZones() throws {
+        let g = try loadGame()
+        // the flood and the cell's attacker; a forced exit and a yellow arrow toward it
+        var (e, m) = try enemyOnOpenGround(g)
+        var h = hero(g, at: (m.0 - 6, m.1))
+        let map = g.guardMap(for: h)
+        XCTAssertEqual(map.a(m.0, m.1)?.dist, 0)
+        XCTAssertEqual(map.a(m.0 + 1, m.1 + 1)?.dist, 3)
+        XCTAssertEqual(map.a(m.0 - 2, m.1)?.dist, 4)
+        XCTAssertNil(map.a(m.0 - 3, m.1))
+        XCTAssertEqual(g.guardAttacker(at: (m.0 - 2, m.1 + 1), map), .army(e))
+        XCTAssertEqual(g.forcedExits(for: h)[(m.0 - 2) * g.map.size + m.1], 4)   // (+1, 0): toward the enemy
+        XCTAssertEqual(g.seenThreat(to: h, at: m.0 - 2, m.1), .army(e))
+        XCTAssertNil(g.seenThreat(to: h, at: m.0 - 3, m.1))
+        // an army of the player's own team marks nothing
+        e.owner = g.map.humanColour
+        XCTAssertNil(g.guardMap(for: h).a(m.0 - 1, m.1))
+        e.owner = (0..<8).first { $0 != g.map.humanColour && g.team(of: $0) != g.team(of: g.map.humanColour) }!
+
+        // walking into the zone: the walk ends there, the enemy walks up and attacks
+        g.click(hero: h, x: m.0 - 2, y: m.1)
+        g.click(hero: h, x: m.0 - 2, y: m.1)
+        XCTAssertTrue(h.isWalking)
+        var enemyStates: [String] = []
+        for _ in 0..<900 {
+            g.update(dt: 1.0 / 30)
+            if g.armyCharge != nil, let s = e.animState, enemyStates.last != s { enemyStates.append(s) }
+            if g.pendingHeroBattle != nil { break }
+        }
+        XCTAssertEqual([h.x, h.y], [m.0 - 2, m.1])
+        XCTAssertTrue(g.pendingHeroBattle?.hero === h && g.pendingHeroBattle?.enemy === e)
+        XCTAssertTrue(g.aiAttacking)   // the computer's army attacks
+        XCTAssertEqual([e.x, e.y], [m.0 - 1, m.1])   // it came to the hero
+        XCTAssertEqual(enemyStates.first, "prewalk")
+        XCTAssertEqual(e.animState, "attack")
+        XCTAssertFalse(g.passability.isFree(e.x, e.y))
+
+        // the reverse: a computer army whose move ends in the zone of the player's army
+        (e, m) = try enemyOnOpenGround(g)
+        h = hero(g, at: (m.0 + 2, m.1))
+        XCTAssertEqual(g.guardMap(for: e).a(e.x, e.y)?.dist, 4)   // (an army's cell is entered straight)
+        g.guardAttack(e)
+        XCTAssertTrue(g.armyCharge?.attacker === h)
+        for _ in 0..<900 { g.update(dt: 1.0 / 30); if g.pendingHeroBattle != nil { break } }
+        XCTAssertTrue(g.pendingHeroBattle?.hero === h && g.pendingHeroBattle?.enemy === e)
+        XCTAssertFalse(g.aiAttacking)   // the player's army attacks
+        XCTAssertEqual([h.x, h.y], [m.0 + 1, m.1])
+
+        // an enemy the player does not see (Grandmaster Stealth, no creatures): it marks the
+        // ground (A) but forces nothing, and does not fall on him (0x4f83c1)
+        (e, m) = try enemyOnOpenGround(g)
+        e.army = []; e.skills["stealth"] = 5
+        h = hero(g, at: (m.0 - 2, m.1))
+        g.fogEnabled = true; g.updateVision()
+        defer { g.fogEnabled = false }
+        XCTAssertFalse(g.isVisible(e))
+        XCTAssertEqual(g.threat(to: h, at: h.x, h.y), .army(e))
+        XCTAssertNil(g.seenThreat(to: h, at: h.x, h.y))
+        XCTAssertNil(g.forcedExits(for: h)[h.x * g.map.size + h.y])
+        g.guardAttack(h)
+        XCTAssertNil(g.armyCharge)
+        XCTAssertNil(g.pendingHeroBattle)
+        g.fogEnabled = false
+        try garrisonPassage(g)
+    }
+
+    /// A garrison's gate (0x442a90): it stops an army while it has troops and is not its side's;
+    /// the player's view shuts it, the computer's planner (type 7) never; a computer army fights
+    /// the troops from the cell before (0x4423f0): a win takes it, a loss leaves the survivors.
+    func garrisonPassage(_ g: GameState) throws {
+        let (e, m) = try enemyOnOpenGround(g)
+        g.removeEnemy(e)
+        let me = g.map.humanColour, foe = e.owner, n = g.map.size, key = "0|\(m.0)|\(m.1)"
+        var st = ObjectState(); st.isGarrison = true; st.garrisonOwner = me
+        st.troopCreatures = ["peasant"]; st.troopCounts = [300]; st.gate = [m.0 * n + m.1]
+        g.objectStates[key] = st
+        XCTAssertFalse(g.garrisonStops(st, for: me))
+        XCTAssertTrue(g.garrisonStops(st, for: foe))
+        if let ally = (0..<8).first(where: { $0 != me && g.team(of: $0) == g.team(of: me) }) { XCTAssertFalse(g.garrisonStops(st, for: ally)) }
+        var nobody = st; nobody.garrisonOwner = nil
+        XCTAssertTrue(g.garrisonStops(nobody, for: me))   // (no owner: nobody's ally)
+        var empty = st; empty.troopCounts = [0]
+        XCTAssertFalse(g.garrisonStops(empty, for: foe))
+        // the views: the player's own gate is open; a foe's shut to him, open to the computer's planner
+        g.applyGarrisonGates(for: me)
+        XCTAssertTrue(g.passability.isFree(m.0, m.1))
+        st.garrisonOwner = foe; g.objectStates[key] = st
+        g.applyGarrisonGates(for: me)
+        XCTAssertFalse(g.passability.isFree(m.0, m.1))
+        g.applyGarrisonGates(for: nil, planner: true)
+        XCTAssertTrue(g.passability.isFree(m.0, m.1))
+        g.applyGarrisonGates(for: me)
+        // a computer army before the player's gate: stopped there, it fights the troops
+        st.garrisonOwner = me; g.objectStates[key] = st; g.applyGarrisonGates(for: me)
+        let a = Hero(actor: "hero.death_might_male", x: m.0 - 1, y: m.1, movement: 30)
+        a.owner = foe; a.name = "Foe"; a.army = [Hero.Stack(creature: "peasant", count: 2)]
+        g.place(enemy: a)
+        XCTAssertEqual(g.garrisonGate(at: (m.0, m.1), z: 0), key)
+        XCTAssertTrue(g.aiVacant((m.0, m.1), for: a))   // (whether it stops is the walk's test)
+        g.aiAttackGarrison(a, key)
+        XCTAssertFalse(g.enemyHeroes.contains { $0 === a })   // beaten
+        XCTAssertEqual(g.objectStates[key]?.garrisonOwner, me)
+        XCTAssertGreaterThan(g.objectStates[key]?.troopCounts.first ?? 0, 0)
+        let b = Hero(actor: "hero.death_might_male", x: m.0 - 1, y: m.1, movement: 30)
+        b.owner = foe; b.name = "Foe"; b.army = [Hero.Stack(creature: "peasant", count: 5000)]
+        g.place(enemy: b)
+        g.aiAttackGarrison(b, key)
+        XCTAssertTrue(g.enemyHeroes.contains { $0 === b })
+        XCTAssertEqual(g.objectStates[key]?.garrisonOwner, foe)   // taken (0x442710); it stays outside
+        XCTAssertEqual([b.x, b.y], [m.0 - 1, m.1])
+        XCTAssertEqual(g.objectStates[key]?.troopCounts, [0])
+        XCTAssertTrue(g.passability.isFree(m.0, m.1))   // (empty: open to the player too)
+    }
+
     /// The flood on open ground: the 5 x 5 square, 2 a straight step, 3 a diagonal, pointing back
     /// at the stack; the chain from any of its cells finds the stack.
     func scenarioFloodOnOpenGround(_ g: GameState) throws {
@@ -110,7 +243,7 @@ final class GuardZoneTests: XCTestCase {
         var marked = 0
         for x in m.0 - 3...m.0 + 3 { for y in m.1 - 3...m.1 + 3 where map.a(x, y) != nil {
             marked += 1
-            XCTAssertEqual(g.guardAttacker(at: (x, y), map), i)
+            XCTAssertEqual(g.guardAttacker(at: (x, y), map), .stack(i))
         } }
         XCTAssertEqual(marked, 25)
         XCTAssertEqual(map.b(m.0 + 2, m.1)?.dist, 4)   // seen (no fog): B as A
@@ -289,7 +422,7 @@ final class GuardZoneTests: XCTestCase {
                 guard g.canUse(from: s, pile) else { why[2] += 1; continue }
                 move(g, i, to: m, creature: "peasant")
                 let h = hero(g, at: s)
-                guard g.threat(to: h, at: s.0, s.1) == i else { why[3] += 1; continue }
+                guard g.threat(to: h, at: s.0, s.1) == .stack(i) else { why[3] += 1; continue }
                 g.click(hero: h, pickup: pile)
                 XCTAssertNotNil(h.target)
                 XCTAssertTrue(g.scene.placed.contains { $0.cellX == pile.cellX && $0.cellY == pile.cellY && $0.name == pile.name })   // not yet

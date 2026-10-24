@@ -97,8 +97,9 @@ extension GameState {
         let z = z ?? h.z
         var goal: (path: [(x: Int, y: Int)], stand: (Int, Int), at: (Int, Int), use: () -> Void)?
         var cells: [(x: Int, y: Int)] = []
+        var gateAhead: (key: String, cell: (Int, Int))? = nil   // a garrison the walk stopped before (the walk list's type-4 stop)
         playing(colour, on: z) {
-            guard h.movement >= 1, iteration < 6, pendingHeroBattle == nil, onMap(h), let g = aiTarget(h) else { return }
+            guard h.movement >= 1, iteration < 6, pendingHeroBattle == nil, armyCharge == nil, onMap(h), let g = aiTarget(h) else { return }
             goal = g
             // walk: the cells before the goal (the goal itself is the object, the army or the town gate),
             // as far as the movement and the armies in the way let it (the walk list, checked again
@@ -107,17 +108,20 @@ extension GameState {
             var left = h.movement, px = h.x, py = h.y
             for c in g.path {
                 let cost = passability.stepCost(from: px, py, to: c.x, c.y)
-                if left + 0.001 < cost || !isVacant((c.x, c.y), for: h) || enemyAt(c.x, c.y) != nil { break }
+                if colour != nil, let k = garrisonGate(at: c, z: h.z), let st = objectStates[k], garrisonStops(st, for: h.owner) { gateAhead = (k, (c.x, c.y)); break }
+                if left + 0.001 < cost || !aiVacant(c, for: h) || enemyAt(c.x, c.y) != nil { break }
                 left -= cost; px = c.x; py = c.y
                 cells.append(c)
             }
+            // the mover cuts the walk as it starts (0x5439e0): the zones of the player's armies
+            if colour != nil, let k = walkCut(h, cells) { cells = Array(cells.prefix(k)) }
         }
         guard let g = goal else { t.next([done]); return }
         var moved = false
         walkAI(h, colour: colour, z: z, cells: cells, step: { [unowned self] c in
             let cost = passability.stepCost(from: h.x, h.y, to: c.x, c.y)
             if h.movement + 0.001 < cost { return false }
-            if !isVacant((c.x, c.y), for: h) || enemyAt(c.x, c.y) != nil { return false }
+            if !aiVacant(c, for: h) || enemyAt(c.x, c.y) != nil { return false }
             h.movement -= cost; h.x = c.x; h.y = c.y; moved = true
             markEluded(h)   // 0x546300 after each step, the computer's armies too
             aiStepped(h)
@@ -127,10 +131,17 @@ extension GameState {
             playing(colour, on: z) {
                 finishEluded(h)     // end_move: the levels taken at once (0x642970)
                 passability.block(h.x, h.y)
-                if (h.x, h.y) == (g.stand.0, g.stand.1) || GameState.adjacent((h.x, h.y), g.at) {
+                if let ga = gateAhead, onMap(h), GameState.adjacent((h.x, h.y), ga.cell) {
+                    aiAttackGarrison(h, ga.key)   // used from the cell before the gate (0x4423f0)
+                    again = onMap(h)
+                } else if (h.x, h.y) == (g.stand.0, g.stand.1) || GameState.adjacent((h.x, h.y), g.at) {
                     g.use(); again = true
                 } else { again = moved }
+                // the move is over (0x546d50 -> 0x4f81e0, a computer's army too): an army of the
+                // player's whose zone holds its cell falls on it
+                if colour != nil, pendingHeroBattle == nil, armyCharge == nil, onMap(h) { guardAttack(h) }
             }
+            if armyCharge != nil || pendingHeroBattle != nil { again = false }
             if again { aiMove(h, colour: colour, step: iteration + 1, level: z, then: done) } else { t.next([done]) }
         })
     }
@@ -139,7 +150,8 @@ extension GameState {
     func aiTarget(_ h: Hero) -> (path: [(x: Int, y: Int)], stand: (Int, Int), at: (Int, Int), use: () -> Void)? {
         let ours = strength(h), ourArmy = combatants(of: h)
         applyBorderGates(for: h.owner)   // its routes through the gates it has the keys of
-        defer { applyBorderGates(for: map.humanColour) }
+        applyGarrisonGates(for: nil, planner: true)   // (type 7: no garrison stops its routes)
+        defer { applyBorderGates(for: map.humanColour); applyGarrisonGates(for: map.humanColour) }
         var best: (score: Float, path: [(x: Int, y: Int)], stand: (Int, Int), at: (Int, Int), use: () -> Void)? = nil
         /// `feasible`: the fight it needs is one the battle prediction says it wins (0x479000).
         func consider(_ value: Float, at cell: (Int, Int), stand: [(Int, Int)], if feasible: () -> Bool = { true }, use: @escaping () -> Void) {

@@ -643,7 +643,7 @@ public final class GameState {
     var monsterRevision = 0
     /// The last guard map built (GuardZones.swift) and the key it was built for.
     var guardCache: (key: Int, map: GuardMap)?
-    /// Armies whose move ended, to be checked for a stack falling on them (0x4f81e0).
+    /// Armies whose move ended, to be checked for a hostile army falling on them (0x4f81e0).
     var pendingGuardChecks: [Hero] = []
 
     /// A wandering stack's guard zone (heroes4.exe 0x4979f0, GameState.flood): the cells its
@@ -652,7 +652,7 @@ public final class GameState {
     public func zone(of i: Int) -> Set<Int> {
         if let z = zoneCache[i] { return z }
         var marks = [GuardMark?](repeating: nil, count: map.size * map.size)
-        flood(i, stealth: -1, into: &marks, passability)
+        flood(from: (monsters[i].x, monsters[i].y), scouting: scouting(of: monsters[i]), stealth: -1, into: &marks, passability)
         var out = Set<Int>()
         for (k, m) in marks.enumerated() where m != nil && m!.dist > 0 { out.insert(k) }
         zoneCache[i] = out
@@ -1564,6 +1564,8 @@ public final class GameState {
         public var animState = "prewalk", animFrame = 0
     }
     public var charge: Charge?
+    /// A player's army walking up to an army it falls on (GuardZones.swift).
+    public internal(set) var armyCharge: ArmyCharge?
     func finishCharge() {
         guard let c = charge else { return }
         charge = nil
@@ -1654,6 +1656,7 @@ public final class GameState {
 
     /// Advance walking heroes by dt seconds.
     public func update(dt: Float) {
+        if armyCharge != nil { advanceArmyCharge(dt: dt); return }   // an army walking up to another: nothing else moves meanwhile
         if let t = computerTurn { advanceComputerTurn(t, dt: dt); return }   // the computer players' turns (ComputerTurn.swift)
         if var c = charge {   // a stack walking up to a hero: nothing else moves meanwhile
             let g = gait(c.monster < monsters.count ? monsters[c.monster].model : nil)

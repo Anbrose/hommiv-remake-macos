@@ -564,22 +564,12 @@ extension Battle {
         return killed
     }
 
-    /// Teleport's destination (0x87eef0): a free place for the stack it can get to over the field,
-    /// any distance, walls, obstacles and stacks in between being barriers.
+    /// Teleport's destination (0x87eef0): the spell runs the target's path finder in teleport mode
+    /// (0x60c700, then +0x50 = 1: flyer marks, no wall cost, no zones of control) over the whole field
+    /// and takes any placement it reached that is free to land on (path-map bit 2): no distance limit,
+    /// and walls, the closed gate, obstacles and stacks are no barrier -- only the landing must be free.
     func teleportOK(_ t: Unit, to c: (Int, Int)) -> Bool {
-        func free(_ x: Int, _ y: Int) -> Bool { field.fits(x, y, size: t.size) && !overlaps(x, y, t.size, except: t.id) }
-        guard free(c.0, c.1) else { return false }
-        var seen: Set<Int> = [Battle.key(t.x, t.y)], queue = [(t.x, t.y)]
-        while !queue.isEmpty {
-            let (x, y) = queue.removeLast()
-            if (x, y) == c { return true }
-            for st in Battle.steps {
-                let nx = x + st.dx, ny = y + st.dy, k = Battle.key(nx, ny)
-                guard nx >= 0, ny >= 0, nx < Battlefield.size, ny < Battlefield.size, !seen.contains(k), free(nx, ny) else { continue }
-                seen.insert(k); queue.append((nx, ny))
-            }
-        }
-        return false
+        field.fits(c.0, c.1, size: t.size) && !overlaps(c.0, c.1, t.size, except: t.id)
     }
     /// Displacement's push (0x8609f0 / 0x860120): the vector from the pointer to the stack's
     /// centre, 10 long (truncated); k = 1...8 steps of k x v / max(|vx|, |vy|) while within 8 cells

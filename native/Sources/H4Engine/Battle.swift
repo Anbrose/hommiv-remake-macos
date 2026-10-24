@@ -469,16 +469,9 @@ public final class Battle {
 
     /// Footprint positions the unit can reach, with the cost, within `budget` cells (its Move by default).
     public func reachable(_ u: Unit, budget: Float? = nil) -> [Int: Float] {
-        if u.stats.has("teleport"), u.boundBy == nil {   // Teleport: any free place on the field
-            var out: [Int: Float] = [:]
-            for x in 0..<Battlefield.size { for y in 0..<Battlefield.size where field.fits(x, y, size: u.size) && !overlaps(x, y, u.size, except: u.id) {
-                let dx = Float(x - u.x), dy = Float(y - u.y)
-                out[Battle.key(x, y)] = (dx * dx + dy * dy).squareRoot()
-            } }
-            return out
-        }
         let all = explore(u, budget: budget)
-        guard u.stats.has("flying") else { return all }
+        // flyers and teleporters search in the air and land only on a free placement (path-map bit 2, 0x60dd61)
+        guard u.stats.has("flying") || u.stats.has("teleport") else { return all }
         return all.filter { k, _ in
             let x = k / Battlefield.size, y = k % Battlefield.size
             return field.fits(x, y, size: u.size) && !overlaps(x, y, u.size, except: u.id)
@@ -504,11 +497,16 @@ public final class Battle {
         return moveCells(u)
     }
     /// Path costs; Flying (and Teleport) pass over obstacles and creatures, landing only on free cells.
+    /// Teleport (ability 74, path finder +0x50, 0x60c74d) searches as a flyer does -- over obstacles,
+    /// creatures, walls and the gate, no moat or quicksand costs (0x60d04a) -- but pays no extra for
+    /// crossing a wall (0x60d79d) and is never held by zones of control (0x60d87d); like everyone it
+    /// goes as far as its Move. Bind Flyer (effect 7) takes flight away (Combatant.has), not teleport.
     func explore(_ u: Unit, budget: Float? = nil) -> [Int: Float] {
         let limit = budget ?? moveBudget(u)
         let cacheKey = "\(u.id)|\(u.x)|\(u.y)|\(limit)|\(version)"
         if let hit = exploreCache[cacheKey] { return hit }
-        let flies = u.stats.has("flying")
+        let teleports = u.stats.has("teleport")
+        let flies = teleports || u.stats.has("flying")
         let n = Battlefield.size
         // where the footprint may stand, worked out once per search
         var blocked = [Bool](repeating: false, count: n * n)
@@ -557,7 +555,7 @@ public final class Battle {
         // a flyer crossing a wall or the closed gate inwards (direction 7, 0, 1 of 0x705b80: x falling)
         // pays (Move - 2) / (size + 1) cells for each such placement, at least 1 (0x60d7ab, 0x60dc69):
         // over a 2-cell wall that is the whole Move but 2 cells
-        let wallCost = max(1, Float((Int((moveCells(u) * 100).rounded()) - 200) / (u.size + 1)) / 100)
+        let wallCost = teleports ? 1 : max(1, Float((Int((moveCells(u) * 100).rounded()) - 200) / (u.size + 1)) / 100)
         var dist = [Float](repeating: .infinity, count: n * n)
         var parent = [Int](repeating: -1, count: n * n)
         dist[u.x * n + u.y] = 0
@@ -585,7 +583,7 @@ public final class Battle {
         // to an enemy, every step costs a quarter of the unit's movement more, except straight
         // towards or away from that enemy; the extra comes before a diagonal's x 1.5. A flyer is
         // held only by flying enemies; Ignore Zones of Control is never held.
-        let zoc = u.stats.has("ignore_zones_of_control") ? [] : units.filter { e in
+        let zoc = u.stats.has("ignore_zones_of_control") || teleports ? [] : units.filter { e in
             e.alive && e.id != u.id && side(of: e) != side(of: u) && (!flies || e.stats.has("flying"))
         }
         let zocCost = moveCells(u) / 4

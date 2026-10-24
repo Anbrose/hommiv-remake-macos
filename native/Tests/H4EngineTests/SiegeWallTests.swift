@@ -99,4 +99,52 @@ final class SiegeWallTests: XCTestCase {
         XCTAssertTrue(b.shoot(u.id))
         XCTAssertTrue(b.takeEvents().contains { if case .shoot = $0 { return true }; return false })
     }
+
+    // MARK: teleport and Bind Flyer
+
+    /// A teleporter searches as a flyer but pays nothing for the wall (0x60d79d) and goes as far as
+    /// its Move: from 10 cells out it lands inside for 14 of its 20 cells; from 30 out it cannot.
+    func testTeleporterCrossesTheWallWithinItsMove() {
+        let (b, u, t) = siege(fighter(creature("archdevil"), abilities: ["teleport"]), fighter(creature("guard")))
+        t.x = 20; t.y = 70
+        u.x = 60; u.y = 49; b.version += 1
+        XCTAssertEqual(b.reachable(u)[Battle.key(46, 49)] ?? -1, 14, accuracy: 0.01)
+        XCTAssertEqual(b.path(u, to: 46, 49)?.count, 1, "it goes straight there")
+        u.x = 80; b.version += 1
+        XCTAssertTrue(inside(b, u).isEmpty, "the inside lies beyond its Move")
+        XCTAssertNil(b.reachable(u)[Battle.key(55, 49)], "no 'any free place': 25 cells is past a Move of 20")
+        XCTAssertNotNil(b.reachable(u)[Battle.key(60, 49)])
+    }
+
+    /// Zones of control never hold a teleporter (0x60d87d skips 0x572370).
+    func testTeleporterIgnoresZonesOfControl() {
+        let (b, u, t) = siege(fighter(creature("archdevil"), abilities: ["teleport"]), fighter(creature("guard")))
+        u.x = 60; u.y = 49; t.x = 62; t.y = 49; b.version += 1
+        XCTAssertEqual(b.reachable(u)[Battle.key(60, 59)] ?? -1, 10, accuracy: 0.01)
+    }
+
+    /// The Teleport spell runs the same search over the whole field (0x87eef0): any free placement,
+    /// inside the walls too; never onto the wall or a stack.
+    func testTeleportSpellLandsInsideTheWalls() {
+        let (b, u, t) = siege(fighter(creature("footman")), fighter(creature("guard")))
+        u.x = 80; u.y = 49; t.x = 20; t.y = 70; b.version += 1
+        XCTAssertTrue(b.teleportOK(u, to: (30, 49)))
+        XCTAssertFalse(b.teleportOK(u, to: (48, 30)), "on the wall")
+        XCTAssertFalse(b.teleportOK(u, to: (20, 70)), "on the defender")
+    }
+
+    /// Bind Flyer (effect 7) makes a flyer a walker (0x60d67e, 0x60d053): the walls and closed gate hold
+    /// it, every enemy's zone of control holds it, and it walks (0x56bdbf), at half its Move.
+    func testBoundFlyerWalks() {
+        let (b, u, t) = siege(fighter(creature("griffin"), abilities: ["flying"]), fighter(creature("guard")))
+        t.x = 20; t.y = 70
+        u.x = 50; u.y = 49; u.stats.effects.insert(7); b.version += 1
+        XCTAssertFalse(u.stats.has("flying"))
+        XCTAssertTrue(inside(b, u).isEmpty, "the wall holds it like a walker")
+        XCTAssertEqual(b.reachable(u)[Battle.key(55, 49)] ?? -1, 5, accuracy: 0.01)
+        XCTAssertNil(b.reachable(u)[Battle.key(61, 49)], "a Move of 20 halved")
+        t.x = 50; t.y = 51; b.version += 1   // a walking guard next to it now holds it
+        XCTAssertEqual(b.reachable(u)[Battle.key(50, 48)] ?? -1, 1, accuracy: 0.01, "away from the guard: free")
+        XCTAssertEqual(b.reachable(u)[Battle.key(51, 49)] ?? -1, 2.5, accuracy: 0.01, "across costs 1 + 2.5: cheaper to step away, then diagonally")
+    }
 }

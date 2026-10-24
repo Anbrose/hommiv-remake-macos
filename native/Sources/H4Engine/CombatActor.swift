@@ -287,6 +287,8 @@ public struct Battlefield {
     public var castleLevel = 0
     public var walls: Set<Int> = [], towers: Set<Int> = [], moat: Set<Int> = [], gateCells: [Int] = []
     public var gateName = ""
+    /// The arrow towers' footprints (castle_tower pieces: castle layouts only, 7 x 7 or 8 x 8).
+    public var towerRects: [(x: Int, y: Int, w: Int, h: Int)] = []
     /// The gate's hit points (fort 50, citadel 100, castle 150: table 0x97ec20 by castle level, set by
     /// the t_castle_gate constructor 0x5bfe60).
     public var gateHP = 0, gateMax = 0
@@ -334,6 +336,7 @@ public struct Battlefield {
                 gateCells = cells; gateName = p.name
             } else if p.kind.contains("tower") && !p.blocks {
                 towers.formUnion(cells)
+                towerRects.append((p.x, p.y, p.w, p.h))
             } else if p.blocks {
                 walls.formUnion(cells)
             }

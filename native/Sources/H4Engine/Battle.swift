@@ -531,6 +531,33 @@ public final class Battle {
         let moatCost: Float? = !flies && !terrainWalk && !field.moat.isEmpty && moveCells(u) > 4 ? moveCells(u) / 4 : nil
         // Quicksand (0x6257a0 / 0x60d1fc): a step whose footprint touches it costs half the full move, a cell at least
         let sandCost: Float? = !flies && !terrainWalk && !quicksand.isEmpty ? max(1, moveCells(u) / 2) : nil
+        // the castle's path-map marks (0x60cc00 -> 0x60e4a0, placements whose footprint overlaps the
+        // piece): walls (kind 0x24) and the closed gate (0x22, while 0x5c0970 says closed) carry flag
+        // 0x40 for everyone; an arrow tower (0x23) carries 0x20 unless a creature stands on its centre
+        // (0x570ef0) -- for a flyer, unless that creature is the flyer itself [I]
+        let castle = field.castleLevel > 0
+        var overWall = [Bool](), onTowerAt = [Bool]()
+        if castle {
+            overWall = [Bool](repeating: false, count: n * n)
+            func mark(_ c: Int, _ into: inout [Bool]) {
+                let cx = c / n, cy = c % n
+                for x in max(0, cx - u.size + 1)...cx { for y in max(0, cy - u.size + 1)...cy { into[x * n + y] = true } }
+            }
+            for c in field.walls { mark(c, &overWall) }
+            if !field.gateDestroyed { for c in field.gateCells { mark(c, &overWall) } }
+            if !field.towerRects.isEmpty {
+                onTowerAt = [Bool](repeating: false, count: n * n)
+                for t in field.towerRects {
+                    let cx = t.x + t.w / 2, cy = t.y + t.h / 2
+                    if let o = units.first(where: { $0.alive && cx >= $0.x && cx < $0.x + $0.size && cy >= $0.y && cy < $0.y + $0.size }), !flies || o.id == u.id { continue }
+                    for i in 0..<t.w { for j in 0..<t.h { mark(Battlefield.key(t.x + i, t.y + j), &onTowerAt) } }
+                }
+            }
+        }
+        // a flyer crossing a wall or the closed gate inwards (direction 7, 0, 1 of 0x705b80: x falling)
+        // pays (Move - 2) / (size + 1) cells for each such placement, at least 1 (0x60d7ab, 0x60dc69):
+        // over a 2-cell wall that is the whole Move but 2 cells
+        let wallCost = max(1, Float((Int((moveCells(u) * 100).rounded()) - 200) / (u.size + 1)) / 100)
         var dist = [Float](repeating: .infinity, count: n * n)
         var parent = [Int](repeating: -1, count: n * n)
         dist[u.x * n + u.y] = 0
@@ -580,11 +607,24 @@ public final class Battle {
             for s in Battle.steps {
                 let nx = x + s.dx, ny = y + s.dy
                 guard nx >= 0, ny >= 0, nx < n, ny < n else { continue }
+                let nk = nx * n + ny
                 var nc = c + s.cost
                 if let m = moatCost, field.moat.contains(Battlefield.key(nx, ny)) { nc = c + max(s.cost, m) }
                 if let q = sandCost, onQuicksand(nx, ny, u.size) { nc = c + max(s.cost, q) }
+                if castle {
+                    // the step's base cost (0x60dc22...0x60dc87), before zones of control and a diagonal's x 1.5
+                    let fromTower = !onTowerAt.isEmpty && onTowerAt[k], toTower = !onTowerAt.isEmpty && onTowerAt[nk]
+                    var base: Float? = nil
+                    if fromTower {   // on the tower: free; off it: 4 cells from the start, else the whole Move
+                        base = toTower ? (flies && blocked[nk] ? 1 : 0) : (c == 0 ? 4 : moveCells(u))
+                    } else if toTower, !flies {
+                        base = 4   // a walker climbs a tower for 4 cells (path cost 400, 0x60d1f5)
+                    } else if flies, s.dx == -1, overWall[nk] {
+                        base = wallCost
+                    }
+                    if let b = base { nc = c + b * s.cost }
+                }
                 if let f = free, !f.contains(where: { $0 == (s.dx, s.dy) }) { nc += zocCost * s.cost }
-                let nk = nx * n + ny
                 guard nc <= limit + 0.001, !blocked[nk] else { continue }
                 if s.cost > 1, !flies {
                     let a = (x + s.dx) * n + y, b = x * n + y + s.dy

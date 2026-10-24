@@ -948,7 +948,8 @@ public final class GameState {
 
     /// The player's heroes still to take levels: each level is a choice in the level-up dialog
     /// (layers.dialog.choose_skill), the offer made by Hero.levelUpOffer (heroes4.exe 0x72bca0's
-    /// interactive path); a level with nothing to offer is taken at once.
+    /// interactive path); a level with nothing to offer is taken at once. Each dialog opening plays
+    /// dialogue.level_up (so once per level, per hero); choosing a skill plays nothing of its own.
     public var levelUpQueue: [Hero] = []
     /// The level-up waiting for the player's choice.
     public var levelUp: (hero: Hero, offer: [(skill: Int, level: Int)])?
@@ -958,7 +959,9 @@ public final class GameState {
             guard h.level < min(70, Hero.level(for: h.experience)) else { levelUpQueue.removeFirst(); continue }
             let offer = h.levelUpOffer(weights: tables?.skillWeights[h.classKeyword] ?? [:], random: &random)
             if offer.isEmpty { h.level += 1; continue }
-            levelUp = (h, offer); return
+            levelUp = (h, offer)
+            dialogueSound(5)   // dialogue.level_up: t_skill_choice_dialog's constructor plays it (0x84e869/0x84e893), every dialog, music left on
+            return
         }
     }
     /// The class a choice would make the hero (for the dialog's "will become a level ..." line).

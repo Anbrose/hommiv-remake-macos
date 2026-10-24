@@ -1274,8 +1274,13 @@ final class Renderer: NSObject, MTKViewDelegate {
                g.pendingHeroBattle == nil, g.pendingSiege == nil, g.scripts.messages.isEmpty, cheatBox?.active != true { g.autoPlayTurn() }
             // the hero's ride: sound.hero horse.walk loops while a hero walks on the map
             followWalkingArmies()
-            if !inCombat, townOpen == nil, g.heroes.contains(where: { $0.isWalking }) || g.computerTurn?.walk?.shown == true { sound?.startLoop("hero horse.walk", key: "horse") }
-            else { sound?.stopLoop("horse") }
+            // at sea the ship's sound (sound.hero ship.walk) instead of the horse's
+            let walker = g.heroes.first(where: { $0.isWalking }) ?? (g.computerTurn?.walk?.shown == true ? g.computerTurn?.walk?.hero : nil)
+            if !inCombat, townOpen == nil, let w = walker {
+                let key = w.boat != nil ? "ship" : "horse"
+                sound?.stopLoop(key == "ship" ? "horse" : "ship")
+                sound?.startLoop(key == "ship" ? "hero ship.walk" : "hero horse.walk", key: key)
+            } else { sound?.stopLoop("horse"); sound?.stopLoop("ship") }
             updateAmbient(now)
             g.log.removeAll()
             collectFloaters(now: now)

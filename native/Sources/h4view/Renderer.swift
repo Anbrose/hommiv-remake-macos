@@ -1203,6 +1203,11 @@ final class Renderer: NSObject, MTKViewDelegate {
                     let (sx, sy) = screen(cp.x, cp.y)
                     ax = Int(sx); ay = Int(sy) - 16
                     if let dc = g.chargeDrawCell { cell = dc }
+                    // its ring goes with it
+                    if let r = highlightRing, !r.frames.isEmpty, let (rx, ry) = Renderer.ringOrigin(r, centre: (ax, ay + 16)) {
+                        let rf = r.frames[Int(t / 0.08) % r.frames.count]
+                        ring = Quad(texture: texture(for: rf, of: "highlight_ring"), x: rx + rf.box.left, y: ry + rf.box.top, w: rf.bitmap.width, h: rf.bitmap.height)
+                    }
                     seq = (c.animState, c.facing, c.animFrame)
                 }
                 if let q = seq, let r = resolver, let e = r.sequence(actor: model, state: q.state, facing: q.facing) ?? r.sequence(actor: model, state: "wait", facing: q.facing),

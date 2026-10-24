@@ -819,7 +819,10 @@ final class Renderer: NSObject, MTKViewDelegate {
                 // a stack not seen now is not there for the player
                 if let i = g.monster(for: p), g.monsterSeen(i) { return "attack" }
                 return g.passability.isFree(c.0, c.1) ? "move" : "blocked"
-            } else { return "activate" }
+            }
+            // a town, garrison or mine: friendly or empty to enter, else the fight (vtable+0x20)
+            if let h = g.heroes.first, h.z == g.level, let k = g.ownedObjectCursor(for: h, p) { return k }
+            return "activate"
         }
         if g.heroes.contains(where: { $0.z == g.level && $0.x == c.0 && $0.y == c.1 }) { return "normal" }
         return g.passability.isFree(c.0, c.1) ? "move" : "blocked"

@@ -63,4 +63,46 @@ final class ArmyCursorTests: XCTestCase {
                 && g.passability.path(from: (a.x, a.y), to: c, afloat: true) == nil })
         XCTAssertEqual(g.afloatMoveCursor(for: a, at: inland.0, inland.1), "blocked")
     }
+
+    /// Towns (t_town vtable+0x20, 0x894e60): only an own or allied town is entered; a neutral or
+    /// enemy one is an attack even with no garrison. Garrisons and mines (0x4429e0): an attack only
+    /// while another colour or nobody holds them with creatures. Aboard, "Boat_Activate".
+    func testTownGarrisonAndMineCursors() throws {
+        let s = SeaRouteTests()
+        let g = try s.pirateDaughter()
+        let h = s.landHero(g, 188, 110)
+        g.heroes = [h]
+        let foe = (0..<6).first { $0 != h.owner && g.team(of: $0) != g.team(of: h.owner) } ?? 1
+        let p = try XCTUnwrap(g.scene.placed.first { g.town(for: $0) != nil })
+        let t = try XCTUnwrap(g.town(for: p))
+        g.towns[t].garrison = []; g.towns[t].garrisonHeroes = []
+        for o in [nil, foe] as [Int?] { g.towns[t].owner = o; XCTAssertEqual(g.ownedObjectCursor(for: h, p), "attack") }
+        g.towns[t].garrison = [Hero.Stack(creature: "peasant", count: 5)]
+        XCTAssertEqual(g.ownedObjectCursor(for: h, p), "attack")
+        g.towns[t].owner = h.owner
+        XCTAssertEqual(g.ownedObjectCursor(for: h, p), "activate")
+        h.boat = "life"
+        XCTAssertEqual(g.ownedObjectCursor(for: h, p), "Boat_Activate")
+        h.boat = nil
+
+        // a garrison: empty or friendly enters, held by another colour's troops is a fight
+        let q = try XCTUnwrap(g.scene.placed.first { g.town(for: $0) == nil && g.mine(for: $0) == nil })
+        var st = ObjectState(); st.isGarrison = true; st.garrisonOwner = foe
+        g.objectStates[g.objectKey(q)] = st
+        XCTAssertEqual(g.ownedObjectCursor(for: h, q), "activate")
+        st.troopCreatures = ["peasant"]; st.troopCounts = [3]; g.objectStates[g.objectKey(q)] = st
+        XCTAssertEqual(g.ownedObjectCursor(for: h, q), "attack")
+        st.garrisonOwner = h.owner; g.objectStates[g.objectKey(q)] = st
+        XCTAssertEqual(g.ownedObjectCursor(for: h, q), "activate")
+
+        // a mine: the same rule over its guards
+        if let m = g.scene.placed.first(where: { g.mine(for: $0) != nil }), let i = g.mine(for: m) {
+            g.mines[i].owner = nil; g.mines[i].guards = []
+            XCTAssertEqual(g.ownedObjectCursor(for: h, m), "activate")
+            g.mines[i].guards = [Hero.Stack(creature: "peasant", count: 4)]
+            XCTAssertEqual(g.ownedObjectCursor(for: h, m), "attack")
+            g.mines[i].owner = h.owner
+            XCTAssertEqual(g.ownedObjectCursor(for: h, m), "activate")
+        }
+    }
 }

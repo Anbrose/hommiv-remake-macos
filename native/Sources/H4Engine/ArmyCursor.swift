@@ -30,4 +30,23 @@ extension GameState {
         guard h.boat != nil, passability.path(from: standingCell(h), to: (x, y), afloat: true) != nil else { return "blocked" }
         return passability.isSea(x, y) ? "Boat_Move" : "Anchor"
     }
+
+    /// The pointer over an ownable object, as its vtable+0x20 gives it (the selected army's
+    /// owner against the object's, 0x44c930; "friendly" = the same player, or both owned and on
+    /// one team, player +0x2b8; "activate" is "Boat_Activate" aboard, 0x4f8b80):
+    /// - a town (t_town, 0x894e60): friendly "activate", any other -- neutral, enemy, with or
+    ///   without a garrison -- "attack" (+0xfc);
+    /// - a garrison or a mine (t_adv_garrison / t_mine, 0x4429e0): friendly or holding no
+    ///   creature (0x63fcb0 on +0x54) "activate", else "attack".
+    /// nil for other objects (dwellings and the rest keep 0x4fa6b0's plain "activate").
+    public func ownedObjectCursor(for h: Hero, _ p: MapScene.Placed) -> String? {
+        func friendly(_ o: Int?) -> Bool { o == h.owner || o.map { team(of: $0) == team(of: h.owner) } ?? false }
+        let activate = h.boat != nil ? "Boat_Activate" : "activate"
+        if let i = town(for: p) { return friendly(towns[i].owner) ? activate : "attack" }
+        if let i = mine(for: p) { return friendly(mines[i].owner) || !mines[i].guards.contains { $0.count > 0 } ? activate : "attack" }
+        if let st = objectStates[objectKey(p)], st.isGarrison {
+            return friendly(st.garrisonOwner) || !st.troopCounts.contains { $0 > 0 } ? activate : "attack"
+        }
+        return nil
+    }
 }

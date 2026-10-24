@@ -78,7 +78,7 @@ extension Renderer {
                 if px < -40 || py < -30 || px > 925 || py > 800 { continue }
                 let row = ax + ay, colI = (ay - ax - (((ax + ay) % 2) + 2) % 2) / 2
                 let ti = ((((row % 6) + 6) % 6) + 2) * 10 + ((((colI % 6) + 6) % 6) + 2)
-                let tex = uiTexture("ground|\(f.terrain)|\(f.variant)|\(ti)", { patch.tiles[min(ti, patch.tiles.count - 1)] })
+                let tex = uiTexture("ground|\(f.terrain)|\(f.variant)|\(ti)", { patch.tile(row: row, col: colI) })
                 out.append(Quad(texture: tex, x: Int(px - 32 * sc), y: Int(py - 16 * sc), w: Int(64 * sc) + 1, h: Int(32 * sc) + 1))
             } }
         }

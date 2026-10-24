@@ -196,7 +196,8 @@ extension GameState {
         case "random_artifact":
             if let a = randomArtifact(level: p.subtype.isEmpty ? "treasure" : p.subtype) { st.artifacts = [a] }
         case "random_potion":
-            if let a = randomPotion() { st.artifacts = [a] }
+            // the potion its picture shows (the scene rolled it: RandomResolver's random_potion)
+            if let a = RandomResolver.potion(ofModel: p.name) ?? randomPotion() { st.artifacts = [a] }
         case "artifact":
             if let i = RuleTables.artifactIds.firstIndex(of: p.subtype.lowercased()) {
                 st.artifacts = [(i == 0x7c || i == 0xa6) ? record(for: p)?.spell.map { RuleTables.artifact(i, spell: $0) } ?? i : i]

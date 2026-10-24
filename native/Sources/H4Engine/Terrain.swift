@@ -4,6 +4,19 @@ import Foundation
 /// Each tile is stored as 64 vertical scanlines; `tiles[k]` is a 64x32 RGBA bitmap.
 public struct TerrainPatch {
     public let tiles: [Bitmap]
+    /// The side of the square of tiles a cell's tile is taken from. heroes4.exe draws a cell from
+    /// tile (local + 4 - offset) of its 4x4-cell block (0x78aed0; offset 0..2 per block, 0x7951fd),
+    /// so a full patch is read in its central 6x6 (tiles 2..7). The magic grounds (magic.all,
+    /// .life, .order) carry only the central 4x4 (tiles 3..6) and the rest are empty, so they
+    /// repeat every 4 cells.
+    public let period: Int
+
+    /// The tile for a cell at diamond row `row` and staggered column `col` (any integers).
+    public func tile(row: Int, col: Int) -> Bitmap {
+        let lo = (10 - period) / 2
+        func m(_ a: Int) -> Int { ((a % period) + period) % period }
+        return tiles[min((m(row) + lo) * 10 + m(col) + lo, tiles.count - 1)]
+    }
 
     public init(data d: Data) throws {
         let palOff = d.count - 772
@@ -46,6 +59,10 @@ public struct TerrainPatch {
             pos = rle + n + 256
         }
         tiles = out
+        // a patch with nothing outside its central 4x4 repeats every 4 cells
+        func opaque(_ i: Int) -> Bool { i < out.count && stride(from: 3, to: out[i].pixels.count, by: 4).contains { out[i].pixels[$0] != 0 } }
+        let ring = (2...7).flatMap { r in (2...7).map { r * 10 + $0 } }.filter { !(33...66).contains($0) || $0 % 10 < 3 || $0 % 10 > 6 }
+        period = out.count >= 100 && !ring.contains(where: opaque) ? 4 : 6
     }
 }
 

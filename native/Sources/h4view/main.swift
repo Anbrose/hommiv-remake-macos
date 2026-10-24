@@ -13,10 +13,10 @@ let args: [String] = {
     if let p = known.first(where: { FileManager.default.fileExists(atPath: $0) }) { a.insert(p, at: min(1, a.count)) }
     return a
 }()
-// no map: the main menu (new game, campaigns, load); it starts the game again with the choice
-if args.count == 2 || (args.count >= 3 && args[2] == "--menu") { runMainMenu(args) }
-guard args.count >= 3 else {
-    print("usage: h4view <Data/heroes4.h4r> <map.h4c> [--level N] [--snapshot out.png]")
+// no map: the main menu (new game, campaigns, load); its choices open the game in the same window
+let menuMode = args.count == 2 || (args.count >= 3 && args[2] == "--menu")
+guard args.count >= 2 else {
+    print("usage: h4view <Data/heroes4.h4r> [<map.h4c> | campaign:<id>:<index> | --menu] [--level N] [--snapshot out.png]")
     exit(2)
 }
 var level = 0
@@ -98,17 +98,17 @@ func writePNG(_ bm: Bitmap, to path: String) {
     CGImageDestinationFinalize(dest)
 }
 
-if args[2] == "--text", args.count >= 6 {   // h4view <h4r> --text <font entry> <text> <out.png>: render text with a game font (debugging aid)
+if args.count >= 6, args[2] == "--text" {   // h4view <h4r> --text <font entry> <text> <out.png>: render text with a game font (debugging aid)
     let font = try H4Font(data: archive.payload(args[3]))
     writePNG(font.render(args[4], colour: (40, 24, 8)), to: args[5])
     print("size \(font.size) line \(font.lineHeight) ascent \(font.ascent) glyphs \(font.glyphs.count); '\(args[4])' measures \(font.measure(args[4])) -> \(args[5])")
     exit(0)
 }
-if args[2] == "--raw", args.count >= 5 {   // h4view <h4r> --raw <entry> <out>: write an entry's unpacked bytes (debugging aid)
+if args.count >= 5, args[2] == "--raw" {   // h4view <h4r> --raw <entry> <out>: write an entry's unpacked bytes (debugging aid)
     try archive.payload(args[3]).write(to: URL(fileURLWithPath: args[4]))
     exit(0)
 }
-if args[2] == "--dump" {   // h4view <h4r> --dump <entry>...: describe sprite entries, write each image as PNG (debugging aid)
+if args.count >= 3, args[2] == "--dump" {   // h4view <h4r> --dump <entry>...: describe sprite entries, write each image as PNG (debugging aid)
     for name in args.dropFirst(3) {
         guard let e = archive.byName[name] else { print("\(name): not in archive"); continue }
         print("\(name): size \(e.size) unpacked \(e.unpackedSize) type \(e.type) alias '\(e.alias)'")
@@ -122,227 +122,259 @@ if args[2] == "--dump" {   // h4view <h4r> --dump <entry>...: describe sprite en
     exit(0)
 }
 let objNames = Set(archive.names(prefix: "adv_object.").map { String($0.dropFirst("adv_object.".count).dropLast(4)) })
-// "campaign:<id>:<scenario>": a scenario of one of the archives' campaigns
-let campaignRef: (id: Int, index: Int)? = {
-    let p = args[2].split(separator: ":")
-    guard p.count == 3, p[0] == "campaign", let id = Int(p[1]), let k = Int(p[2]) else { return nil }
-    return (id, k)
-}()
-var map = try campaignRef.map { try MapFile(data: CampaignFile.load($0.id, from: archive).scenario($0.index), objectNames: objNames) }
-    ?? MapFile(data: Data(contentsOf: URL(fileURLWithPath: args[2])), objectNames: objNames)
 let masks = try TransitionMasks(data: archive.payload("transition.Transitions.h4d"))
-lap("loaded '\(map.name)'")
-if ProcessInfo.processInfo.environment["H4DEBUG"] != nil {
-    print("scenario: teams \(map.teams.sorted { $0.key < $1.key }) standard victory \(map.standardVictory) win '\(map.victoryText ?? "-")' loss '\(map.lossText ?? "-")' players \(map.playerSpecs.map { "\($0.colour):\($0.canBeHuman ? "h" : "ai"):\(String($0.alignments, radix: 2))" })")
-}
-// the rule tables first: random monsters are drawn from the creature table
-let textURL = URL(fileURLWithPath: args[1]).deletingLastPathComponent().appendingPathComponent("text.h4r")
-let ruleTables = (try? H4Archive(url: textURL)).flatMap { try? RuleTables(archive: $0) }
-if let t = ruleTables {
-    let expansion = max(0, min(2, map.version - 27))
-    let sea: Set<String> = ["mermaid", "sea monster", "pirate"]
-    RandomResolver.creaturePool = (1...4).map { lv in t.creatures.filter { $0.level == lv && $0.expansion <= expansion && !sea.contains($0.keyword) }.map { $0.keyword } }
-    RandomResolver.potionPool = RuleTables.artifactIds.indices.filter { i in t.artifacts[RuleTables.artifactIds[i]].map { $0.level.lowercased() == "item" && $0.slot.lowercased() == "potion" && $0.allowedByDefault } ?? false }
-}
-RandomResolver.playerAlignments = Dictionary(map.playerSpecs.map { ($0.colour, $0.alignments) }, uniquingKeysWith: { a, _ in a })
-// the new-game screen's choices: "--human <colour>", "--align <colour>:<alignment 0-5>", "--difficulty <0-4>"
-for (k, a) in args.enumerated() where k + 1 < args.count {
-    if a == "--human", let c = Int(args[k + 1]) { map.humanOverride = c }
-    if a == "--align" { let p = args[k + 1].split(separator: ":").compactMap { Int($0) }; if p.count == 2, (0..<6).contains(p[1]) { RandomResolver.playerAlignments[p[0]] = 1 << p[1] } }
-}
-// every level of the map (the surface and, on most maps, the underground)
-// (top-level code has no autorelease pool that drains: one per level frees what building it autoreleased)
-let scenes = try (0..<max(1, map.levels)).map { l in try autoreleasepool { try MapScene(map: map, level: l, archive: archive, masks: masks) } }
-let scene = scenes[min(level, scenes.count - 1)]
-lap("scenes built: \(scenes.map { "\($0.chunks.count) terrain chunks, \($0.placed.count) objects" }.joined(separator: "; "))")
 let device = MTLCreateSystemDefaultDevice()!
 
-// A scenario in progress: one hero of the first player's town (the map's owner 0, else the
-// leftmost town) standing at its gate.
-let resolver = RandomResolver(archive: archive)
-let game = GameState(map: map, level: scene.level, scenes: scenes)
-// the player's difficulty of the new-game screen (game +0x64c): treasuries, monsters, the computer's handicap
-if let k = args.firstIndex(of: "--difficulty"), k + 1 < args.count, let d = Int(args[k + 1]) { game.difficulty = min(4, max(0, d)) }
-game.fogEnabled = ProcessInfo.processInfo.environment["H4NOFOG"] == nil   // debugging: no shroud
-if let tables = ruleTables { game.tables = tables; lap("rules: \(tables.creatures.count) creatures, \(tables.heroes.count) heroes") }
-let alignments = ["haven": "life", "academy": "order", "asylum": "chaos", "necropolis": "death", "preserve": "nature", "stronghold": "might"]
-func faction(of name: String) -> String { alignments.first { name.lowercased().contains($0.key) }?.value ?? "life" }
-game.registerObjects(townFactions: Dictionary(scenes.flatMap { $0.placed }.filter { $0.category == "castle" }.map { ($0.name, faction(of: $0.name)) }, uniquingKeysWith: { a, _ in a }))
-game.setupGuilds()    // each town's mage guild spells
-game.setupObjects()   // chests, piles, generators: their contents are rolled as the game starts
-game.setupMonths()    // next month's creature is drawn as the game starts (0x4d1db2)
-let ownedByFirst = map.objects.first { ($0.type == "town" || $0.type == "random_town") && $0.owner == map.humanColour && $0.level == scene.level }
-if let town = scene.placed.first(where: { p in ownedByFirst.map { p.category == "castle" && p.cellX == $0.x && p.cellY == $0.y } ?? false })
-    ?? scene.placed.filter({ $0.category == "castle" }).min(by: { ($0.cellY - $0.cellX) < ($1.cellY - $1.cellX) }) {
-    let align = faction(of: town.name)
-    // (a campaign scenario gives the player only the towns the map gives)
-    if !(campaignRef != nil && ownedByFirst == nil), let i = game.towns.firstIndex(where: { $0.x == town.cellX && $0.y == town.cellY }) { game.towns[i].owned = true; game.towns[i].owner = map.humanColour }
-    // the gate is in the middle of the lower-right wall of right-facing (" R") towns, lower-left otherwise
-    let right = town.name.lowercased().hasSuffix(" r.h4d")
-    // the heroes the map places for the player (armies with heroes: "Beyond the Lake" starts a
-    // level 15 and a level 10 hero together); a hero at the town gate when it has none
-    let placed = map.objects.filter { $0.type == "hero_army" && $0.owner == map.humanColour && $0.level == scene.level && !$0.heroes.isEmpty }
-    for o in placed {
-        var all = o.heroes.map { Hero.fromMap($0, alignment: align, x: o.x, y: o.y, tables: game.tables, random: &game.random) }
-        let hero = all.removeFirst()
-        hero.companions = all
-        hero.home = (o.x, o.y); hero.z = o.level
-        hero.army = (o.army ?? []).compactMap { $0 }.compactMap { s in
-            s.creature < RuleTables.creatureIds.count ? Hero.Stack(creature: RuleTables.creatureIds[s.creature], count: s.count) : nil }
-        hero.maxMovement = game.armyMovement(hero); hero.movement = hero.maxMovement
-        if let m = movementLeft { hero.movement = m }
-        hero.owner = map.humanColour
-        if let b = o.boat {   // the army starts aboard its ship (t_army record +0xbc)
-            hero.boat = ["life", "order", "death", "chaos", "nature", "might"][b]
-            hero.maxMovement = game.armyMovement(hero); hero.movement = movementLeft ?? hero.maxMovement
-        }
-        game.heroes.append(hero)
-        lap("\(hero.name) level \(hero.level) \(hero.classKeyword) at (\(o.x),\(o.y)) skills \(hero.skills) with \(all.map { "\($0.name) level \($0.level) \($0.classKeyword) \($0.skills)" })")
-    }
-    if placed.isEmpty, campaignRef == nil, let cell = heroAt ?? game.freeCell(near: town.cellX + (right ? 3 : 6), town.cellY + (right ? 6 : 3)) {
-        // a might hero of the town's alignment, picked from the heroes table (the male model exists for every class)
-        let cls = RuleTables.classes[align]?.might ?? "knight"
-        let candidates = game.tables?.heroes(ofClass: cls).filter { $0.sex == "male" } ?? []
-        let def = candidates.isEmpty ? nil : candidates[(town.cellX + town.cellY) % candidates.count]
-        let hero = Hero(actor: "hero.\(align)_might_male", x: cell.0, y: cell.1, movement: Hero.baseMovement)
-        hero.name = def?.name ?? "Hero"; hero.keyword = def?.keyword ?? ""; hero.alignment = align
-        if let c = RuleTables.heroClasses.firstIndex(where: { $0.keyword == cls }) {
-            hero.heroClass = c
-            for s in RuleTables.heroClasses[c].skills { hero.learn(s, level: 0) }
-        }
-        hero.home = (cell.0, cell.1); hero.z = scene.level
-        game.giveStartingArmy(hero)
-        if let m = movementLeft { hero.movement = m }
-        hero.owner = map.humanColour
-        game.heroes.append(hero)
-        lap("\(hero.name) the \(cls) at \(cell) by \(game.towns.first { $0.owned }?.name ?? town.name)")
+/// One scenario in progress: its map, scenes and game state, and the screens built over them.
+/// The window keeps one at a time (AppController); a new game, a load or the next campaign
+/// scenario builds a new one and drops the old.
+final class GameSession {
+    let args: [String]
+    let map: MapFile, scenes: [MapScene], scene: MapScene, game: GameState, resolver: RandomResolver
+    let ui: AdventureUI?, townScreen: TownScreen?, combatScreen: CombatScreen?
+    let loadFile: String?
+    init(args: [String], map: MapFile, scenes: [MapScene], scene: MapScene, game: GameState, resolver: RandomResolver,
+         ui: AdventureUI?, townScreen: TownScreen?, combatScreen: CombatScreen?, loadFile: String?) {
+        self.args = args; self.map = map; self.scenes = scenes; self.scene = scene; self.game = game; self.resolver = resolver
+        self.ui = ui; self.townScreen = townScreen; self.combatScreen = combatScreen; self.loadFile = loadFile
     }
 }
-if let f = ProcessInfo.processInfo.environment["H4HEROAT"] {   // debugging aid: parse a hero record at file:offset of a raw map dump
-    let parts = f.split(separator: ":")
-    if parts.count == 2, let d = try? Data(contentsOf: URL(fileURLWithPath: String(parts[0]))), let off = Int(parts[1]) {
-        if let (h, end) = MapFile.parseHero(d, at: off) { print("hero lv\(h.level) end \(end) events \(h.events.count)") } else { print("hero parse failed") }
-        if let ev = ProcessInfo.processInfo.environment["H4EVAT"].flatMap({ Int($0) }) {
-            var sr = ScriptReader(d, at: ev)
-            do { _ = try sr.builtinEvent(slot: 0); print("builtin ok at \(sr.position)")
-                 let t = try sr.list({ try $0.timedEvent() }); print("timed \(t.count) at \(sr.position)")
-                 let g = try sr.list({ try $0.triggerableEvent() }); print("trig \(g.count) at \(sr.position)")
-                 let c = try sr.list({ try $0.continuousEvent() }); print("cont \(c.count) at \(sr.position)") }
-            catch { print("event error \(error) at \(sr.position)") }
-        }
-    }
-    exit(0)
-}
-// the other players' heroes: the map's armies of their colours; a player with a town and no
-// placed hero gets one of its town's alignment at the gate
-for o in map.objects where o.type == "hero_army" && o.owner != map.humanColour && !o.heroes.isEmpty && o.level < scenes.count {
-    let owned = game.towns.filter { $0.owner == o.owner }
-    let align = owned.min { abs($0.x - o.x) + abs($0.y - o.y) < abs($1.x - o.x) + abs($1.y - o.y) }?.alignment ?? "might"
-    var all = o.heroes.map { Hero.fromMap($0, alignment: align, x: o.x, y: o.y, tables: game.tables, random: &game.random) }
-    let e = all.removeFirst()
-    e.companions = all; e.owner = o.owner ?? 1; e.z = o.level; e.home = (o.x, o.y)
-    e.army = (o.army ?? []).compactMap { $0 }.compactMap { s in s.creature < RuleTables.creatureIds.count ? Hero.Stack(creature: RuleTables.creatureIds[s.creature], count: s.count) : nil }
-    if let b = o.boat { e.boat = ["life", "order", "death", "chaos", "nature", "might"][b] }
-    e.maxMovement = game.armyMovement(e); e.movement = e.maxMovement
-    game.place(enemy: e)
-    lap("enemy \(e.name) level \(e.level) \(e.classKeyword) of player \(e.owner) at (\(o.x),\(o.y)) with \(all.count) more")
-}
-for spec in map.playerSpecs where spec.colour != map.humanColour && !game.enemyHeroes.contains(where: { $0.owner == spec.colour }) {
-    guard let t = game.towns.first(where: { $0.owner == spec.colour }), let p = scenes[t.z].placed.first(where: { $0.category == "castle" && $0.cellX == t.x && $0.cellY == t.y }) else { continue }
-    let back = game.level; game.level = t.z
-    if let cell = game.gateCells(p).first(where: { game.passability.isFree($0.0, $0.1) }) {
-        var mh = MapHero(); mh.level = 1
-        let e = Hero.fromMap(mh, alignment: t.alignment, x: cell.0, y: cell.1, tables: game.tables, random: &game.random)
-        e.owner = spec.colour; e.z = t.z; e.home = cell
-        game.giveStartingArmy(e)
-        game.place(enemy: e)
-        lap("enemy \(e.name) \(e.classKeyword) of player \(e.owner) at \(t.name)")
-    }
-    game.level = back
-}
-game.setupTreasuries()   // the starting treasuries by difficulty, human and computer rows (0x7e1030)
-// a campaign scenario: the heroes carried from the last one take their placeholders
-if let ref = campaignRef {
-    game.campaign = ref
-    let carry = carryFile.flatMap { try? Data(contentsOf: URL(fileURLWithPath: $0)) }.flatMap { try? JSONDecoder().decode(Carryover.self, from: $0) } ?? Carryover()
-    game.placeCarried(carry)
-    game.carriedIn = carry   // the earlier scenarios' scores go on to the campaign's results
-    lap("campaign \(ref.id) scenario \(ref.index + 1): \(game.heroes.map { "\($0.name)@\($0.x),\($0.y) lv\($0.level)" }) carried in")
-    if let out = ProcessInfo.processInfo.environment["H4CARRYOUT"] {   // debugging: write what this scenario would hand on, and stop
-        try? JSONEncoder().encode(game.carryOut()).write(to: URL(fileURLWithPath: out)); print("carry-out written"); exit(0)
-    }
-}
-if ProcessInfo.processInfo.environment["H4DEBUG"] != nil {
-    for o in game.map.objects where o.type == "hero_army" {
-        print("hero army of player \(o.owner ?? -1) at (\(o.x),\(o.y)): stacks \(o.army?.compactMap { $0 }.map { "\($0.count)x\($0.creature)" } ?? []) heroes \(o.heroes.map { "lv\($0.level) class \($0.heroClass) portrait \($0.portrait) '\($0.name)' skills \($0.skills.map { "\($0)" } ?? "random") equipped \($0.equipped) backpack \($0.backpack)" })")
-    }
-}
-if ProcessInfo.processInfo.environment["H4AMBIENT"] != nil {   // debugging aid: the objects that have an ambient sound
-    let snd = GameSound(dataDirectory: URL(fileURLWithPath: args[1]).deletingLastPathComponent())
-    var found: [String: Int] = [:], missing: [String: Int] = [:]
-    for p in scene.placed where !p.type.isEmpty {
-        let full = "adv_object.\(p.type).\(p.subtype)", short = "adv_object.\(p.type)"
-        if let n = [full, short].first(where: { snd.has($0) }) { found[n, default: 0] += 1 } else { missing[full, default: 0] += 1 }
-    }
-    print("ambient found \(found)\nnone for \(missing)")
-    exit(0)
-}
-if ProcessInfo.processInfo.environment["H4VISITALL"] != nil, let h = game.heroes.first {   // debugging aid: every object's visit, once
-    var seen: Set<String> = []
-    for p in scene.placed where game.hasVisit(p) && !seen.contains("\(p.type).\(p.subtype)") {
-        seen.insert("\(p.type).\(p.subtype)")
-        let before = game.resources, lv = h.level
-        game.scripts.messages = []; game.floaters = []
-        _ = game.debugVisit(hero: h, p)
-        let diff = game.resources.filter { $0.value != before[$0.key] }.map { "\($0.key) \($0.value - (before[$0.key] ?? 0))" }
-        print("== \(p.type).\(p.subtype) at (\(p.cellX),\(p.cellY)): \(diff) floaters \(game.floaters.map { $0.text }) level \(lv)->\(h.level) q \(game.question?.text.prefix(60) ?? "-") chest \(game.chestOffer.map { "\($0.gold)/\($0.experience)" } ?? "-")")
-        for m in game.scripts.messages { print("   \(m.prefix(150))") }
-        if p.type == "creature_bank" { print("   bank: \(game.debugBank(p))") }
-        if let c = game.choice { print("   choice: \(c.text.prefix(80)) -> \(c.options)") }
-        game.question = nil; game.chestOffer = nil; game.choice = nil
-    }
-    print("resources now \(game.resources)")
-    print("hero: atk+\(h.attackBonus) def+\(h.defenseBonus) spd+\(h.speedBonus) sp+\(h.spellPointBonus) exp \(h.experience) luck \(h.armyLuck) morale \(h.armyMorale) temple \(h.templeAlignment ?? "-") backpack \(h.backpack.map { game.artifactName($0) })")
-    exit(0)
-}
-if let n = ProcessInfo.processInfo.environment["H4AIDAYS"].flatMap({ Int($0) }) {   // debugging aid: let the computer play n days
-    for d in 0..<n {
-        game.endTurn()
-        let hs = game.enemyHeroes.map { "\($0.name)@\($0.x),\($0.y) army \($0.army.map { "\($0.count) \($0.creature)" })" }
-        print("day \(d + 2): \(hs) towns \(game.towns.map { "\($0.name):\($0.owner.map(String.init) ?? "-")" }) ai gold \(game.aiResources.mapValues { $0["Gold"] ?? 0 }) battle \(game.pendingHeroBattle != nil)")
-        game.pendingHeroBattle = nil
-    }
-    exit(0)
-}
-// the map's scripts: loaded, then day 1's events (the opening story, ...)
-game.loadScripts()
-// a saved game: its state over the freshly started scenario (day events already ran then)
-if let f = loadFile, let save = try? SaveGame.read(URL(fileURLWithPath: f)) {
-    game.restore(save); lap("loaded \(f)")
-    if let h = game.heroes.first { print("loaded: day \(game.day), hero at (\(h.x),\(h.y)), movement \(h.movement), gold \(game.resources["Gold"] ?? 0), monsters \(game.monsters.count), objects \(scene.placed.count)") }
-}
-else { game.runDayEvents() }
-if ProcessInfo.processInfo.environment["H4NOSTORY"] != nil { game.scripts.messages = [] }   // snapshot: the map without the opening story
-for m in game.scripts.messages { print("script text: \(m.prefix(100))") }
 
-// The adventure screen chrome (frame, panel, fonts); the map alone if the UI files are missing.
-var ui: AdventureUI? = nil
-var townScreen: TownScreen? = nil
-var combatScreen: CombatScreen? = nil
-do { ui = try AdventureUI(archive: archive, index: resolver)
-    let dataDir = URL(fileURLWithPath: args[1]).deletingLastPathComponent()
-    ui?.overlays = ["x2.h4r", "updates.h4r"].compactMap { try? H4Archive(url: dataDir.appendingPathComponent($0)) }; if let r = H4Archive.gameResources(dataDirectory: dataDir) { ui?.heroPortraits = HeroPortraits(resources: r) }; townScreen = try TownScreen(archive: archive); combatScreen = try CombatScreen(archive: archive); lap("ui loaded") } catch { print("no UI: \(error)") }
-if let cs = combatScreen, let updates = try? H4Archive(url: URL(fileURLWithPath: args[1]).deletingLastPathComponent().appendingPathComponent("updates.h4r")),
-   let d = try? updates.payload("table.combat_grid_colors.h4d") { cs.gridColors = GridColors(data: d) }
+/// Start a scenario: `args` is a command line ([h4r, map or "campaign:<id>:<index>", options...]).
+func makeSession(_ args: [String]) throws -> GameSession {
+    t0 = Date()
+    func opt(_ name: String) -> String? { args.firstIndex(of: name).flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } }
+    func cell(_ s: String?) -> (Int, Int)? { s.map { $0.split(separator: ",").compactMap { Int($0) } }.flatMap { $0.count == 2 ? ($0[0], $0[1]) : nil } }
+    let level = opt("--level").flatMap { Int($0) } ?? 0
+    let loadFile = opt("--load"), carryFile = opt("--carry")
+    let movementLeft = opt("--movement").flatMap { Float($0) }
+    let heroAt = cell(opt("--hero"))
+    // "campaign:<id>:<scenario>": a scenario of one of the archives' campaigns
+    let campaignRef: (id: Int, index: Int)? = {
+        let p = args[2].split(separator: ":")
+        guard p.count == 3, p[0] == "campaign", let id = Int(p[1]), let k = Int(p[2]) else { return nil }
+        return (id, k)
+    }()
+    var map = try campaignRef.map { try MapFile(data: CampaignFile.load($0.id, from: archive).scenario($0.index), objectNames: objNames) }
+        ?? MapFile(data: Data(contentsOf: URL(fileURLWithPath: args[2])), objectNames: objNames)
+    lap("loaded '\(map.name)'")
+    if ProcessInfo.processInfo.environment["H4DEBUG"] != nil {
+        print("scenario: teams \(map.teams.sorted { $0.key < $1.key }) standard victory \(map.standardVictory) win '\(map.victoryText ?? "-")' loss '\(map.lossText ?? "-")' players \(map.playerSpecs.map { "\($0.colour):\($0.canBeHuman ? "h" : "ai"):\(String($0.alignments, radix: 2))" })")
+    }
+    // the rule tables first: random monsters are drawn from the creature table
+    let textURL = URL(fileURLWithPath: args[1]).deletingLastPathComponent().appendingPathComponent("text.h4r")
+    let ruleTables = (try? H4Archive(url: textURL)).flatMap { try? RuleTables(archive: $0) }
+    if let t = ruleTables {
+        let expansion = max(0, min(2, map.version - 27))
+        let sea: Set<String> = ["mermaid", "sea monster", "pirate"]
+        RandomResolver.creaturePool = (1...4).map { lv in t.creatures.filter { $0.level == lv && $0.expansion <= expansion && !sea.contains($0.keyword) }.map { $0.keyword } }
+        RandomResolver.potionPool = RuleTables.artifactIds.indices.filter { i in t.artifacts[RuleTables.artifactIds[i]].map { $0.level.lowercased() == "item" && $0.slot.lowercased() == "potion" && $0.allowedByDefault } ?? false }
+    }
+    RandomResolver.playerAlignments = Dictionary(map.playerSpecs.map { ($0.colour, $0.alignments) }, uniquingKeysWith: { a, _ in a })
+    // the new-game screen's choices: "--human <colour>", "--align <colour>:<alignment 0-5>", "--difficulty <0-4>"
+    for (k, a) in args.enumerated() where k + 1 < args.count {
+        if a == "--human", let c = Int(args[k + 1]) { map.humanOverride = c }
+        if a == "--align" { let p = args[k + 1].split(separator: ":").compactMap { Int($0) }; if p.count == 2, (0..<6).contains(p[1]) { RandomResolver.playerAlignments[p[0]] = 1 << p[1] } }
+    }
+    // every level of the map (the surface and, on most maps, the underground)
+    // (top-level code has no autorelease pool that drains: one per level frees what building it autoreleased)
+    let scenes = try (0..<max(1, map.levels)).map { l in try autoreleasepool { try MapScene(map: map, level: l, archive: archive, masks: masks) } }
+    let scene = scenes[min(level, scenes.count - 1)]
+    lap("scenes built: \(scenes.map { "\($0.chunks.count) terrain chunks, \($0.placed.count) objects" }.joined(separator: "; "))")
+
+    // A scenario in progress: one hero of the first player's town (the map's owner 0, else the
+    // leftmost town) standing at its gate.
+    let resolver = RandomResolver(archive: archive)
+    let game = GameState(map: map, level: scene.level, scenes: scenes)
+    // the player's difficulty of the new-game screen (game +0x64c): treasuries, monsters, the computer's handicap
+    if let k = args.firstIndex(of: "--difficulty"), k + 1 < args.count, let d = Int(args[k + 1]) { game.difficulty = min(4, max(0, d)) }
+    game.fogEnabled = ProcessInfo.processInfo.environment["H4NOFOG"] == nil   // debugging: no shroud
+    if let tables = ruleTables { game.tables = tables; lap("rules: \(tables.creatures.count) creatures, \(tables.heroes.count) heroes") }
+    let alignments = ["haven": "life", "academy": "order", "asylum": "chaos", "necropolis": "death", "preserve": "nature", "stronghold": "might"]
+    func faction(of name: String) -> String { alignments.first { name.lowercased().contains($0.key) }?.value ?? "life" }
+    game.registerObjects(townFactions: Dictionary(scenes.flatMap { $0.placed }.filter { $0.category == "castle" }.map { ($0.name, faction(of: $0.name)) }, uniquingKeysWith: { a, _ in a }))
+    game.setupGuilds()    // each town's mage guild spells
+    game.setupObjects()   // chests, piles, generators: their contents are rolled as the game starts
+    game.setupMonths()    // next month's creature is drawn as the game starts (0x4d1db2)
+    let ownedByFirst = map.objects.first { ($0.type == "town" || $0.type == "random_town") && $0.owner == map.humanColour && $0.level == scene.level }
+    if let town = scene.placed.first(where: { p in ownedByFirst.map { p.category == "castle" && p.cellX == $0.x && p.cellY == $0.y } ?? false })
+        ?? scene.placed.filter({ $0.category == "castle" }).min(by: { ($0.cellY - $0.cellX) < ($1.cellY - $1.cellX) }) {
+        let align = faction(of: town.name)
+        // (a campaign scenario gives the player only the towns the map gives)
+        if !(campaignRef != nil && ownedByFirst == nil), let i = game.towns.firstIndex(where: { $0.x == town.cellX && $0.y == town.cellY }) { game.towns[i].owned = true; game.towns[i].owner = map.humanColour }
+        // the gate is in the middle of the lower-right wall of right-facing (" R") towns, lower-left otherwise
+        let right = town.name.lowercased().hasSuffix(" r.h4d")
+        // the heroes the map places for the player (armies with heroes: "Beyond the Lake" starts a
+        // level 15 and a level 10 hero together); a hero at the town gate when it has none
+        let placed = map.objects.filter { $0.type == "hero_army" && $0.owner == map.humanColour && $0.level == scene.level && !$0.heroes.isEmpty }
+        for o in placed {
+            var all = o.heroes.map { Hero.fromMap($0, alignment: align, x: o.x, y: o.y, tables: game.tables, random: &game.random) }
+            let hero = all.removeFirst()
+            hero.companions = all
+            hero.home = (o.x, o.y); hero.z = o.level
+            hero.army = (o.army ?? []).compactMap { $0 }.compactMap { s in
+                s.creature < RuleTables.creatureIds.count ? Hero.Stack(creature: RuleTables.creatureIds[s.creature], count: s.count) : nil }
+            hero.maxMovement = game.armyMovement(hero); hero.movement = hero.maxMovement
+            if let m = movementLeft { hero.movement = m }
+            hero.owner = map.humanColour
+            if let b = o.boat {   // the army starts aboard its ship (t_army record +0xbc)
+                hero.boat = ["life", "order", "death", "chaos", "nature", "might"][b]
+                hero.maxMovement = game.armyMovement(hero); hero.movement = movementLeft ?? hero.maxMovement
+            }
+            game.heroes.append(hero)
+            lap("\(hero.name) level \(hero.level) \(hero.classKeyword) at (\(o.x),\(o.y)) skills \(hero.skills) with \(all.map { "\($0.name) level \($0.level) \($0.classKeyword) \($0.skills)" })")
+        }
+        if placed.isEmpty, campaignRef == nil, let cell = heroAt ?? game.freeCell(near: town.cellX + (right ? 3 : 6), town.cellY + (right ? 6 : 3)) {
+            // a might hero of the town's alignment, picked from the heroes table (the male model exists for every class)
+            let cls = RuleTables.classes[align]?.might ?? "knight"
+            let candidates = game.tables?.heroes(ofClass: cls).filter { $0.sex == "male" } ?? []
+            let def = candidates.isEmpty ? nil : candidates[(town.cellX + town.cellY) % candidates.count]
+            let hero = Hero(actor: "hero.\(align)_might_male", x: cell.0, y: cell.1, movement: Hero.baseMovement)
+            hero.name = def?.name ?? "Hero"; hero.keyword = def?.keyword ?? ""; hero.alignment = align
+            if let c = RuleTables.heroClasses.firstIndex(where: { $0.keyword == cls }) {
+                hero.heroClass = c
+                for s in RuleTables.heroClasses[c].skills { hero.learn(s, level: 0) }
+            }
+            hero.home = (cell.0, cell.1); hero.z = scene.level
+            game.giveStartingArmy(hero)
+            if let m = movementLeft { hero.movement = m }
+            hero.owner = map.humanColour
+            game.heroes.append(hero)
+            lap("\(hero.name) the \(cls) at \(cell) by \(game.towns.first { $0.owned }?.name ?? town.name)")
+        }
+    }
+    if let f = ProcessInfo.processInfo.environment["H4HEROAT"] {   // debugging aid: parse a hero record at file:offset of a raw map dump
+        let parts = f.split(separator: ":")
+        if parts.count == 2, let d = try? Data(contentsOf: URL(fileURLWithPath: String(parts[0]))), let off = Int(parts[1]) {
+            if let (h, end) = MapFile.parseHero(d, at: off) { print("hero lv\(h.level) end \(end) events \(h.events.count)") } else { print("hero parse failed") }
+            if let ev = ProcessInfo.processInfo.environment["H4EVAT"].flatMap({ Int($0) }) {
+                var sr = ScriptReader(d, at: ev)
+                do { _ = try sr.builtinEvent(slot: 0); print("builtin ok at \(sr.position)")
+                     let t = try sr.list({ try $0.timedEvent() }); print("timed \(t.count) at \(sr.position)")
+                     let g = try sr.list({ try $0.triggerableEvent() }); print("trig \(g.count) at \(sr.position)")
+                     let c = try sr.list({ try $0.continuousEvent() }); print("cont \(c.count) at \(sr.position)") }
+                catch { print("event error \(error) at \(sr.position)") }
+            }
+        }
+        exit(0)
+    }
+    // the other players' heroes: the map's armies of their colours; a player with a town and no
+    // placed hero gets one of its town's alignment at the gate
+    for o in map.objects where o.type == "hero_army" && o.owner != map.humanColour && !o.heroes.isEmpty && o.level < scenes.count {
+        let owned = game.towns.filter { $0.owner == o.owner }
+        let align = owned.min { abs($0.x - o.x) + abs($0.y - o.y) < abs($1.x - o.x) + abs($1.y - o.y) }?.alignment ?? "might"
+        var all = o.heroes.map { Hero.fromMap($0, alignment: align, x: o.x, y: o.y, tables: game.tables, random: &game.random) }
+        let e = all.removeFirst()
+        e.companions = all; e.owner = o.owner ?? 1; e.z = o.level; e.home = (o.x, o.y)
+        e.army = (o.army ?? []).compactMap { $0 }.compactMap { s in s.creature < RuleTables.creatureIds.count ? Hero.Stack(creature: RuleTables.creatureIds[s.creature], count: s.count) : nil }
+        if let b = o.boat { e.boat = ["life", "order", "death", "chaos", "nature", "might"][b] }
+        e.maxMovement = game.armyMovement(e); e.movement = e.maxMovement
+        game.place(enemy: e)
+        lap("enemy \(e.name) level \(e.level) \(e.classKeyword) of player \(e.owner) at (\(o.x),\(o.y)) with \(all.count) more")
+    }
+    for spec in map.playerSpecs where spec.colour != map.humanColour && !game.enemyHeroes.contains(where: { $0.owner == spec.colour }) {
+        guard let t = game.towns.first(where: { $0.owner == spec.colour }), let p = scenes[t.z].placed.first(where: { $0.category == "castle" && $0.cellX == t.x && $0.cellY == t.y }) else { continue }
+        let back = game.level; game.level = t.z
+        if let cell = game.gateCells(p).first(where: { game.passability.isFree($0.0, $0.1) }) {
+            var mh = MapHero(); mh.level = 1
+            let e = Hero.fromMap(mh, alignment: t.alignment, x: cell.0, y: cell.1, tables: game.tables, random: &game.random)
+            e.owner = spec.colour; e.z = t.z; e.home = cell
+            game.giveStartingArmy(e)
+            game.place(enemy: e)
+            lap("enemy \(e.name) \(e.classKeyword) of player \(e.owner) at \(t.name)")
+        }
+        game.level = back
+    }
+    game.setupTreasuries()   // the starting treasuries by difficulty, human and computer rows (0x7e1030)
+    // a campaign scenario: the heroes carried from the last one take their placeholders
+    if let ref = campaignRef {
+        game.campaign = ref
+        let carry = carryFile.flatMap { try? Data(contentsOf: URL(fileURLWithPath: $0)) }.flatMap { try? JSONDecoder().decode(Carryover.self, from: $0) } ?? Carryover()
+        game.placeCarried(carry)
+        game.carriedIn = carry   // the earlier scenarios' scores go on to the campaign's results
+        lap("campaign \(ref.id) scenario \(ref.index + 1): \(game.heroes.map { "\($0.name)@\($0.x),\($0.y) lv\($0.level)" }) carried in")
+        if let out = ProcessInfo.processInfo.environment["H4CARRYOUT"] {   // debugging: write what this scenario would hand on, and stop
+            try? JSONEncoder().encode(game.carryOut()).write(to: URL(fileURLWithPath: out)); print("carry-out written"); exit(0)
+        }
+    }
+    if ProcessInfo.processInfo.environment["H4DEBUG"] != nil {
+        for o in game.map.objects where o.type == "hero_army" {
+            print("hero army of player \(o.owner ?? -1) at (\(o.x),\(o.y)): stacks \(o.army?.compactMap { $0 }.map { "\($0.count)x\($0.creature)" } ?? []) heroes \(o.heroes.map { "lv\($0.level) class \($0.heroClass) portrait \($0.portrait) '\($0.name)' skills \($0.skills.map { "\($0)" } ?? "random") equipped \($0.equipped) backpack \($0.backpack)" })")
+        }
+    }
+    if ProcessInfo.processInfo.environment["H4AMBIENT"] != nil {   // debugging aid: the objects that have an ambient sound
+        let snd = GameSound(dataDirectory: URL(fileURLWithPath: args[1]).deletingLastPathComponent())
+        var found: [String: Int] = [:], missing: [String: Int] = [:]
+        for p in scene.placed where !p.type.isEmpty {
+            let full = "adv_object.\(p.type).\(p.subtype)", short = "adv_object.\(p.type)"
+            if let n = [full, short].first(where: { snd.has($0) }) { found[n, default: 0] += 1 } else { missing[full, default: 0] += 1 }
+        }
+        print("ambient found \(found)\nnone for \(missing)")
+        exit(0)
+    }
+    if ProcessInfo.processInfo.environment["H4VISITALL"] != nil, let h = game.heroes.first {   // debugging aid: every object's visit, once
+        var seen: Set<String> = []
+        for p in scene.placed where game.hasVisit(p) && !seen.contains("\(p.type).\(p.subtype)") {
+            seen.insert("\(p.type).\(p.subtype)")
+            let before = game.resources, lv = h.level
+            game.scripts.messages = []; game.floaters = []
+            _ = game.debugVisit(hero: h, p)
+            let diff = game.resources.filter { $0.value != before[$0.key] }.map { "\($0.key) \($0.value - (before[$0.key] ?? 0))" }
+            print("== \(p.type).\(p.subtype) at (\(p.cellX),\(p.cellY)): \(diff) floaters \(game.floaters.map { $0.text }) level \(lv)->\(h.level) q \(game.question?.text.prefix(60) ?? "-") chest \(game.chestOffer.map { "\($0.gold)/\($0.experience)" } ?? "-")")
+            for m in game.scripts.messages { print("   \(m.prefix(150))") }
+            if p.type == "creature_bank" { print("   bank: \(game.debugBank(p))") }
+            if let c = game.choice { print("   choice: \(c.text.prefix(80)) -> \(c.options)") }
+            game.question = nil; game.chestOffer = nil; game.choice = nil
+        }
+        print("resources now \(game.resources)")
+        print("hero: atk+\(h.attackBonus) def+\(h.defenseBonus) spd+\(h.speedBonus) sp+\(h.spellPointBonus) exp \(h.experience) luck \(h.armyLuck) morale \(h.armyMorale) temple \(h.templeAlignment ?? "-") backpack \(h.backpack.map { game.artifactName($0) })")
+        exit(0)
+    }
+    if let n = ProcessInfo.processInfo.environment["H4AIDAYS"].flatMap({ Int($0) }) {   // debugging aid: let the computer play n days
+        for d in 0..<n {
+            game.endTurn()
+            let hs = game.enemyHeroes.map { "\($0.name)@\($0.x),\($0.y) army \($0.army.map { "\($0.count) \($0.creature)" })" }
+            print("day \(d + 2): \(hs) towns \(game.towns.map { "\($0.name):\($0.owner.map(String.init) ?? "-")" }) ai gold \(game.aiResources.mapValues { $0["Gold"] ?? 0 }) battle \(game.pendingHeroBattle != nil)")
+            game.pendingHeroBattle = nil
+        }
+        exit(0)
+    }
+    // the map's scripts: loaded, then day 1's events (the opening story, ...)
+    game.loadScripts()
+    // a saved game: its state over the freshly started scenario (day events already ran then)
+    if let f = loadFile, let save = try? SaveGame.read(URL(fileURLWithPath: f)) {
+        game.restore(save); lap("loaded \(f)")
+        if let h = game.heroes.first { print("loaded: day \(game.day), hero at (\(h.x),\(h.y)), movement \(h.movement), gold \(game.resources["Gold"] ?? 0), monsters \(game.monsters.count), objects \(scene.placed.count)") }
+    }
+    else { game.runDayEvents() }
+    if ProcessInfo.processInfo.environment["H4NOSTORY"] != nil { game.scripts.messages = [] }   // snapshot: the map without the opening story
+    for m in game.scripts.messages { print("script text: \(m.prefix(100))") }
+
+    // The adventure screen chrome (frame, panel, fonts); the map alone if the UI files are missing.
+    var ui: AdventureUI? = nil
+    var townScreen: TownScreen? = nil
+    var combatScreen: CombatScreen? = nil
+    do { ui = try AdventureUI(archive: archive, index: resolver)
+        let dataDir = URL(fileURLWithPath: args[1]).deletingLastPathComponent()
+        ui?.overlays = ["x2.h4r", "updates.h4r"].compactMap { try? H4Archive(url: dataDir.appendingPathComponent($0)) }; if let r = H4Archive.gameResources(dataDirectory: dataDir) { ui?.heroPortraits = HeroPortraits(resources: r) }; townScreen = try TownScreen(archive: archive); combatScreen = try CombatScreen(archive: archive); lap("ui loaded") } catch { print("no UI: \(error)") }
+    if let cs = combatScreen, let updates = try? H4Archive(url: URL(fileURLWithPath: args[1]).deletingLastPathComponent().appendingPathComponent("updates.h4r")),
+       let d = try? updates.payload("table.combat_grid_colors.h4d") { cs.gridColors = GridColors(data: d) }
+    return GameSession(args: args, map: map, scenes: scenes, scene: scene, game: game, resolver: resolver,
+                       ui: ui, townScreen: townScreen, combatScreen: combatScreen, loadFile: loadFile)
+}
+
 
 /// Camera setup shared by the window and the snapshot: 1 map pixel per canvas pixel times
 /// the requested zoom, the requested cell in the middle of the map viewport.
 func aim(_ renderer: Renderer, at c: (Int, Int)) {
-    renderer.zoom = zoom * (ui == nil ? 1 : renderer.uiScale)
+    renderer.zoom = zoom * (renderer.ui == nil ? 1 : renderer.uiScale)
     renderer.centre(onCell: c)
 }
 
 if let out = snapshot {
+    let session = try makeSession(args)
+    let (map, scenes, scene, game, resolver) = (session.map, session.scenes, session.scene, session.game, session.resolver)
+    let (ui, townScreen, combatScreen) = (session.ui, session.townScreen, session.combatScreen)
     // Render one 1024x768 frame centred on the map into a texture and save it as PNG.
     let renderer = try Renderer(device: device, scenes: scenes, pixelFormat: .rgba8Unorm)
     renderer.game = game
@@ -1083,48 +1115,9 @@ final class MapView: MTKView {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
-    var window: NSWindow!
-    func applicationDidFinishLaunching(_ n: Notification) {
-        let size = ui == nil ? NSSize(width: 1280, height: 800) : NSSize(width: AdventureUI.width, height: AdventureUI.height)
-        let view = MapView(frame: NSRect(origin: .zero, size: size), device: device)
-        view.colorPixelFormat = .bgra8Unorm
-        view.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
-        view.preferredFramesPerSecond = 60
-        let renderer = try! Renderer(device: device, scenes: scenes, pixelFormat: .bgra8Unorm)
-        renderer.archivePath = args[1]; renderer.mapPath = args.count > 2 ? args[2] : nil
-        if loadFile != nil { renderer.lastAutosaveDay = game.day }   // a loaded game: its day is saved already (no new autosave until the next day)
-        renderer.game = game
-        renderer.resolver = resolver
-        game.gaitProvider = { [unowned renderer] in renderer.gait($0) }
-        renderer.showBlocked = showBlocked
-        renderer.ui = ui
-        renderer.town = townScreen
-        renderer.combat = combatScreen
-    renderer.movies = movies
-    renderer.sound = gameSound
-    combatScreen?.sound = gameSound
-    renderer.applySettings()
-        renderer.onTitle = { [weak self] t in if self?.window.title != t { self?.window.title = t } }
-        view.renderer = renderer
-        view.cursors = GameCursors(archive: archive)
-        view.delegate = renderer
-        renderer.viewSize = SIMD2(Float(view.drawableSize.width), Float(view.drawableSize.height))
-        aim(renderer, at: center ?? game.heroes.first.map { ($0.x, $0.y) } ?? (map.size / 2, map.size / 2))
-        window = NSWindow(contentRect: view.frame, styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
-        window.contentAspectRatio = size
-        window.title = "Heroes IV — \(map.name)"
-        window.contentView = view
-        window.makeFirstResponder(view)
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        lap("window up")
-    }
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
-}
-
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)
-let delegate = AppDelegate()
-app.delegate = delegate
+AppController.shared.initialArgs = args
+AppController.shared.initialCentre = center
+app.delegate = AppController.shared
 app.run()

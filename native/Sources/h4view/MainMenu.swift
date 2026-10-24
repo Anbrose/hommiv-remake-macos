@@ -6,45 +6,7 @@ import H4Engine
 /// buttons with their labels in the `_Text` rects; New Game's and Options' scroll menus; the
 /// scenario list (dialog.new_game), New_Game_Options, the campaign selection (campaign_selection /
 /// storm_ / wow_), the campaign briefing (dialog.Campaign) and epilogue (Campaign_Epilogue), Load
-/// Game and Game Settings. A choice starts the game process again with the map or campaign scenario.
-func runMainMenu(_ args: [String]) -> Never {
-    let app = NSApplication.shared
-    app.setActivationPolicy(.regular)
-    let delegate = MenuAppDelegate(args: args)
-    app.delegate = delegate
-    app.run()
-    exit(0)
-}
-
-final class MenuAppDelegate: NSObject, NSApplicationDelegate {
-    let args: [String]
-    var window: NSWindow?
-    init(args: [String]) { self.args = args }
-    func applicationDidFinishLaunching(_ n: Notification) {
-        guard let view = try? MenuView(args: args) else { print("menu: cannot open the game data"); NSApp.terminate(nil); return }
-        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1024, height: 768), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        w.title = "Heroes of Might and Magic IV"
-        w.contentView = view
-        w.contentAspectRatio = NSSize(width: 4, height: 3)
-        w.center(); w.makeKeyAndOrderFront(nil)
-        window = w
-        // snapshot: a menu screen ("popup", "options", "settings", "load", "scenarios", "setup[:map]",
-        // "campaigns:k", "briefing:id:i[:tab]", "epilogue:id:i", "hover:<button>")
-        if let out = ProcessInfo.processInfo.environment["H4MENUSNAP"] {
-            view.snapshotting = true
-            view.open(ProcessInfo.processInfo.environment["H4MENUSCREEN"] ?? "")
-            view.frame = NSRect(x: 0, y: 0, width: 1024, height: 768)
-            if let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
-                view.cacheDisplay(in: view.bounds, to: rep)
-                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: out))
-            }
-            exit(0)
-        }
-        NSApp.activate(ignoringOtherApps: true)
-    }
-    func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
-}
-
+/// Game and Game Settings. A choice opens the map or campaign scenario in the same window (AppController).
 final class MenuView: NSView {
     enum Screen {
         case main
@@ -88,7 +50,7 @@ final class MenuView: NSView {
     var highScoreStandard = true, highScoreScroll = 0, highScoreName = "", confirmingReset = false
     var campaignResultsScroll = 0
 
-    init(args: [String]) throws {
+    init(args: [String], sound shared: GameSound? = nil) throws {
         archivePath = args[1]
         let dir = URL(fileURLWithPath: args[1]).deletingLastPathComponent()
         archive = try H4Archive(url: URL(fileURLWithPath: args[1]))
@@ -100,7 +62,7 @@ final class MenuView: NSView {
         strings = texts
         menuRules = rules
         kit = MenuKit(archives: extra + [archive], strings: { texts })
-        sound = GameSound(dataDirectory: dir)
+        sound = shared ?? GameSound(dataDirectory: dir)
         super.init(frame: NSRect(x: 0, y: 0, width: 1024, height: 768))
         // an epilogue / the next scenario after a won campaign scenario: "--menu --next <id> <index> [--carry file]"
         if let k = args.firstIndex(of: "--next"), k + 2 < args.count, let id = Int(args[k + 1]), let index = Int(args[k + 2]) {
@@ -770,17 +732,8 @@ final class MenuView: NSView {
             }
         }
     }
-    /// Start the game process on a map (or a campaign scenario "campaign:<id>:<index>").
-    func start(_ gameArgs: [String]) {
-        let app = Bundle.main.bundleURL
-        let all = [archivePath] + gameArgs
-        if app.pathExtension == "app" {
-            let cfg = NSWorkspace.OpenConfiguration()
-            cfg.arguments = all; cfg.createsNewApplicationInstance = true
-            NSWorkspace.shared.openApplication(at: app, configuration: cfg) { _, _ in DispatchQueue.main.async { NSApp.terminate(nil) } }
-        } else {
-            let p = Process(); p.executableURL = URL(fileURLWithPath: CommandLine.arguments[0]); p.arguments = all
-            try? p.run(); NSApp.terminate(nil)
-        }
-    }
+    /// Start the game on a map (or a campaign scenario "campaign:<id>:<index>"), in this window.
+    func start(_ gameArgs: [String]) { AppController.shared.open([archivePath] + gameArgs) }
+    /// The window shows another screen: the redraw timer and the music stop.
+    func teardown() { timer?.invalidate(); timer = nil; popup = nil; sound.leaveScreen() }
 }

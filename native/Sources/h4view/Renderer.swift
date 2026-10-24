@@ -144,7 +144,17 @@ final class Renderer: NSObject, MTKViewDelegate {
     var cheatBox: CheatBox?
     /// The game's archive and scenario files (for saving and for starting again from a save).
     var archivePath: String?, mapPath: String?
+    /// The command line this game was started with (Restart Game starts it again).
+    var launchArgs: [String]?
     var lastAutosaveDay: Int?
+    // state the extensions keep for this window (stored here: it goes with the renderer)
+    var kitStore: MenuKit?
+    /// The town list's first row (the scrollbar's position).
+    var townListTop = 0
+    /// The split toggle (t_toggle_button +0x6b0): the next move splits the stack.
+    var townSplitOn = false
+    /// The building bought last in the open town (0x8b4c90 with immediate = 0) while it fades in.
+    var townFade: TownFade?
     var buttonTextures: Set<ObjectIdentifier> = []
     /// The buttons and windows drawn last frame, for the click of a press on a button (ButtonSound.swift).
     var pressTargets: [PressTarget] = []

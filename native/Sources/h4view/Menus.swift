@@ -14,13 +14,12 @@ struct PopupMenu {
 }
 
 extension Renderer {
-    private static var kits: [ObjectIdentifier: MenuKit] = [:]
     /// The window machinery over the game's archives (updates, x2, then heroes4).
     var kit: MenuKit? {
         guard let ui = ui else { return nil }
-        if let k = Renderer.kits[ObjectIdentifier(self)] { return k }
+        if let k = kitStore { return k }
         let k = MenuKit(archives: ui.overlays.reversed() + [ui.archive], strings: { [weak self] in self?.game?.tables?.strings ?? [:] })
-        Renderer.kits[ObjectIdentifier(self)] = k
+        kitStore = k
         return k
     }
     func quads(_ items: [UIItem]) -> [Quad] {
@@ -68,13 +67,12 @@ extension Renderer {
     private func unavailable(_ key: String, _ fallback: String) {
         toasts.append(("\(text(key, fallback)): not available yet", Date().addingTimeInterval(3)))
     }
-    /// Start the scenario again from its beginning (the same way loading does).
+    /// Start the scenario again from its beginning, with the choices it was started with
+    /// (the same way loading does, without the save).
     func restartScenario() {
-        guard let archive = archivePath, let map = mapPath else { return }
-        prompt = (text("restart_game.misc", "Are you sure you want to restart?  Your current game will be lost."), true, {
-            let cfg = NSWorkspace.OpenConfiguration(); cfg.arguments = [archive, map]; cfg.createsNewApplicationInstance = true
-            NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: cfg) { _, _ in DispatchQueue.main.async { NSApp.terminate(nil) } }
-        })
+        guard var all = launchArgs, all.count >= 2 else { return }
+        if let k = all.firstIndex(of: "--load"), k + 1 < all.count { all.removeSubrange(k...k + 1) }
+        prompt = (text("restart_game.misc", "Are you sure you want to restart?  Your current game will be lost."), true, { [weak self] in self?.relaunch(all) })
     }
 
     func menuQuads() -> [Quad] {
@@ -99,9 +97,7 @@ extension Renderer {
     var scenarioInfoOrigin: (Int, Int) { ((AdventureUI.width - 732) / 2, (AdventureUI.height - 482) / 2) }
     /// The player's difficulty, as chosen on the new-game screen (--difficulty, default Intermediate).
     var playerDifficulty: Int {
-        let a = CommandLine.arguments
-        if let k = a.firstIndex(of: "--difficulty"), k + 1 < a.count, let d = Int(a[k + 1]) { return min(4, max(0, d)) }
-        return 1
+        min(4, max(0, game?.difficulty ?? 1))
     }
     static let difficultyLayers = ["easy", "Normal", "Hard", "expert", "impossible"]
 

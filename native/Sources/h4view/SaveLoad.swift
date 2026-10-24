@@ -52,20 +52,11 @@ extension Renderer {
         if FileManager.default.fileExists(atPath: a.path) { try? FileManager.default.removeItem(at: b); try? FileManager.default.moveItem(at: a, to: b) }
         save(as: this)
     }
-    /// Load: start the game again on the save's map with the save laid over it.
+    /// Load: the save's map, started afresh with the save laid over it, in this window.
     func load(_ name: String) {
         let file = Renderer.savesDirectory.appendingPathComponent("\(name).h4s")
         guard let s = try? SaveGame.read(file), let archive = archivePath else { return }
-        let app = Bundle.main.bundleURL
-        let cfg = NSWorkspace.OpenConfiguration()
-        cfg.arguments = [archive, s.mapPath, "--load", file.path]
-        cfg.createsNewApplicationInstance = true
-        if app.pathExtension == "app" {
-            NSWorkspace.shared.openApplication(at: app, configuration: cfg) { _, _ in DispatchQueue.main.async { NSApp.terminate(nil) } }
-        } else {   // run from the build folder: start the executable itself
-            let p = Process(); p.executableURL = URL(fileURLWithPath: CommandLine.arguments[0]); p.arguments = cfg.arguments
-            try? p.run(); NSApp.terminate(nil)
-        }
+        relaunch([archive, s.mapPath, "--load", file.path])
     }
 
     var saveOrigin: (Int, Int) { ((AdventureUI.width - 799) / 2, (AdventureUI.height - 598) / 2) }
@@ -132,16 +123,7 @@ extension Renderer {
 }
 
 extension Renderer {
-    /// Start this program again with other arguments (a new game, the menu).
-    func relaunch(_ all: [String]) {
-        let app = Bundle.main.bundleURL
-        if app.pathExtension == "app" {
-            let cfg = NSWorkspace.OpenConfiguration()
-            cfg.arguments = all; cfg.createsNewApplicationInstance = true
-            NSWorkspace.shared.openApplication(at: app, configuration: cfg) { _, _ in DispatchQueue.main.async { NSApp.terminate(nil) } }
-        } else {
-            let p = Process(); p.executableURL = URL(fileURLWithPath: CommandLine.arguments[0]); p.arguments = all
-            try? p.run(); NSApp.terminate(nil)
-        }
-    }
+    /// Show another screen in the window: a command line's map or campaign scenario, or the
+    /// main menu ("--menu" with its options). The old game is torn down first (AppController).
+    func relaunch(_ all: [String]) { AppController.shared.open(all) }
 }

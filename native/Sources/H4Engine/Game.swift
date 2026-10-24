@@ -933,6 +933,8 @@ public final class GameState {
                 c.abilities.insert(e.ability)
                 if e.ability == "ranged" { c.shooter = true; if c.shots == 0 { c.shots = 12 } }
             case 0x2b: if e.spell >= 0 { c.effects.insert(e.spell) }
+            case 0x3a: if e.spell >= 0 { c.castAtStart.append((e.spell, e.amount)) }
+            case 0x31: if e.spell >= 0 { c.spellsOnHit.append((e.spell, e.melee, e.ranged)) }
             default: break
             }
         }

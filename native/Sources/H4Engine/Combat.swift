@@ -67,6 +67,12 @@ public struct Combatant {
     public var magicResistance = 0
     /// A creature caster's spell points (per stack, creature record +0x68) and Spell Power (+0x6c).
     public var spellPoints = 0, spellPower = 0
+    /// A hero's worn "cast once in combat" effects (artifact type 0x3a: spell, power), put on the
+    /// hero as the battle starts (t_cast_once_visitor 0x62e690, from the deployment 0x62e3ac).
+    public var castAtStart: [(spell: Int, power: Int)] = []
+    /// A hero's worn "spell with attack" effects (type 0x31): each blow of the matching kind puts
+    /// the spell on the struck stack (t_spell_attack_visitor 0x5d0a50 via 0x5d0c40, after Weakness).
+    public var spellsOnHit: [(spell: Int, melee: Bool, ranged: Bool)] = []
 
     public var alive: Bool { count > 0 }
     public var totalHealth: Int { count * hitPoints - wounds }

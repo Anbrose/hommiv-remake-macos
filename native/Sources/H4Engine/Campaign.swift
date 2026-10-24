@@ -101,6 +101,9 @@ public struct Carryover: Codable {
     public var byColour: [Int: [SaveGame.HeroState]] = [:]
     /// Each won scenario's {score, days} so far (t_carryover_data +0xffc, 0x4e6020).
     public var scores: [CampaignScore]? = nil
+    /// The human's carried artifact pool (t_carryover_data +8, one list per artifact id): the
+    /// won map's carry-out artifacts taken off its heroes, for the next map's strongest hero.
+    public var artifacts: [Int]? = nil
     public init() {}
 }
 
@@ -112,6 +115,21 @@ extension GameState {
         var mine = heroes.flatMap { $0.members } + towns.filter(\.owned).flatMap { $0.garrisonHeroes } + sanctuaryGuests.values.flatMap { $0.members }
         mine.sort { rank($0) > rank($1) }
         c.human = mine.map { SaveGame.state(of: $0) }
+        // the map's carry-out artifacts leave their holders for the pool (0x5be4a0: the slot is
+        // emptied after 0x5bbd20 records it), worn ones first, then the backpack
+        let out = map.carryOutArtifacts
+        if !out.isEmpty {
+            var pool: [Int] = []
+            func pulls(_ id: Int) -> Bool { out.contains(RuleTables.artifactBase(id)) }
+            for k in c.human.indices {
+                if var eq = c.human[k].equipped {
+                    for s in eq.indices { if let a = eq[s], pulls(a) { pool.append(a); eq[s] = nil } }
+                    c.human[k].equipped = eq
+                }
+                if let bp = c.human[k].backpack { pool += bp.filter(pulls); c.human[k].backpack = bp.filter { !pulls($0) } }
+            }
+            c.artifacts = pool
+        }
         var theirs: [Int: [Hero]] = [:]
         for h in enemyHeroes { for m in h.members { theirs[h.owner, default: []].append(m) } }
         for (col, hs) in theirs { c.byColour[col] = hs.sorted { rank($0) > rank($1) }.map { SaveGame.state(of: $0) } }
@@ -148,6 +166,21 @@ extension GameState {
             if owner == map.humanColour { heroes.append(h) } else { enemyHeroes.append(h); passabilities[l].block(h.x, h.y) }
         }
         level = back
+        giveCarriedArtifacts(c.artifacts ?? [])
+    }
+    /// The carried pool at map start (0x4cb680, from 0x4cf1c0 when carry-over data exists): every
+    /// item this map lets in (`carryInArtifacts`, 0x5bcb20) goes to the human's hero with the most
+    /// skill levels (0x4cb7f0: the sum over the 36 skills of level + 1, the first of equals), put
+    /// on where its slot is free, else into the backpack (hero vtable+4 with "equip", 0x72a6f0).
+    /// With no hero the exe gives them to a creature stack's backpack, which the remake lacks.
+    public func giveCarriedArtifacts(_ pool: [Int]) {
+        let items = pool.filter { map.carryInArtifacts.contains(RuleTables.artifactBase($0)) }
+        guard !items.isEmpty else { return }
+        func rank(_ h: Hero) -> Int { h.skills.values.reduce(0) { $0 + $1 + 1 } }
+        var best: Hero? = nil
+        for h in heroes.flatMap({ $0.members }) + towns.filter(\.owned).flatMap({ $0.garrisonHeroes }) where best == nil || rank(h) > rank(best!) { best = h }
+        guard let h = best else { return }
+        for a in items { h.receive(a, tables: tables) }
     }
 }
 

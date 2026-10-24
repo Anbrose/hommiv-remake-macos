@@ -290,6 +290,9 @@ public final class Battle {
             }
         }
         siegeDeploy()
+        // a hero's "cast once in combat" items (0x3a; e.g. the Cloak of Darkness + Ring of Light
+        // set's Guardian Angel, the Angelfeather Cloak's Heavenly Shield) take hold as it is placed
+        for u in units where u.stats.isHero { for s in u.stats.castAtStart { apply(s.spell, to: u, power: s.power) } }
         for side in 0..<2 { initialHealth[side] = units.filter { $0.side == side }.reduce(0) { $0 + $1.stats.totalHealth } }
         startRound()
     }
@@ -888,6 +891,11 @@ public final class Battle {
         if b.alive {
             // Weakness (melee and ranged) on living targets
             if a.stats.has("weakness"), Battle.living(b), !b.stats.under(185) { onHit(185, on: b, by: a, name: "Weakness") }
+            // a hero's "spell with attack" items (0x5d0c40 right after Weakness): every blow of the
+            // matching kind, no roll (e.g. the Bard set's Song of Peace on melee targets)
+            for s in a.stats.spellsOnHit where (ranged ? s.ranged : s.melee) && b.alive && s.spell < RuleTables.spells.count {
+                onHit(s.spell, on: b, by: a, name: RuleTables.spells[s.spell].name)
+            }
             // Stun / ranged stun: damage as a percentage of the health it had, less 5; no resistance (0x553960)
             if a.stats.has(ranged ? "ranged_stun" : "stunning"), Battle.living(b) {
                 let chance = damage * 100 / max(1, healthBefore) - 5

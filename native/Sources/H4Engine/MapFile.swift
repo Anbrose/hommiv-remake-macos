@@ -145,6 +145,13 @@ public struct MapFile {
     public struct CutScene { public let text: String, image: String, voice: String }
     public var prologue: CutScene? = nil, epilogue: CutScene? = nil
     public var carryoverText = ""
+    /// The campaign carry-over artifact sets (map v >= 22, read by 0x4cf1c0 into game +0x90 / +0xb0
+    /// with 0x551980: u16 0, u16 bit count <= 248, the bits; older maps: both empty, 0x4e79e0(0)).
+    /// `carryInArtifacts` ("Artifacts Carrying Over from Previous Scenarios"): the carried pool
+    /// items this map lets through to the strongest hero (0x5bcb20); `carryOutArtifacts` ("...to
+    /// Subsequent Scenarios"): the items pulled off the player's holders when the map is won
+    /// (0x4e4920 / 0x5be4a0) to reappear with the strongest hero of the next map (0x4cb680).
+    public private(set) var carryInArtifacts: Set<Int> = [], carryOutArtifacts: Set<Int> = []
     /// The map's own events (timed, triggerable, continuous).
     public let events: [MapEvent]
     /// The colour the human plays: the first player slot a human may take.
@@ -158,6 +165,25 @@ public struct MapFile {
     public private(set) var placedEvents: [MapEvent] = []
     /// cells[level][x * size + y]; nil outside the playable diamond
     public let cells: [[Cell?]]
+
+    /// The two carry-over bit sets, back to back somewhere after the header (their place depends on
+    /// lists this reader skips, so they are found by their shape: u16 0, u16 n, (n + 7) / 8 bytes, twice).
+    static func carryArtifactSets(_ d: Data, from start: Int) -> (Set<Int>, Set<Int>)? {
+        let b = [UInt8](d)
+        func u16(_ p: Int) -> Int { Int(b[p]) | Int(b[p + 1]) << 8 }
+        var p = start
+        while p + 8 < b.count {
+            defer { p += 1 }
+            guard b[p] == 0, b[p + 1] == 0 else { continue }
+            let n = u16(p + 2)
+            guard n >= 200, n <= 0xf8 else { continue }
+            let len = (n + 7) / 8, q = p + 4 + len
+            guard q + 4 + len <= b.count, u16(q) == 0, u16(q + 2) == n else { continue }
+            func bits(_ at: Int) -> Set<Int> { Set((0..<n).filter { b[at + $0 >> 3] >> ($0 & 7) & 1 != 0 }) }
+            return (bits(p + 4), bits(q + 4))
+        }
+        return nil
+    }
 
     public static func diamond(_ size: Int) -> [(Int, Int)] {
         let mid = Double(size - 1) / 2
@@ -227,6 +253,7 @@ public struct MapFile {
             events = ScriptReader.mapEvents(d, from: r.pos)
         }
         let headerEnd = r.pos
+        if version >= 22, let sets = MapFile.carryArtifactSets(d, from: headerEnd) { (carryInArtifacts, carryOutArtifacts) = sets }
 
         let pts = MapFile.diamond(size)
         let perLevel = pts.count

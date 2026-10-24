@@ -204,7 +204,7 @@ extension Renderer {
         let over = pointerCanvas.0 >= Float(x) && pointerCanvas.0 < Float(x + w) && pointerCanvas.1 >= Float(y) && pointerCanvas.1 < Float(y + h)
         let names = disabled ? ["Disabled"] : pressed ? ["Pressed", "Released"] : over ? ["Highlighted", "Released"] : ["Released"]
         guard let l = names.lazy.compactMap({ MenuKit.find(f, $0) }).first else { return [] }
-        return dImageOffset(l, "tbtn.\(file)", x: x, y: y)
+        return dImageOffset(l, "tbtn.\(file)", x: x, y: y).button(!disabled)
     }
     func townButtonSize(_ file: String) -> (Int, Int) {
         guard let l = MenuKit.find(townButtonFile(file), "Released") else { return (0, 0) }
@@ -272,7 +272,7 @@ extension Renderer {
         // the town menu button (0x5a2250: its layout layers at their own boxes)
         let menuBox = ts.hotspot("Menu_Button_Released")
         let overMenu = menuBox.map { ts.hit($0, pointerCanvas.0, pointerCanvas.1) } ?? false
-        out += layoutImage(fr, menu != nil ? "Menu_Button_Pressed" : overMenu ? "Menu_Button_Highlighted" : "Menu_Button_Released", 0, 0)
+        out += layoutImage(fr, menu != nil ? "Menu_Button_Pressed" : overMenu ? "Menu_Button_Highlighted" : "Menu_Button_Released", 0, 0).button()
         if townTwoRows {
             out += townButton("move_up", x: Renderer.townMoveUp.0, y: Renderer.townMoveUp.1)
             out += townButton("move_garrison_down", x: Renderer.townMoveDown.0, y: Renderer.townMoveDown.1)
@@ -335,15 +335,15 @@ extension Renderer {
         let sp = townSplitAt
         out += townButton(sp.file, x: sp.x, y: sp.y, pressed: townSplitOn)
         out += townRowQuads()
-        out += townDialogQuads()
-        out += caravanQuads()
-        out += shopQuads()
-        out += hireQuads()
-        out += marketQuads()
+        out += townDialogQuads().modal()   // the windows from here on are modal: what is under one takes no press
+        out += caravanQuads().modal()
+        out += shopQuads().modal()
+        out += hireQuads().modal()
+        out += marketQuads().modal()
         out += menuQuads()
-        if armySession != nil { out += armyScreenQuads() }   // the army screen of the town's rows (a double click)
-        out += splitQuads()
-        if prompt != nil { out += messageBoxQuads() }
+        if armySession != nil { out += armyScreenQuads().modal() }   // the army screen of the town's rows (a double click)
+        out += splitQuads().modal()
+        if prompt != nil { out += messageBoxQuads().modal() }
         out += townBalloonQuads()
         return out
     }

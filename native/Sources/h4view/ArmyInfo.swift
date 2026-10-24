@@ -107,7 +107,7 @@ extension Renderer {
         }
         // buttons
         out += buttonAt("ok", "Released", d["Close_Button"], ox, oy)
-        if let b = button { out += layoutImage(d, b, ox, oy) }
+        if let b = button { out += layoutImage(d, b, ox, oy).button() }
         // the ring row: portrait, piece (or its highlight) over it, the count
         let strings = g.tables?.strings ?? [:]
         var cursor = 13

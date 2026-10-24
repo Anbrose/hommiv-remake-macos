@@ -75,7 +75,7 @@ extension Renderer {
     func dButton(_ file: String, _ state: String, x: Int, y: Int) -> [Quad] {
         let f = dFile("button.\(file)") ?? dFile(file)
         let l = dLayer(f, state) ?? (state.lowercased() == "disabled" ? nil : dLayer(f, "Released"))
-        return dImageOffset(l, "btn.\(file)", x: x, y: y)
+        return dImageOffset(l, "btn.\(file)", x: x, y: y).button(Renderer.enabledState(state))
     }
     /// The size of a button file's Released image.
     func dButtonSize(_ file: String) -> (Int, Int) {
@@ -119,10 +119,10 @@ extension Renderer {
         if caravanUI != nil, prompt == nil { return caravanKey(code) }
         if spellBook != nil { return spellBookKey(code) }
         if thievesGuildOpen {   // the ok button's hot key is Enter (0x7d2970(0xd)); Escape closes it as well
-            if code == 36 || code == 76 || code == 53 { thievesGuildOpen = false }
+            if code == 36 || code == 76 || code == 53 { buttonClick(); thievesGuildOpen = false }
             return true
         }
-        if game?.levelUp != nil, !inCombat, code == 36 || code == 76 { confirmLevelUp(); return true }
+        if game?.levelUp != nil, !inCombat, code == 36 || code == 76 { buttonClick(); confirmLevelUp(); return true }
         return false
     }
     /// A ring row (t_creature_array_window 0x6439c0, layers.creature_rings): style 0 Left/Middle x5/Right,

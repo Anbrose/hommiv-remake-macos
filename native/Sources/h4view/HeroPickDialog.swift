@@ -97,11 +97,9 @@ extension Renderer {
             return DRect(ox + b.x, oy + b.y, max(w, b.w), max(h, b.h)).contains(x, y)
         }
         if on("OK_Button", "ok"), let k = heroPickChosen(hp) {
-            sound?.play("miscellaneous.button")
             g.heroPick = nil; heroPickSelected = nil
             hp.ok(hp.heroes[k])
         } else if on("Cancel_button", "cancel") {
-            sound?.play("miscellaneous.button")
             g.heroPick = nil; heroPickSelected = nil
         }
         return true

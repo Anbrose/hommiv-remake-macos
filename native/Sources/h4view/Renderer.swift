@@ -74,6 +74,8 @@ struct Quad {
     var adjust: SIMD4<Float>? = nil
     /// Draw only inside this canvas rectangle (x, y, w, h): a window's children clip to it.
     var clip: (x: Int, y: Int, w: Int, h: Int)? = nil
+    /// What a press on it does: a button's picture, a window (ButtonSound.swift).
+    var press: PressRole? = nil
 }
 
 final class Renderer: NSObject, MTKViewDelegate {
@@ -126,13 +128,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     var archivePath: String?, mapPath: String?
     var lastAutosaveDay: Int?
     var buttonTextures: Set<ObjectIdentifier> = []
-    var buttonRects: [(x: Int, y: Int, w: Int, h: Int)] = []
-    /// A press on one of the buttons drawn last frame plays the game's click (sound.miscellaneous.button).
-    func pressSound(x: Float, y: Float) {
-        if buttonRects.contains(where: { x >= Float($0.x) && x < Float($0.x + $0.w) && y >= Float($0.y) && y < Float($0.y + $0.h) }) {
-            sound?.play("miscellaneous.button")
-        }
-    }
+    /// The buttons and windows drawn last frame, for the click of a press on a button (ButtonSound.swift).
+    var pressTargets: [PressTarget] = []
 
     /// The music for where the player is: the town's alignment in a town, else the terrain under
     /// the hero (terrain.<Terrain>); combat music is started by the battle itself.
@@ -625,32 +622,32 @@ final class Renderer: NSObject, MTKViewDelegate {
             out.append(Quad(texture: uiTexture("toast|\(t.text)", { ui.dateFont.render(t.text, colour: (255, 236, 200)) }), x: x, y: y, w: w, h: ui.dateFont.size))
         }
         out += panelButtonQuads()
-        out += computerTurnQuads()
+        out += computerTurnQuads().modal()   // the windows from here on are modal: what is under one takes no press
         out += floaterQuads()
         out += hoverQuads()
-        out += popupQuads()
-        out += creatureDialogQuads()
-        out += adventureDialogQuads()
-        out += armyPopupQuads()
-        out += overviewQuads()
-        out += marketQuads()
-        out += spellBookQuads()
-        out += optionsQuads()
-        out += hireQuads()
-        out += mapRecruitQuads()
-        out += puzzleQuads()
-        out += thievesGuildQuads()
-        out += shopQuads()
-        out += sanctuaryQuads()
-        out += levelUpQuads()
-        out += splitQuads()
-        out += choiceQuads()
-        out += heroPickQuads()
-        out += skillDialogQuads()
-        out += teleporterQuads()
-        out += caravanQuads()
-        out += messageBoxQuads()
-        out += saveDialogQuads()
+        out += popupQuads().modal()
+        out += creatureDialogQuads().modal()
+        out += adventureDialogQuads().modal()
+        out += armyPopupQuads().modal()
+        out += overviewQuads().modal()
+        out += marketQuads().modal()
+        out += spellBookQuads().modal()
+        out += optionsQuads().modal()
+        out += hireQuads().modal()
+        out += mapRecruitQuads().modal()
+        out += puzzleQuads().modal()
+        out += thievesGuildQuads().modal()
+        out += shopQuads().modal()
+        out += sanctuaryQuads().modal()
+        out += levelUpQuads().modal()
+        out += splitQuads().modal()
+        out += choiceQuads().modal()
+        out += heroPickQuads().modal()
+        out += skillDialogQuads().modal()
+        out += teleporterQuads().modal()
+        out += caravanQuads().modal()
+        out += messageBoxQuads().modal()
+        out += saveDialogQuads().modal()
         out += menuQuads()
         return out
     }
@@ -1345,15 +1342,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         let mapList = inTown || inCombat || endGame != nil ? [] : quads(at: time)
         let uiList = endGame != nil ? endGameQuads(now: Date()) + finalScoreQuads()
             : (inCombat ? combatQuads(now: now) : inTown ? townScreenQuads() : uiQuads()) + abilityPopupQuads() + cheatBoxQuads()
-        // where this frame's buttons are (any quad drawn with a layers.button.* picture), for the click sound
-        buttonRects = uiList.filter { buttonTextures.contains(ObjectIdentifier($0.texture)) }.map { ($0.x, $0.y, $0.w, $0.h) }
-        // the adventure panel's own buttons are painted into its frame; their hotspots mark them
-        if !inCombat, !inTown, let ui = ui {
-            for n in ["Game_menu_button", "Marketplace_button", "move_army_button", "overview_button", "spell_button", "surface_button",
-                      "System_menu_button", "underground_button", "end_turn"] {
-                if let h = ui.hotspot(n) { buttonRects.append((h.x, h.y, h.width, h.height)) }
-            }
-        }
+        collectPressTargets(uiList)   // where this frame's buttons are, for the click sound
         let list = mapList + uiList
         var verts: [Vertex] = []
         verts.reserveCapacity(list.count * 6)

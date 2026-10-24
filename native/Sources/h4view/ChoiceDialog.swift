@@ -33,8 +33,9 @@ extension Renderer {
             out.append(Quad(texture: uiTexture("choice|\(t)|\(colour.0)", { ui.numberFont.render(t, colour: colour) }), x: r.x + (r.w - w) / 2, y: r.y + (r.h - ui.numberFont.size) / 2, w: w, h: ui.numberFont.size))
         }
         for (name, rect) in [("ok", choiceOK(m)), ("cancel", choiceCancel(m))] {
-            guard let b = ui.button(name, state: name == "ok" && choicePicked == nil ? "Disabled" : "Released") ?? ui.button(name) else { continue }
-            out.append(Quad(texture: uiTexture("button|\(name)|\(b.name)", { b.bitmap }), x: rect.x + (rect.w - b.width) / 2, y: rect.y + (rect.h - b.height) / 2, w: b.width, h: b.height))
+            let enabled = !(name == "ok" && choicePicked == nil)
+            guard let b = ui.button(name, state: enabled ? "Released" : "Disabled") ?? ui.button(name) else { continue }
+            out.append(Quad(texture: uiTexture("button|\(name)|\(b.name)", { b.bitmap }), x: rect.x + (rect.w - b.width) / 2, y: rect.y + (rect.h - b.height) / 2, w: b.width, h: b.height, press: .button(enabled)))
         }
         return out
     }
@@ -53,8 +54,8 @@ extension Renderer {
             if double { g.choice = nil; choicePicked = nil; c.pick(i) }
             return true
         }
-        if on(choiceOK(m)), let k = choicePicked { g.choice = nil; choicePicked = nil; sound?.play("miscellaneous.button"); c.pick(k) }
-        else if on(choiceCancel(m)) { g.choice = nil; choicePicked = nil; sound?.play("miscellaneous.button") }
+        if on(choiceOK(m)), let k = choicePicked { g.choice = nil; choicePicked = nil; c.pick(k) }
+        else if on(choiceCancel(m)) { g.choice = nil; choicePicked = nil }
         return true
     }
 }

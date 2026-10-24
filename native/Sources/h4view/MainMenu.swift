@@ -180,8 +180,12 @@ final class MenuView: NSView {
     }()
 
     var ctx: CGContext?
+    /// The buttons and windows of the frame being drawn, and of the last one (for the click of a press: ButtonSound.swift).
+    var framePictures: [(x: Int, y: Int, w: Int, h: Int, role: PressRole?)] = []
+    var pressTargets: [PressTarget] = []
     func draw(_ items: [UIItem]) {
         guard let c = ctx else { return }
+        framePictures += items.lazy.filter { $0.press != nil }.map { ($0.x, $0.y, $0.w, $0.h, $0.press) }
         for it in items {
             guard let i = image(it.key, it.make) else { continue }
             c.saveGState(); c.translateBy(x: CGFloat(it.x), y: CGFloat(it.y + it.h)); c.scaleBy(x: 1, y: -1)
@@ -209,6 +213,7 @@ final class MenuView: NSView {
         let s = min(bounds.width / 1024, bounds.height / 768)
         c.translateBy(x: (bounds.width - 1024 * s) / 2, y: (bounds.height - 768 * s) / 2); c.scaleBy(x: s, y: s)
         ctx = c
+        framePictures = []
         if let bg = background { c.saveGState(); c.translateBy(x: 0, y: 768); c.scaleBy(x: 1, y: -1); c.draw(bg, in: CGRect(x: 0, y: 0, width: 1024, height: 768)); c.restoreGState() }
         switch screen {
         case .main: drawMain()
@@ -222,12 +227,14 @@ final class MenuView: NSView {
         case .campaignResults(let id, let carry): drawCampaignResults(id, carry)
         }
         if let p = popup {
-            draw(kit.scrollMenu(p.items.map { $0.0 }, x: p.x, y: p.y, hover: hover, elapsed: snapshotting ? 10 : Date().timeIntervalSince(p.opened)))
+            draw(kit.scrollMenu(p.items.map { $0.0 }, x: p.x, y: p.y, hover: hover, elapsed: snapshotting ? 10 : Date().timeIntervalSince(p.opened)).window())
         }
         if let o = options {
             let (ox, oy) = OptionsView.origin(1024, 768)
+            framePictures.append((0, 0, 0, 0, .modal))   // the options dialog is modal
             draw(OptionsView.items(kit, o, ox: ox, oy: oy, hover: hover))
         }
+        pressTargets = PressTarget.collect(framePictures)
         ctx = nil
     }
     var canvasScale: (s: CGFloat, dx: CGFloat, dy: CGFloat) {
@@ -253,7 +260,7 @@ final class MenuView: NSView {
             guard let rel = MenuKit.find(f, "\(b)_Released") else { continue }
             let l = popup == nil && options == nil ? look(UIRect(rel)) : .released
             let name = l == .pressed ? "Pressed" : l == .highlighted ? "Highlighted" : "Released"
-            draw(kit.image(MenuKit.find(f, "\(b)_\(name)") ?? rel, "menu.main.1024"))
+            draw(kit.image(MenuKit.find(f, "\(b)_\(name)") ?? rel, "menu.main.1024").button())   // t_menu_buttons
             // the label: a text window of the menu (it does not move with the press), font = rect height
             if let t = MenuKit.find(f, "\(b)_Text") {
                 draw(kit.text(text("\(MenuView.mainLabels[b] ?? b).main_menu", b), UIRect(t), MenuKit.Style(t.height, just: 1, vcentre: true), clip: false))
@@ -367,7 +374,7 @@ final class MenuView: NSView {
             guard let rel = l("\(c)_Released"), let cx = cols[c] else { continue }
             let dx = cx + (cw - rel.width) / 2 - rel.x
             let hot = UIRect(ox + rel.x + dx, oy + rel.y, rel.width, rel.height).contains(hover.0, hover.1)
-            draw(kit.image(hot ? (l("\(c)_Highlighted") ?? rel) : rel, "new_game", ox + dx + (hot ? (rel.x + rel.width / 2) - ((l("\(c)_Highlighted") ?? rel).x + (l("\(c)_Highlighted") ?? rel).width / 2) : 0), oy))
+            draw(kit.image(hot ? (l("\(c)_Highlighted") ?? rel) : rel, "new_game", ox + dx + (hot ? (rel.x + rel.width / 2) - ((l("\(c)_Highlighted") ?? rel).x + (l("\(c)_Highlighted") ?? rel).width / 2) : 0), oy).button())
         }
         if let s = l("Scrollbar") { draw(kit.vScrollbar(ox + s.x, oy + s.y, s.height, first: scroll, visible: 10, total: maps.count)) }
         draw(kit.image(l("Description_Box"), "new_game", ox, oy))
@@ -471,7 +478,7 @@ final class MenuView: NSView {
             for k in (multi ? [1, 2, 3] : [2, 3]) {
                 guard let pr = l("Tab_\(k)_Pressed"), let rel = l("Tab_\(k)_Released") else { continue }
                 let on = briefingTab == k
-                draw(kit.image(on ? pr : rel, name, ox, oy))
+                draw(kit.image(on ? pr : rel, name, ox, oy).button(!on))   // (inferred: stay-down toggles, the one down silent)
                 let label = [text("campaign_info.campaign", "Campaign"), text("scenario_info.campaign", "Scenario"), text("scenario_details.campaign", "Details")][k - 1]
                 draw(kit.text(label, UIRect(ox + pr.x, oy + pr.y + 14, pr.width, pr.height - 14 - (on ? 0 : 0)), MenuKit.Style(pr.height - 14 - 10, just: 1, vcentre: on), clip: false))
             }
@@ -488,7 +495,7 @@ final class MenuView: NSView {
             if let g = l("Creature_Guard_Released") {
                 let hot = UIRect(g, ox, oy).contains(hover.0, hover.1)
                 let n = guardsMove ? (hot ? "Creature_Guard_Highlighted_Pressed" : "Creature_Guard_Pressed") : (hot ? "Creature_Guard_Highlighted" : "Creature_Guard_Released")
-                draw(kit.image(l(n) ?? g, name, ox, oy))
+                draw(kit.image(l(n) ?? g, name, ox, oy).button())
             }
             if let s = l("Map_Size") {
                 let w = m.size
@@ -602,7 +609,7 @@ final class MenuView: NSView {
         if let g = l("Creature_Guard_Released") {
             let hot = UIRect(g, ox, oy).contains(hover.0, hover.1)
             let n = s.guardsMove ? (hot ? "Creature_Guard_Highlighted_Pressed" : "Creature_Guard_Pressed") : (hot ? "Creature_Guard_Highlighted" : "Creature_Guard_Released")
-            draw(kit.image(l(n) ?? g, name, ox, oy))
+            draw(kit.image(l(n) ?? g, name, ox, oy).button())
         }
         if let g = l("creature_guard_text") {
             draw(kit.text(s.guardsMove ? text("guards_move.shared", "Mobile Guards") : text("guards_dont_move.shared", "Stationary Guards"), UIRect(g, ox, oy), MenuKit.Style(g.height / 2, just: 1), clip: false))
@@ -626,7 +633,7 @@ final class MenuView: NSView {
             if let aa = l("Alignment_Arrows") {
                 let ok = (0..<6).filter { spec.alignments & (1 << $0) != 0 }.count != 1
                 for dir in ["Up", "Down"] {
-                    if let a = MenuKit.find(arrows, "Alignment_\(dir)_\(ok ? "Released" : "Disabled")") { draw(kit.image(a, "button.Arrows", ox + aa.x, oy + aa.y + dy)) }
+                    if let a = MenuKit.find(arrows, "Alignment_\(dir)_\(ok ? "Released" : "Disabled")") { draw(kit.image(a, "button.Arrows", ox + aa.x, oy + aa.y + dy).button(ok)) }
                 }
             }
             if let pf = l("Player_Flag") {
@@ -635,7 +642,7 @@ final class MenuView: NSView {
             }
             if let ca = l("Color_Arrows") {
                 for dir in ["Up", "Down"] {
-                    if let a = MenuKit.find(arrows, "\(colour)_\(dir)_Released") { draw(kit.image(a, "button.Arrows", ox + ca.x, oy + ca.y + dy)) }
+                    if let a = MenuKit.find(arrows, "\(colour)_\(dir)_Released") { draw(kit.image(a, "button.Arrows", ox + ca.x, oy + ca.y + dy).button()) }
                 }
                 _ = humanColours
             }
@@ -649,7 +656,7 @@ final class MenuView: NSView {
             if spec.canBeHuman, let cb = l("human_checkbox") {
                 let hot = UIRect(ox + cb.x, oy + cb.y + dy, 34, 29).contains(hover.0, hover.1)
                 let n = human ? (hot ? "Highlighted_Pressed" : "Pressed") : (hot ? "Highlighted" : "Released")
-                draw(kit.image(kit.layer("checkbox", n) ?? kit.layer("button.checkbox", n), "button.checkbox", ox + cb.x, oy + cb.y + dy))
+                draw(kit.image(kit.layer("checkbox", n) ?? kit.layer("button.checkbox", n), "button.checkbox", ox + cb.x, oy + cb.y + dy).button())
             }
         }
     }
@@ -719,7 +726,10 @@ final class MenuView: NSView {
         trackingAreas.forEach(removeTrackingArea)
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseMoved, .activeAlways, .inVisibleRect], owner: self))
     }
-    override func mouseDown(with e: NSEvent) { pressedAt = canvasPoint(e); needsDisplay = true }
+    override func mouseDown(with e: NSEvent) {
+        pressedAt = canvasPoint(e); needsDisplay = true
+        if PressTarget.clicks(pressTargets, pressedAt!.0, pressedAt!.1) { sound.play("miscellaneous.button") }   // a button's press (0x5a0dd0)
+    }
     override func mouseUp(with e: NSEvent) {
         let (x, y) = canvasPoint(e)
         pressedAt = nil
@@ -748,12 +758,14 @@ final class MenuView: NSView {
     override func keyDown(with e: NSEvent) {
         if highScoreKey(e) { return }
         if e.keyCode == 53 {   // Esc: close what is open, else back to the menu
-            if popup != nil { popup = nil } else if options != nil { options = nil } else { screen = .main }
+            if popup != nil { popup = nil }
+            else if options != nil { sound.play("miscellaneous.button"); options = nil }   // Cancel's hot key: its click
+            else if case .main = screen {} else { sound.play("miscellaneous.button"); screen = .main }
             needsDisplay = true
-        } else if e.keyCode == 36 || e.keyCode == 76 {   // Enter: the screen's default button
+        } else if e.keyCode == 36 || e.keyCode == 76 {   // Enter: the screen's default button (its hot key: its click)
             switch screen {
-            case .scenarios: begin()
-            case .load: loadSelected()
+            case .scenarios: sound.play("miscellaneous.button"); begin()
+            case .load: sound.play("miscellaneous.button"); loadSelected()
             default: break
             }
         }

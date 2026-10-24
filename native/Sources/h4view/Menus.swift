@@ -24,7 +24,7 @@ extension Renderer {
         return k
     }
     func quads(_ items: [UIItem]) -> [Quad] {
-        items.map { Quad(texture: uiTexture($0.key, $0.make), x: $0.x, y: $0.y, w: $0.w, h: $0.h) }
+        items.map { Quad(texture: uiTexture($0.key, $0.make), x: $0.x, y: $0.y, w: $0.w, h: $0.h, press: $0.press) }
     }
     /// The scenario information window, while open.
     static var scenarioInfoOpen = false
@@ -78,10 +78,11 @@ extension Renderer {
     }
 
     func menuQuads() -> [Quad] {
-        var out = scenarioInfoQuads()
+        var out = scenarioInfoQuads().modal()
         guard let m = menu, let kit = kit else { return out }
         let elapsed = ProcessInfo.processInfo.environment["H4MENU"] != nil ? 10 : Date().timeIntervalSince(m.opened)
-        out += quads(kit.scrollMenu(m.items.map { $0.title }, x: m.x, y: m.y, hover: pointerCanvas, elapsed: elapsed))
+        // (a press off the t_scroll_menu closes it and goes on to the window under it: 0x838d40)
+        out += quads(kit.scrollMenu(m.items.map { $0.title }, x: m.x, y: m.y, hover: pointerCanvas, elapsed: elapsed).window())
         return out
     }
     /// A click while a menu is open: runs the entry under it, or closes the menu. True when one was open.
@@ -89,10 +90,7 @@ extension Renderer {
         if Renderer.scenarioInfoOpen { scenarioInfoClick(x: x, y: y); return true }
         guard let m = menu else { return false }
         menu = nil
-        if let k = kit?.scrollMenuHit(m.items.map { $0.title }, x: m.x, y: m.y, x, y) {
-            sound?.play("miscellaneous.button")
-            m.items[k].action()
-        }
+        if let k = kit?.scrollMenuHit(m.items.map { $0.title }, x: m.x, y: m.y, x, y) { m.items[k].action() }   // (a t_scroll_menu row: no click)
         return true
     }
 
@@ -149,6 +147,6 @@ extension Renderer {
     func scenarioInfoClick(x: Float, y: Float) {
         guard let kit = kit, let b = kit.layer("Dialog.scenario_Information", "Back") else { Renderer.scenarioInfoOpen = false; return }
         let (ox, oy) = scenarioInfoOrigin
-        if UIRect(ox + b.x, oy + b.y, 166, 40).contains(x, y) { Renderer.scenarioInfoOpen = false; sound?.play("miscellaneous.button") }
+        if UIRect(ox + b.x, oy + b.y, 166, 40).contains(x, y) { Renderer.scenarioInfoOpen = false }
     }
 }

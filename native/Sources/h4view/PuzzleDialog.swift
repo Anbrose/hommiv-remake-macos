@@ -24,7 +24,7 @@ extension Renderer {
         let colours = Renderer.obeliskColours.filter { g.obelisksRequired($0) > 0 }
         for col in colours {
             let n = col.prefix(1).uppercased() + col.dropFirst()
-            out += dImage(d, "puzzle", col == c ? "\(n)_Pressed" : "\(n)_Released", ox, oy)
+            out += dImage(d, "puzzle", col == c ? "\(n)_Pressed" : "\(n)_Released", ox, oy).button(col != c)   // (inferred: stay-down toggles, the one down silent)
         }
         let need = g.obelisksRequired(c), seen = min(need, g.obeliskVisits[c] ?? 0)
         let line: String = {

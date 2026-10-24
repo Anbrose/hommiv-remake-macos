@@ -58,8 +58,8 @@ extension Renderer {
             let x = ox + bar.x, y0 = oy + bar.y, y1 = y0 + bar.height
             var y = y0 + up.height
             while y < y1 - down.height { let h = min(bg.height, y1 - down.height - y); out.append(Quad(texture: uiTexture("vs|bg|\(h)", { Renderer.crop(bg.bitmap, x: 0, y: 0, w: bg.width, h: h) }), x: x + bg.x, y: y, w: bg.width, h: h)); y += bg.height }
-            out.append(Quad(texture: uiTexture("vs|up", { up.bitmap }), x: x + up.x, y: y0, w: up.width, h: up.height))
-            out.append(Quad(texture: uiTexture("vs|down", { down.bitmap }), x: x + down.x, y: y1 - down.height, w: down.width, h: down.height))
+            out.append(Quad(texture: uiTexture("vs|up", { up.bitmap }), x: x + up.x, y: y0, w: up.width, h: up.height, press: .button(true)))   // t_scrollbar_buttons
+            out.append(Quad(texture: uiTexture("vs|down", { down.bitmap }), x: x + down.x, y: y1 - down.height, w: down.width, h: down.height, press: .button(true)))
             let track = bar.height - up.height - down.height - thumb.height
             let ty = y0 + up.height + track * first / max(1, c.dests.count - 3)
             out.append(Quad(texture: uiTexture("vs|thumb", { thumb.bitmap }), x: x + thumb.x, y: ty, w: thumb.width, h: thumb.height))
@@ -78,9 +78,9 @@ extension Renderer {
             return true
         }
         if let ok = d["OK_Button"], x >= Float(ox + ok.x), x < Float(ox + ok.x + 76), y >= Float(oy + ok.y), y < Float(oy + ok.y + 44), let k = teleporterPicked {
-            sound?.play("miscellaneous.button"); close(); c.pick(k)
+            close(); c.pick(k)
         } else if let cn = d["cancel_button"], x >= Float(ox + cn.x), x < Float(ox + cn.x + 76), y >= Float(oy + cn.y), y < Float(oy + cn.y + 44) {
-            sound?.play("miscellaneous.button"); close()
+            close()
         } else if c.dests.count > 3, let bar = d["Slide_Bar"], x >= Float(ox + bar.x), x < Float(ox + bar.x + bar.width) {
             teleporterScroll = max(0, min(c.dests.count - 3, teleporterScroll + (y < Float(oy + bar.y + bar.height / 2) ? -1 : 1)))
         }

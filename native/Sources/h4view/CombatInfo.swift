@@ -148,8 +148,7 @@ extension Renderer {
         guard let f = combat?.layers("control.vertical_scroll"), let up = f["Up_Released"], let down = f["Down_Released"], let track = f["Background"], let thumb = f["Thumb"] else { return [] }
         let x = ox + l.x, y = oy + l.y
         var out = [Quad(texture: uiTexture("vscroll|track", { track.bitmap }), x: x, y: y + up.height, w: track.width, h: max(1, l.height - up.height - down.height))]
-        out.append(image(up, key: "vscroll|up", x, y))
-        out.append(image(down, key: "vscroll|down", x, y + l.height - down.height))
+        out += [image(up, key: "vscroll|up", x, y), image(down, key: "vscroll|down", x, y + l.height - down.height)].button()   // t_scrollbar_buttons
         let room = max(0, l.height - up.height - down.height - thumb.height)
         out.append(image(thumb, key: "vscroll|thumb", x + thumb.x, y + up.height + (m > 0 ? room * position / m : 0)))
         return out

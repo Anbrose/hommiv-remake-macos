@@ -133,7 +133,7 @@ extension Renderer {
         if !inCombat { bookPowers(&sb); spellBook = sb }
         let (ox, oy) = bookOrigin
         var out: [Quad] = []
-        func img(_ n: String, dx: Int = 0, dy: Int = 0) { out += dImage(d, "book", n, ox, oy, dx: dx, dy: dy) }
+        func img(_ n: String, dx: Int = 0, dy: Int = 0, button: Bool? = nil) { let q = dImage(d, "book", n, ox, oy, dx: dx, dy: dy); out += button.map { q.button($0) } ?? q }
         let list = bookSpells(sb)
         let halo = Renderer.halo200
         img("Background")
@@ -166,8 +166,8 @@ extension Renderer {
                     }
                     if bookOverflow(sb, sp).overflow {
                         let arrows = dFile("control.button_scroll")
-                        if let u = dRect(d, "spell_details_scroll_up")?.offset(dx, dy) { out += dImageOffset(dLayer(arrows, "UP_Released"), "bookscroll", x: ox + u.x, y: oy + u.y) }
-                        if let dn = dRect(d, "spell_details_scroll_down")?.offset(dx, dy) { out += dImageOffset(dLayer(arrows, "Down_Released"), "bookscroll", x: ox + dn.x, y: oy + dn.y) }
+                        if let u = dRect(d, "spell_details_scroll_up")?.offset(dx, dy) { out += dImageOffset(dLayer(arrows, "UP_Released"), "bookscroll", x: ox + u.x, y: oy + u.y).button() }
+                        if let dn = dRect(d, "spell_details_scroll_down")?.offset(dx, dy) { out += dImageOffset(dLayer(arrows, "Down_Released"), "bookscroll", x: ox + dn.x, y: oy + dn.y).button() }
                     }
                 }
                 if let sil = dRect(d, "icon_silhouette"), let ic = spellIcon180(s) {
@@ -197,7 +197,7 @@ extension Renderer {
                 out += dText(bookHeroText(sb, sp), DRect(cx + 4, cy + 70, 132, 51), font: dFont(12), centre: true, vcentre: true, halo: halo, ox, oy)
                 out += dText(bookCostText(sb, sp), DRect(cx + 71, cy + 34, 56, 26), font: dFont(13), centre: true, vcentre: true, halo: halo,
                              colour: bookAffordable(sb, sp) ? (0, 0, 0) : (170, 0, 0), ox, oy)
-                img("Information_Released", dx: dx, dy: dy)
+                img("Information_Released", dx: dx, dy: dy, button: true)
             }
             if let banner = iconSheet("spells.type")[sb.tab.lowercased()], let hb = dRect(d, "header_icon") {
                 out += dImageAt(banner, "booktype", x: ox + hb.x, y: oy + hb.y + 5)
@@ -206,12 +206,12 @@ extension Renderer {
         for n in ["Top", "Left", "Bottom", "Right"] { img(n) }
         // the tabs that have spells; the chosen one pressed
         for t in Renderer.bookTabs where !bookSpells(sb, tab: t).isEmpty {
-            img("\(t)_\(sb.tab == t ? "Pressed" : "Released")")
+            img("\(t)_\(sb.tab == t ? "Pressed" : "Released")", button: sb.tab != t)   // stay-down t_toggle_buttons (0x86b345): the one down is silent
         }
-        img("Done_Released")
+        img("Done_Released", button: true)
         let first = sb.detail ?? sb.page * 12
-        if first > 0 { img("Back_Released") }
-        if first + (sb.detail != nil ? 2 : 12) < list.count { img("Forward_Released") }
+        if first > 0 { img("Back_Released", button: true) }
+        if first + (sb.detail != nil ? 2 : 12) < list.count { img("Forward_Released", button: true) }
         if sb.detail != nil, let ib = dRect(d, "index_button") { out += dButton("spellbook.index", "Released", x: ox + ib.x, y: oy + ib.y) }
         img("Points_Frame")
         out += dText("\(sb.points)", dRect(d, "points"), font: dFont(16), centre: true, vcentre: true, halo: (0, 0, 0), colour: (255, 255, 255), ox, oy)
@@ -264,7 +264,7 @@ extension Renderer {
         if x < Float(ox) || x >= Float(ox + 800) || y < Float(oy) || y >= Float(oy + 600) { spellBook = nil; return }
         let list = bookSpells(sb)
         switch bookHit(sb, x: x, y: y) {
-        case .done: spellBook = nil; sound?.play("miscellaneous.button"); return
+        case .done: spellBook = nil; return
         case .tab(let t): bookSelectTab(&sb, t)
         case .back:
             if let first = sb.detail { sb.detail = max(0, first - 2); sb.scroll = [0, 0] } else { sb.page = max(0, sb.page - 1) }
@@ -294,7 +294,8 @@ extension Renderer {
         let list = bookSpells(sb)
         let tabs = Renderer.bookTabs.filter { !bookSpells(sb, tab: $0).isEmpty }
         switch code {
-        case 36, 76, 53: spellBook = nil; return true
+        case 36, 76: buttonClick(); spellBook = nil; return true   // Enter: Done's hot key (0x86a370)
+        case 53: spellBook = nil; return true
         case 123:
             if let first = sb.detail { if first > 0 { sb.detail = max(0, first - 2); sb.scroll = [0, 0] } } else if sb.page > 0 { sb.page -= 1 }
         case 124:

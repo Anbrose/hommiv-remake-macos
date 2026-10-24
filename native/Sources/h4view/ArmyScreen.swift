@@ -71,7 +71,7 @@ extension Renderer {
         guard let ui = ui, let l = l else { return [] }
         let f = ((try? ui.archive.payload("layers.button.\(file).h4d")) ?? (try? ui.archive.payload("layers.Button.\(file).h4d"))).flatMap { try? LayerFile(data: $0) }
         guard let b = f?[state] ?? f?.layers.first(where: { $0.name.lowercased() == state.lowercased() }) else { return [] }
-        return [Quad(texture: uiTexture("btn|\(file)|\(b.name)", { b.bitmap }), x: ox + l.x + b.x, y: oy + l.y + b.y, w: b.width, h: b.height)]
+        return [Quad(texture: uiTexture("btn|\(file)|\(b.name)", { b.bitmap }), x: ox + l.x + b.x, y: oy + l.y + b.y, w: b.width, h: b.height, press: .button(Renderer.enabledState(state)))]
     }
     /// The single ring row's slot frames: pieces Left, Middle x5, Right laid from x 147, their tops at y 480.
     func armyRingSlots(_ ox: Int, _ oy: Int) -> [(piece: String, fx: Int, fy: Int)] {
@@ -180,7 +180,6 @@ extension Renderer {
             return
         }
         s.selected = s.x.rows[to.row][to.k] != nil ? to : from
-        sound?.play("miscellaneous.button")
     }
     /// A drop with Shift or in split mode onto an empty place or the same creature: the split dialog
     /// (0x6467f0); else a plain move.
@@ -260,16 +259,16 @@ extension Renderer {
         if s.note != nil { s.note = nil }
         // the split toggle (0x530e50)
         let split = s.double ? d["split_button"] : d["Single_Split_Button"]
-        if inside(split, at: ox, oy, x, y) { s.splitMode.toggle(); sound?.play("miscellaneous.button"); return }
+        if inside(split, at: ox, oy, x, y) { s.splitMode.toggle(); return }
         // sort potions on / off (0x538180)
-        if inside(d["Hide_Potions_Button"], at: ox, oy, x, y) { s.potionMode.toggle(); sound?.play("miscellaneous.button"); return }
+        if inside(d["Hide_Potions_Button"], at: ox, oy, x, y) { s.potionMode.toggle(); return }
         // the spell book (0x5385d0)
         if armyShowsSpellBook(armyScreenShown(s).item), inside(d["SpellBook_Released"], at: ox, oy, x, y) {
-            sound?.play("miscellaneous.button"); openArmyBook(s); return
+            openArmyBook(s); return
         }
         if s.double, s.town == nil {
-            if inside(d["Move_Army_Down"], at: ox, oy, x, y) { s.x.moveAll(from: 0, to: 1); sound?.play("miscellaneous.button"); return }
-            if inside(d["Move_Army_Up"], at: ox, oy, x, y) { s.x.moveAll(from: 1, to: 0); sound?.play("miscellaneous.button"); return }
+            if inside(d["Move_Army_Down"], at: ox, oy, x, y) { s.x.moveAll(from: 0, to: 1); return }
+            if inside(d["Move_Army_Up"], at: ox, oy, x, y) { s.x.moveAll(from: 1, to: 0); return }
         }
         if let r = armyRing(s, at: x, y) {
             if sessionRows(s)[r.row][r.k] != nil { s.selected = r }
@@ -292,15 +291,14 @@ extension Renderer {
             }
         }
         if inside(d["ok_button"], at: ox, oy, x, y) || x < Float(ox) || x >= Float(ox + 800) || y < Float(oy) || y >= Float(oy + 600) {
-            sound?.play("miscellaneous.button")
             closeArmyScreen()
         }
     }
     func armyScreenKey(_ code: UInt16, chars: String) -> Bool {
         guard let s = armySession, spellBook == nil else { return false }   // the book over it takes the keys
         if splitDialog != nil { return splitKey(code) }
-        if code == 53 || code == 36 || code == 76 { closeArmyScreen(); return true }   // Escape / Enter: done
-        if chars.lowercased() == text("split_creatures_army.hot_keys", "S").lowercased() { s.splitMode.toggle(); return true }
+        if code == 53 || code == 36 || code == 76 { buttonClick(); closeArmyScreen(); return true }   // Escape / Enter: the OK button's hot keys
+        if chars.lowercased() == text("split_creatures_army.hot_keys", "S").lowercased() { buttonClick(); s.splitMode.toggle(); return true }   // the split button's
         return true
     }
 
@@ -335,14 +333,14 @@ extension Renderer {
         }
         // buttons
         out += buttonAt("ok", "Released", d["ok_button"], ox, oy)
-        for (n, on) in [("loose", true), ("tight", false), ("square", false)] { out += layoutImage(d, on ? "\(n)_pressed" : "\(n)_Released", ox, oy) }
+        for (n, on) in [("loose", true), ("tight", false), ("square", false)] { out += layoutImage(d, on ? "\(n)_pressed" : "\(n)_Released", ox, oy).button(!on) }   // stay-down toggles: the one down is silent (0x88d0b0)
         if stack != nil { out += buttonAt("dismiss", "Released", d["dismiss"], ox, oy) }
         // the potion toggle (0x538180): "show_potions" while off, "hide_potions" while sorting
         let potionArt = s.potionMode ? "Hide_Potions" : "Show_Potions"
         out += buttonAt("hide_Potion", potionArt + (overArmyButton(d["Hide_Potions_Button"]) ? "_Highlighted" : "_Released"), d["Hide_Potions_Button"], ox, oy)
         // the spell book (+0x300), shown only for a member with something to cast (0x650ed0)
         if armyShowsSpellBook(item) {
-            out += layoutImage(d, overArmyButton(d["SpellBook_Released"]) ? "SpellBook_Highlighted" : "SpellBook_Released", ox, oy)
+            out += layoutImage(d, overArmyButton(d["SpellBook_Released"]) ? "SpellBook_Highlighted" : "SpellBook_Released", ox, oy).button()
         }
         // the ring rows and the split toggle (pressed while split mode is on)
         let splitState = s.splitMode ? "Pressed" : overArmyButton(s.double ? d["split_button"] : d["Single_Split_Button"]) ? "Highlighted" : "Released"
@@ -459,7 +457,7 @@ extension Renderer {
                     out.append(Quad(texture: uiTexture("armyring|\(f.name)", { f.bitmap }), x: rx + f.x, y: ry + f.y, w: f.width, h: f.height))
                 }
             }
-            if armies.count > 4 { out += layoutImage(d, "Army_Up_Released", ox, oy); out += layoutImage(d, "Army_Down_Released", ox, oy) }
+            if armies.count > 4 { out += layoutImage(d, "Army_Up_Released", ox, oy).button(); out += layoutImage(d, "Army_Down_Released", ox, oy).button() }
         }
         // the artifact in hand: its icon centred on the pointer (t_drag_artifact, hot spot w/2, h/2)
         if let a = s.artDrag, let at = s.artAt, let l = artifactIcon(a.artifact) {

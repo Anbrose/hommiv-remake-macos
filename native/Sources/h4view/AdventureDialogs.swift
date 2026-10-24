@@ -43,7 +43,7 @@ extension Renderer {
             let state = disabled ? "Disabled" : over ? "Highlighted" : "Released"
             if over, balloonDue { balloon = g.tables?.interfaceTexts["adventure_map.\(help)"]?.balloon }
             guard let b = ui.button(name, state: state) ?? ui.buttonLayer(name, state) ?? ui.button(name) else { continue }
-            out.append(Quad(texture: uiTexture("button|\(name)|\(b.name)", { b.bitmap }), x: slot.x + b.x, y: slot.y + b.y, w: b.width, h: b.height))
+            out.append(Quad(texture: uiTexture("button|\(name)|\(b.name)", { b.bitmap }), x: slot.x + b.x, y: slot.y + b.y, w: b.width, h: b.height, press: .button(!disabled)))
         }
         if let s = balloon { out += helpBalloonQuads(s, at: pointerCanvas) }
         return out
@@ -106,7 +106,7 @@ extension Renderer {
                 let over = rel.map { hoverButton((ox + $0.x, oy + $0.y, $0.width, $0.height)) } ?? false
                 let state = on ? "pressed" : over ? "highlighted" : "released"
                 if let l = d.layers.first(where: { $0.name.lowercased() == "\(prefix.lowercased())_\(state)" }) {
-                    out.append(Quad(texture: uiTexture("dlg|chest|\(l.name)", { l.bitmap }), x: ox + l.x, y: oy + l.y, w: l.width, h: l.height))
+                    out.append(Quad(texture: uiTexture("dlg|chest|\(l.name)", { l.bitmap }), x: ox + l.x, y: oy + l.y, w: l.width, h: l.height, press: .button(!on)))   // stay-down toggles: the one down is silent
                 }
             }
             func text(_ key: String, _ fallback: String) -> String { g.tables?.objectText("treasure", "treasure_chest", key) ?? fallback }

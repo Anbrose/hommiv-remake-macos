@@ -95,7 +95,6 @@ extension Renderer {
             g.resources[Renderer.marketNames[a], default: 0] -= r.give * m.lots
             g.resources[Renderer.marketNames[b], default: 0] += r.get * m.lots
             m.sell = nil; m.buy = nil; m.lots = 0
-            sound?.play("miscellaneous.button")
         }
         if townButtonHit("ok", x: ox + 694, y: oy + 541, x, y) { market = nil; return }
         market = m

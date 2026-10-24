@@ -32,7 +32,6 @@ extension Renderer {
         let at = p ?? (Int(pointerCanvas.0), Int(pointerCanvas.1))
         let x = max(0, min(AdventureUI.width - 561, at.0 - 561 / 2)), y = max(0, min(AdventureUI.height - 432, at.1 - 432))
         splitDialog = SplitState(creature: creature, total: total, moved: max(1, min(total - 1, destination)), x: x, y: y, apply: apply)
-        sound?.play("miscellaneous.button")
     }
 
     /// The scrollbar's pieces: the left arrow, the track, the right arrow, and the thumb's place.
@@ -71,8 +70,8 @@ extension Renderer {
                     x += w
                 }
             }
-            out += dImageAt(hs["Up_Released"], "hscroll", x: sc.left.x, y: sc.left.y)
-            out += dImageAt(hs["Down_Released"], "hscroll", x: sc.right.x, y: sc.right.y)
+            out += dImageAt(hs["Up_Released"], "hscroll", x: sc.left.x, y: sc.left.y).button()   // t_scrollbar_buttons
+            out += dImageAt(hs["Down_Released"], "hscroll", x: sc.right.x, y: sc.right.y).button()
             out += dImageAt(hs["Thumb"], "hscroll", x: sc.thumb.x, y: sc.thumb.y)
         }
         if let ok = dRect(d, "ok_button") { out += dButton("ok", "Released", x: s.x + ok.x, y: s.y + ok.y) }
@@ -95,19 +94,19 @@ extension Renderer {
             s.moved = max(s.low, min(s.high, s.low + Int((v * Float(s.high - s.low)).rounded())))
         } else if drag { return }
         else if let ok = dRect(d, "ok_button"), DRect(s.x + ok.x, s.y + ok.y, 76, 44).contains(x, y) {
-            sound?.play("miscellaneous.button"); splitDialog = nil
+            splitDialog = nil
             s.apply(s.moved)
             return
         } else if let cb = dRect(d, "cancel_button"), DRect(s.x + cb.x, s.y + cb.y, 76, 44).contains(x, y) {
-            sound?.play("miscellaneous.button"); splitDialog = nil; return
+            splitDialog = nil; return
         }
         splitDialog = s
     }
     func splitKey(_ code: UInt16) -> Bool {
         guard splitDialog != nil else { return false }
-        if code == 53 { splitDialog = nil }
+        if code == 53 { buttonClick(); splitDialog = nil }   // Esc: Cancel's hot key
         if code == 36 || code == 76, let s = splitDialog, let d = splitLayout, let ok = dRect(d, "ok_button") {
-            splitClick(x: Float(s.x + ok.x + 5), y: Float(s.y + ok.y + 5))
+            buttonClick(); splitClick(x: Float(s.x + ok.x + 5), y: Float(s.y + ok.y + 5))   // Enter: OK's
         }
         return true
     }

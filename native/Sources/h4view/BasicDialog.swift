@@ -170,7 +170,7 @@ extension Renderer {
         for (name, r) in zip(d.buttons, d.buttonPlaces) {
             let over = pointerCanvas.0 >= Float(x + r.x) && pointerCanvas.0 < Float(x + r.x + r.w) && pointerCanvas.1 >= Float(y + r.y) && pointerCanvas.1 < Float(y + r.y + r.h)
             guard let b = ui.button(name, state: over ? "Highlighted" : "Released") ?? ui.button(name) else { continue }
-            out.append(Quad(texture: uiTexture("button|\(name)|\(b.name)", { b.bitmap }), x: x + r.x + b.x, y: y + r.y + b.y, w: b.width, h: b.height))
+            out.append(Quad(texture: uiTexture("button|\(name)|\(b.name)", { b.bitmap }), x: x + r.x + b.x, y: y + r.y + b.y, w: b.width, h: b.height, press: .button(true)))
         }
         return out
     }

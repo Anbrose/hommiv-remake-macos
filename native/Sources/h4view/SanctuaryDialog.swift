@@ -15,7 +15,7 @@ extension Renderer {
         var out = dImage(d, "sanctuary", "Background", ox, oy)
         out += dText(o.title, dRect(d, "title"), font: dFont(25), ox, oy)
         out += dText(o.text, dRect(d, "text"), font: dFont(20), ox, oy)
-        out += dImage(d, "sanctuary", o.canEnter ? "enter_released" : "enter_disabled", ox, oy)
+        out += dImage(d, "sanctuary", o.canEnter ? "enter_released" : "enter_disabled", ox, oy).button(o.canEnter)
         if let c = dRect(d, "close_button") { out += dButton("close", "Released", x: ox + c.x, y: oy + c.y) }
         out += dText(text("sanctuary_entry.misc", "Enter Sanctuary"), dRect(d, "enter_text"), font: dFont(33 / 2), ox, oy)
         return out

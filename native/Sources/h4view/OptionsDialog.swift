@@ -79,16 +79,16 @@ enum OptionsView {
         label(kit.t("options_title.misc", "Game Settings"), "Title", just: 1)
         label(kit.t("screen_resolution", "Screen Resolution"), "resolution_text", just: 1)
         label(kit.t("options_right_options.misc", "Options"), "Options", just: 1)
-        func checkbox(_ name: String, _ on: Bool) {
+        func checkbox(_ name: String, _ on: Bool, stayDown: Bool = false) {   // t_toggle_buttons; a stay-down one that is down is silent (0x88d0b0)
             guard let c = l("\(name)_checkbox") else { return }
             let hot = hover.map { UIRect(ox + c.x, oy + c.y, 34, 29).contains($0.0, $0.1) } ?? false
             let f = kit.file("button.checkbox")
             let names = hot ? [on ? "Highlighted_Pressed" : "Highlighted", on ? "Pressed" : "Released"] : [on ? "Pressed" : "Released"]
-            if let b = names.lazy.compactMap({ MenuKit.find(f, $0) }).first { out += kit.image(b, "button.checkbox", ox + c.x, oy + c.y) }
+            if let b = names.lazy.compactMap({ MenuKit.find(f, $0) }).first { out += kit.image(b, "button.checkbox", ox + c.x, oy + c.y).button(!(stayDown && on)) }
         }
         let names = ["800 x 600", "1024 x 768", "1280 x 1024"]
         for (k, r) in resolutions.enumerated() {
-            checkbox(r, r == "1024")
+            checkbox(r, r == "1024", stayDown: true)
             label(names[k], "\(r)_text")
         }
         checkbox("full_screen", s.fullScreen ?? false)
@@ -171,10 +171,10 @@ extension Renderer {
         case .ok:
             optionsOpen = nil
             if (s.fullScreen ?? false) != (settings.fullScreen ?? false) { NSApp.keyWindow?.toggleFullScreen(nil) }
-            settings = s; applySettings(); settings.save(); sound?.play("miscellaneous.button"); return
-        case .cancel: optionsOpen = nil; sound?.play("miscellaneous.button"); return
+            settings = s; applySettings(); settings.save(); return
+        case .cancel: optionsOpen = nil; return
         case .none: break
-        default: OptionsView.apply(h, to: &s); sound?.play("miscellaneous.button")
+        default: OptionsView.apply(h, to: &s)
         }
         optionsOpen = s
     }

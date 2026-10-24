@@ -105,7 +105,6 @@ extension Renderer {
         }
         for bt in combatButtons(cs, b) where inside(cs.hotspot(bt.hotspot), x, y) {
             guard bt.enabled else { return }
-            sound?.play("miscellaneous.button")
             switch bt.key {
             case "auto": cs.autoCombat.toggle(); cs.pump()
             case "cancel_spell": casting = nil; castFirst = nil

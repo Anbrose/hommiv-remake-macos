@@ -81,8 +81,8 @@ extension Renderer {
         guard var sd = saveDialog, let kit = kit else { return false }
         let (ox, oy) = saveOrigin
         switch FileDialogView.hit(kit, save: sd.mode == .save, files: sd.files.count, scroll: sd.scroll, ox: ox, oy: oy, x, y) {
-        case .cancel: saveDialog = nil; sound?.play("miscellaneous.button")
-        case .ok: sound?.play("miscellaneous.button"); confirmSaveDialog()
+        case .cancel: saveDialog = nil
+        case .ok: confirmSaveDialog()
         case .row(let k):
             sd.selected = k
             if sd.mode == .save { sd.name = sd.files[k].name }
@@ -118,8 +118,8 @@ extension Renderer {
     func saveDialogKey(_ e: NSEvent) -> Bool {
         guard var sd = saveDialog else { return false }
         switch e.keyCode {
-        case 53: saveDialog = nil
-        case 36, 76: confirmSaveDialog()
+        case 53: buttonClick(); saveDialog = nil   // Cancel's and OK's hot keys
+        case 36, 76: buttonClick(); confirmSaveDialog()
         case 51: if sd.mode == .save, !sd.name.isEmpty { sd.name.removeLast(); saveDialog = sd }
         default:
             if sd.mode == .save, let chars = e.characters, sd.name.count < 40 {

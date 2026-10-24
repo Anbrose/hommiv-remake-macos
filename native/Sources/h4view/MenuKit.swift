@@ -15,6 +15,8 @@ struct UIItem {
     let key: String
     let make: () -> Bitmap
     let x: Int, y: Int, w: Int, h: Int
+    /// What a press on it does (a button's picture, a window: ButtonSound.swift).
+    var press: PressRole? = nil
 }
 
 /// A rectangle on the canvas.
@@ -110,7 +112,7 @@ final class MenuKit {
         case .disabled: names = ["Disabled", "Released"]
         }
         guard let l = names.lazy.compactMap({ MenuKit.find(f, $0) }).first else { return [] }
-        return image(l, "button.\(file)", x, y)
+        return image(l, "button.\(file)", x, y).button(look != .disabled)
     }
     /// A layout-image button (0x5a2250 / 0x52d990): `<prefix>_Released/_Pressed/_Highlighted/_Disabled` at their own boxes.
     func layoutButton(_ file: String, _ prefix: String, _ look: ButtonLook, _ dx: Int, _ dy: Int) -> [UIItem] {
@@ -123,7 +125,7 @@ final class MenuKit {
         case .disabled: names = ["Disabled", "Released"]
         }
         guard let l = names.lazy.compactMap({ MenuKit.find(f, "\(prefix)_\($0)") }).first else { return [] }
-        return image(l, file, dx, dy)
+        return image(l, file, dx, dy).button(look != .disabled)
     }
 
     // MARK: text windows
@@ -173,7 +175,7 @@ final class MenuKit {
             if x0 == it.x, y0 == it.y, x1 == it.x + it.w, y1 == it.y + it.h { return it }
             let sx = x0 - it.x, sy = y0 - it.y, w = x1 - x0, h = y1 - y0
             let make = it.make
-            return UIItem(key: it.key + "|clip\(sx),\(sy),\(w)x\(h)", make: { MenuKit.crop(make(), sx, sy, w, h) }, x: x0, y: y0, w: w, h: h)
+            return UIItem(key: it.key + "|clip\(sx),\(sy),\(w)x\(h)", make: { MenuKit.crop(make(), sx, sy, w, h) }, x: x0, y: y0, w: w, h: h, press: it.press)
         }
     }
     static func crop(_ b: Bitmap, _ sx: Int, _ sy: Int, _ w: Int, _ h: Int) -> Bitmap {
@@ -228,8 +230,8 @@ final class MenuKit {
             out += MenuKit.clip(image(bg, "vscroll", x - bg.x, ty - bg.y), to: UIRect(x, ty, bg.width, n))
             ty += n
         }
-        out += image(up, "vscroll", x - up.x, y - up.y)
-        out += image(down, "vscroll", x - down.x, bottom - down.y)
+        out += image(up, "vscroll", x - up.x, y - up.y).button()   // the arrows are t_scrollbar_buttons
+        out += image(down, "vscroll", x - down.x, bottom - down.y).button()
         let range = max(0, total - visible)
         let span = max(0, bottom - top - th.height)
         let pos = range > 0 ? span * min(first, range) / range : 0
@@ -254,8 +256,8 @@ final class MenuKit {
             out += MenuKit.clip(image(bg, "hscroll", tx - bg.x, r.y - bg.y), to: UIRect(tx, r.y, n, bg.height))
             tx += n
         }
-        out += image(up, "hscroll", r.x - up.x, r.y - up.y)
-        out += image(down, "hscroll", right - down.x, r.y - down.y)
+        out += image(up, "hscroll", r.x - up.x, r.y - up.y).button()   // the arrows are t_scrollbar_buttons
+        out += image(down, "hscroll", right - down.x, r.y - down.y).button()
         let span = max(0, right - left - th.width)
         out += image(th, "hscroll", left + Int(Float(span) * max(0, min(1, value))) - th.x, r.y)
         return out

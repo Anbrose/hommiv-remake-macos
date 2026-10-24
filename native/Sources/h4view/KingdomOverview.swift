@@ -42,7 +42,7 @@ extension Renderer {
         }
         for (name, mode) in Renderer.overviewTabs {
             let hot = l("\(name)_Released").map { UIRect($0, ox, oy).contains(pointerCanvas.0, pointerCanvas.1) } ?? false
-            out += kit.layoutButton("dialog.Kingdom_Overview.Layout", name, ko.mode == mode ? .pressed : hot ? .highlighted : .released, ox, oy)
+            out += kit.layoutButton("dialog.Kingdom_Overview.Layout", name, ko.mode == mode ? .pressed : hot ? .highlighted : .released, ox, oy).button(ko.mode != mode)   // (the tab down: silent, as a stay-down toggle)
         }
         if let c = l("Close_Button") { out += kit.button("ok", .released, ox + c.x, oy + c.y) }
         let (count, page) = overviewCount(ko.mode)
@@ -216,9 +216,9 @@ extension Renderer {
         let (ox, oy) = overviewOrigin
         func l(_ n: String) -> UILayer? { MenuKit.find(d, n) }
         for (name, mode) in Renderer.overviewTabs where inside(l("\(name)_Released"), at: ox, oy, x, y) {
-            ko.mode = mode; ko.scroll = 0; overview = ko; sound?.play("miscellaneous.button"); return
+            ko.mode = mode; ko.scroll = 0; overview = ko; return
         }
-        if let c = l("Close_Button"), UIRect(ox + c.x, oy + c.y, 76, 44).contains(x, y) { overview = nil; sound?.play("miscellaneous.button"); return }
+        if let c = l("Close_Button"), UIRect(ox + c.x, oy + c.y, 76, 44).contains(x, y) { overview = nil; return }
         if x < Float(ox) || x >= Float(ox + 800) || y < Float(oy) || y >= Float(oy + 600) { overview = nil; return }
         if let s = l("Scrollbar"), let dir = kit.vScrollbarHit(ox + s.x, oy + s.y, s.height, x, y) {
             let (n, page) = overviewCount(ko.mode)

@@ -234,12 +234,12 @@ extension Renderer {
         out += effectWindowQuads(cs, b, now: now)
         out += floaterQuads(cs, now: now)
         out += combatPanelQuads(cs, b, now: now)
-        out += combatInfoQuads()
+        out += combatInfoQuads().modal()   // the windows from here on are modal: what is under one takes no press
         out += hoverQuads()
-        if cs.showResults { out += combatResultQuads() }
-        out += spellBookQuads()
-        out += optionsQuads()
-        if prompt != nil { out += messageBoxQuads() }
+        if cs.showResults { out += combatResultQuads().modal() }
+        out += spellBookQuads().modal()
+        out += optionsQuads().modal()
+        if prompt != nil { out += messageBoxQuads().modal() }
         return out
     }
 

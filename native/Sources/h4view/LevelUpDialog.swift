@@ -113,7 +113,7 @@ extension Renderer {
             levelUpChoice = k
             return true
         }
-        if let okb = dRect(d, "ok_button"), DRect(ox + okb.x, oy + okb.y, 76, 44).contains(x, y) { sound?.play("miscellaneous.button"); confirmLevelUp() }
+        if let okb = dRect(d, "ok_button"), DRect(ox + okb.x, oy + okb.y, 76, 44).contains(x, y) { confirmLevelUp() }
         return true
     }
     func confirmLevelUp() {

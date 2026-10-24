@@ -64,7 +64,6 @@ extension Renderer {
     func thievesGuildClick(x: Float, y: Float) {
         let (ox, oy) = dialogOrigin800
         if let b = dRect(thievesGuildLayout, "ok_button"), b.offset(ox, oy).contains(x, y) {
-            sound?.play("miscellaneous.button")
             thievesGuildOpen = false
         }
     }

@@ -185,10 +185,8 @@ extension Renderer {
         }
         let (learn, close) = skillDialogButtons(d)
         if let r = skillButtonRect(f, learn, ox, oy), r.contains(x, y), g.skillDialogCanLearn(d) {
-            sound?.play("miscellaneous.button")
             g.skillDialogLearn(d)
         } else if let r = skillButtonRect(f, close, ox, oy), r.contains(x, y) {
-            sound?.play("miscellaneous.button")
             g.skillDialog = nil
         }
         return true
@@ -198,8 +196,8 @@ extension Renderer {
         guard let d = game?.skillDialog else { return false }
         let enter = code == 36 || code == 76, escape = code == 53
         switch d.kind {
-        case .library, .tree: if escape { game?.skillDialog = nil }
-        default: if enter { game?.skillDialog = nil }
+        case .library, .tree: if escape { buttonClick(); game?.skillDialog = nil }
+        default: if enter { buttonClick(); game?.skillDialog = nil }
         }
         return true
     }

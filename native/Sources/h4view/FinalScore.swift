@@ -134,7 +134,7 @@ extension Renderer {
     func endGameKey(_ e: NSEvent) -> Bool {
         if let fs = finalScore {
             switch e.keyCode {
-            case 36, 76: closeFinalScore()
+            case 36, 76: buttonClick(); closeFinalScore()   // the close button's hot key
             case 51: if !fs.cheated, !fs.name.isEmpty { fs.name.removeLast() }
             default:
                 if !fs.cheated, let c = e.characters, fs.name.count < 31 {

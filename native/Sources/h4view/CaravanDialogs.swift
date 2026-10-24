@@ -126,7 +126,7 @@ extension Renderer {
         guard let r = dRect(d, "\(prefix)_Released") ?? dRect(d, "\(prefix)_released") else { return [] }
         let over = r.offset(ox, oy).contains(pointerCanvas.0, pointerCanvas.1)
         let names = disabled ? ["Disabled", "Released"] : pressed ? ["Pressed", "Released"] : over ? ["Highlighted", "Released"] : ["Released"]
-        for n in names { if dLayer(d, "\(prefix)_\(n)") != nil { return dImage(d, tag, "\(prefix)_\(n)", ox, oy) } }
+        for n in names { if dLayer(d, "\(prefix)_\(n)") != nil { return dImage(d, tag, "\(prefix)_\(n)", ox, oy).button(!disabled) } }
         return []
     }
     func caravanPrefixHit(_ d: LayerFile?, _ prefix: String, _ ox: Int, _ oy: Int, _ x: Float, _ y: Float) -> Bool {
@@ -407,9 +407,9 @@ extension Renderer {
             }
             out += caravanPrefixButton(d, tag, "Move_Back", ox, oy)
         }
-        out += caravanPrefixButton(d, tag, "From_Town", ox, oy, disabled: c.destinations.isEmpty, pressed: c.mode == 1)
+        out += caravanPrefixButton(d, tag, "From_Town", ox, oy, disabled: c.destinations.isEmpty, pressed: c.mode == 1).button(!c.destinations.isEmpty && c.mode != 1)   // (inferred: stay-down toggles, the one down silent)
         out += dText(text("caravan.from_town_text", "From"), dRect(d, "From_Town_Text"), font: dFont(16), ox, oy)
-        out += caravanPrefixButton(d, tag, "To_Town", ox, oy, disabled: c.origins.isEmpty, pressed: c.mode == 0)
+        out += caravanPrefixButton(d, tag, "To_Town", ox, oy, disabled: c.origins.isEmpty, pressed: c.mode == 0).button(!c.origins.isEmpty && c.mode != 0)
         out += dText(text("caravan.to_town_text", "To"), dRect(d, "To_Town_Text"), font: dFont(16), ox, oy)
         // the rows
         let lifted = caravanDragAt != nil ? caravanDrag : nil
@@ -751,6 +751,8 @@ extension Renderer {
     func caravanKey(_ code: UInt16) -> Bool {
         guard let c = caravanUI else { return false }
         let enter = code == 36 || code == 76, esc = code == 53
+        let enterButton: Bool = { switch c { case .initial, .buy: return false; default: return true } }()
+        if esc || (enter && enterButton) { buttonClick() }   // Enter / Esc: the OK / Cancel buttons' hot keys
         switch c {
         case .initial(let t):
             if esc { caravanUI = nil }

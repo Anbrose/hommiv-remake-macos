@@ -1057,14 +1057,14 @@ final class MapView: MTKView {
             else { renderer.pan.x += e.keyCode == 124 ? step : -step }
         case 125: renderer.pan.y += step
         case 126: renderer.pan.y -= step
-        case 36, 76: if renderer.townOpen == nil, !renderer.inCombat { renderer.endTurn() }   // Return / Enter
-        case 14: if renderer.townOpen == nil, !renderer.inCombat { renderer.endTurn() }       // E
+        case 36, 76: if renderer.townOpen == nil, !renderer.inCombat { renderer.buttonClick(); renderer.endTurn() }   // Return / Enter (end_turn.hot_keys on the button: its click)
+        case 14: if renderer.townOpen == nil, !renderer.inCombat { renderer.buttonClick(); renderer.endTurn() }       // E
         // the battlefield's hot keys (0x6335c0): F10 (key 0x79) toggles the movement shadow, G
         // (combat_grid_toggle.hot_keys) the grid; each change is kept at once, as the exe's setters do
         case 109: if renderer.inCombat { renderer.settings.showMovementShading = !renderer.showMovementShading; renderer.settings.save() }
         case 5: if renderer.inCombat, renderer.prompt == nil { renderer.settings.showCombatGrid = !renderer.showCombatGrid; renderer.settings.save() }
-        case 1: if renderer.inCombat, renderer.prompt == nil, let b = renderer.combat?.battle, !(renderer.combat?.busy ?? true), b.finished == nil { b.wait(); renderer.combat?.pump() }   // S = wait
-        case 2: if renderer.inCombat, renderer.prompt == nil, let b = renderer.combat?.battle, !(renderer.combat?.busy ?? true), b.finished == nil { b.defend(); renderer.combat?.pump() } // D = defend
+        case 1: if renderer.inCombat, renderer.prompt == nil, let b = renderer.combat?.battle, !(renderer.combat?.busy ?? true), b.finished == nil { renderer.buttonClick(); b.wait(); renderer.combat?.pump() }   // S = wait (the button's hot key: its click)
+        case 2: if renderer.inCombat, renderer.prompt == nil, let b = renderer.combat?.battle, !(renderer.combat?.busy ?? true), b.finished == nil { renderer.buttonClick(); b.defend(); renderer.combat?.pump() } // D = defend
         case 53:   // Escape closes a dialog, then leaves the town
             if renderer.townDialog != nil { renderer.townDialog = nil }
             else if renderer.townOpen != nil { renderer.closeTown() }

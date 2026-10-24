@@ -1,10 +1,24 @@
 import Foundation
 
-// Wandering stacks' guard zones and when they fall on a hero, as heroes4.exe has them
+// The guard zones of hostile armies and when they fall on an army, as heroes4.exe has them
 // (re/adventure_guards_spec.md): the per-cell danger marks of the path finder (0x498460 "mark
-// enemies", flooded by 0x4979f0), the route planner's forced exit inside a zone the player sees
+// enemies": every army of another team -- wandering stacks, other players' heroes and their
+// ships -- flooded by 0x4979f0), the route planner's forced exit inside a zone the player sees
 // (0x4ff856), the walk cut as the mover starts (0x5439e0) and the attack at the end of every
 // move (0x4f81e0).
+
+/// An army whose zone marks the map (an entry of the map's army list, 0x498460): a wandering
+/// stack (no owner) or a player's army (a hero's, or an army aboard a ship).
+public enum ZoneArmy: Equatable {
+    case stack(Int), army(Hero)
+    public static func == (a: ZoneArmy, b: ZoneArmy) -> Bool {
+        switch (a, b) {
+        case let (.stack(i), .stack(j)): return i == j
+        case let (.army(x), .army(y)): return x === y
+        default: return false
+        }
+    }
+}
 
 /// One flood mark of a cell (the record's danger bits): the step toward the stack that marked it
 /// (a direction of Passability.directions), the flood distance (2 a straight step, 3 a diagonal;
@@ -13,11 +27,13 @@ public struct GuardMark: Equatable {
     public var dir: Int, dist: Int, clean: Bool
 }
 
-/// The danger marks of a level for one army: `a` from every stack that notices it, `b` from the
-/// ones the player sees (0x498460's two floods), indexed x * size + y.
+/// The danger marks of a level for one army: `a` from every hostile army that notices it, `b`
+/// from the ones its side sees (0x498460's two floods), indexed x * size + y; `armies` the
+/// players' armies flooded (with the wandering stacks, the cells' attackers).
 public struct GuardMap {
     public let size: Int
     public var a: [GuardMark?], b: [GuardMark?]
+    var armies: [Hero] = []
     init(size: Int) { self.size = size; a = Array(repeating: nil, count: size * size); b = a }
     public func a(_ x: Int, _ y: Int) -> GuardMark? { x >= 0 && y >= 0 && x < size && y < size ? a[x * size + y] : nil }
     public func b(_ x: Int, _ y: Int) -> GuardMark? { x >= 0 && y >= 0 && x < size && y < size ? b[x * size + y] : nil }
@@ -45,12 +61,12 @@ extension GameState {
 
     // MARK: the flood (0x4979f0)
 
-    /// Flood one stack's zone into `marks` as 0x4979f0 does with the functor of 0x498460: the
-    /// stack's own cell (distance 0); then, unless the army's stealth beats the stack's scouting
+    /// Flood one army's zone into `marks` as 0x4979f0 does with the functor of 0x498460: the
+    /// army's own cell (distance 0); then, unless the mover's stealth beats the army's scouting
     /// by two (scouting + 1 < stealth), the 5 x 5 square around it outward over the ground the
-    /// stack stands on (land or water), cut by obstacles and objects.
-    func flood(_ i: Int, stealth: Int, into marks: inout [GuardMark?], _ p: Passability) {
-        let m = monsters[i], n = p.size
+    /// army stands on (land or water), cut by obstacles and objects.
+    func flood(from c: (x: Int, y: Int), scouting: Int, stealth: Int, into marks: inout [GuardMark?], _ p: Passability) {
+        let m = c, n = p.size
         guard m.x >= 0, m.y >= 0, m.x < n, m.y < n else { return }
         // the functor's test (0x4972e0 / 0x497380): a mark gives way to a clean one where it was
         // not clean, else only to a strictly nearer one, never a clean one to one that is not
@@ -61,7 +77,7 @@ extension GameState {
         }
         struct Entry { var x: Int, y: Int, mark: GuardMark, parent: (Int, Int)? }
         marks[m.x * n + m.y] = GuardMark(dir: 0, dist: 0, clean: true)   // applied without the test
-        guard scouting(of: m) + 1 >= stealth else { return }
+        guard scouting + 1 >= stealth else { return }
         let atSea = p.isSea(m.x, m.y)
         var local = [GuardMark?](repeating: nil, count: 25)
         local[12] = GuardMark(dir: 0, dist: 0, clean: true)
@@ -113,30 +129,80 @@ extension GameState {
         }
     }
 
-    /// The stacks flooded against an army (0x498460): the wandering stacks of this level, in the
-    /// map's order (not the guards of banks, dwellings and garrisons).
+    /// The wandering stacks of this level, in the map's order (not the guards of banks, dwellings
+    /// and garrisons).
     var guardStacks: [Int] { monsters.indices.filter { monsters[$0].z == level && monsters[$0].bank == nil && monsters[$0].count > 0 } }
 
-    /// The danger marks for an army: A over every stack, B over the ones the player sees.
+    /// The players' armies flooded against an army (0x498460: of another team `+0x2b8`, not empty
+    /// 0x63fcb0, on this level): the other players' heroes and ships against the player's army;
+    /// the player's against a computer's (the remake's computer armies do not fight each other).
+    func zoneArmies(against h: Hero) -> [Hero] {
+        let human = heroes.contains { $0 === h }
+        return (human ? enemyHeroes : heroes).filter {
+            $0 !== h && $0.z == level && team(of: $0.owner) != team(of: h.owner) && (!$0.army.isEmpty || !$0.members.isEmpty)
+        }
+    }
+    /// The mover's side sees the army (0x4fae90 = its vtable+0x60(team), 0x526110): the player
+    /// through his fog; a computer player sees every army (the remake keeps no fog for them).
+    func zoneArmySeen(_ a: ZoneArmy, by h: Hero) -> Bool {
+        switch a {
+        case .stack(let i): return monsterSeen(i)
+        case .army(let e): return heroes.contains { $0 === h } ? isVisible(e) : true
+        }
+    }
+    func zonePosition(_ a: ZoneArmy) -> (Int, Int) {
+        switch a {
+        case .stack(let i): return monsters.indices.contains(i) ? (monsters[i].x, monsters[i].y) : (-1, -1)
+        case .army(let e): return (e.x, e.y)
+        }
+    }
+    /// An army's stealth (0x6428a0).
+    func zoneStealth(_ a: ZoneArmy) -> Int {
+        switch a {
+        case .stack(let i): return stealth(of: monsters[i])
+        case .army(let e): return stealth(of: e)
+        }
+    }
+
+    /// The danger marks for an army: A over every hostile army, B over the ones its side sees.
+    /// Wandering stacks mark only against the player's armies (a computer army meets them by its
+    /// own choice, AI.swift). The stacks flood first, then the players' armies (the exe's single
+    /// map list mixes them; ties between two armies could differ).
     public func guardMap(for h: Hero) -> GuardMap {
-        let s = stealth(of: h), seen = guardStacks.filter { monsterSeen($0) }
+        let human = heroes.contains { $0 === h }
+        let s = stealth(of: h), stacks = human ? guardStacks : [], armies = zoneArmies(against: h)
+        let seen = stacks.filter { monsterSeen($0) }, armiesSeen = armies.map { zoneArmySeen(.army($0), by: h) }
         var hs = Hasher()
-        hs.combine(s); hs.combine(level); hs.combine(passability.revision); hs.combine(monsterRevision); hs.combine(seen)
+        hs.combine(s); hs.combine(level); hs.combine(h.x); hs.combine(h.y); hs.combine(passability.revision); hs.combine(monsterRevision); hs.combine(seen); hs.combine(human)
+        for (e, v) in zip(armies, armiesSeen) { hs.combine(ObjectIdentifier(e)); hs.combine(visionLevel(of: e)); hs.combine(v) }
+        let others = (heroes + enemyHeroes).filter { $0 !== h && $0.z == level }
+        for e in others { hs.combine(e.x); hs.combine(e.y) }
         let key = hs.finalize()
         if let c = guardCache, c.key == key { return c.map }
-        let p = passability
+        // every other army is a 1 x 1 trigger open on all sides (0x4cbc10 stops on it, 0x4d7300
+        // enters it): marked, not spread from
+        var p = passability
+        for e in others { p.openTrigger(e.x, e.y, object: Int.max) }
+        p.free(h.x, h.y)   // (the mover's own cell does not stop it)
         var g = GuardMap(size: p.size)
-        for i in guardStacks {
-            flood(i, stealth: s, into: &g.a, p)
-            if seen.contains(i) { flood(i, stealth: s, into: &g.b, p) }
+        g.armies = armies
+        for i in stacks {
+            let c = (monsters[i].x, monsters[i].y), sc = scouting(of: monsters[i])
+            flood(from: c, scouting: sc, stealth: s, into: &g.a, p)
+            if seen.contains(i) { flood(from: c, scouting: sc, stealth: s, into: &g.b, p) }
+        }
+        for (e, v) in zip(armies, armiesSeen) {   // 0x642860: the army's scouting
+            let sc = visionLevel(of: e)
+            flood(from: (e.x, e.y), scouting: sc, stealth: s, into: &g.a, p)
+            if v { flood(from: (e.x, e.y), scouting: sc, stealth: s, into: &g.b, p) }
         }
         guardCache = (key, g)
         return g
     }
 
-    /// The stack whose zone holds the cell (0x4fdf80): follow the A marks toward their stacks
-    /// down to distance 0, the stack standing there.
-    func guardAttacker(at c: (Int, Int), _ g: GuardMap) -> Int? {
+    /// The army whose zone holds the cell (0x4fdf80): follow the A marks toward their armies
+    /// down to distance 0, the army standing there (not empty, hostile).
+    func guardAttacker(at c: (Int, Int), _ g: GuardMap) -> ZoneArmy? {
         var x = c.0, y = c.1, steps = 0
         while let mk = g.a(x, y), mk.dist > 0 {
             let d = Passability.directions[mk.dir]
@@ -144,26 +210,27 @@ extension GameState {
             if steps > 64 { return nil }
         }
         guard g.a(x, y)?.dist == 0 else { return nil }
-        return monsters.indices.first { monsters[$0].x == x && monsters[$0].y == y && monsters[$0].z == level && monsters[$0].bank == nil && monsters[$0].count > 0 }
+        if let i = monsters.indices.first(where: { monsters[$0].x == x && monsters[$0].y == y && monsters[$0].z == level && monsters[$0].bank == nil && monsters[$0].count > 0 }) { return .stack(i) }
+        return g.armies.first { $0.x == x && $0.y == y }.map { .army($0) }
     }
 
-    /// The wandering stack that falls on the hero when a move of his ends on the cell (0x4f81e0).
-    public func threat(to h: Hero, at x: Int, _ y: Int) -> Int? {
+    /// The army that falls on the mover when a move of his ends on the cell (0x4f81e0).
+    public func threat(to h: Hero, at x: Int, _ y: Int) -> ZoneArmy? {
         let g = guardMap(for: h)
         guard let a = g.a(x, y), a.dist > 0 else { return nil }
         return guardAttacker(at: (x, y), g)
     }
 
-    /// The stack the player sees whose zone holds the cell (the B marks): the yellow arrows and
+    /// The army the player sees whose zone holds the cell (the B marks): the yellow arrows and
     /// the attack pointer over free ground.
-    public func seenThreat(to h: Hero, at x: Int, _ y: Int) -> Int? {
+    public func seenThreat(to h: Hero, at x: Int, _ y: Int) -> ZoneArmy? {
         let g = guardMap(for: h)
-        guard let b = g.b(x, y), b.dist > 0, let i = guardAttacker(at: (x, y), g), monsterSeen(i) else { return nil }
-        return i
+        guard let b = g.b(x, y), b.dist > 0, let a = guardAttacker(at: (x, y), g), zoneArmySeen(a, by: h) else { return nil }
+        return a
     }
 
-    /// The planner's forced exits for the army (0x4ff856): in a cell of the zone of a stack the
-    /// player sees, clean, the only way on is the step toward the stack.
+    /// The planner's forced exits for the army (0x4ff856): in a cell of the zone of an army the
+    /// player sees, clean, the only way on is the step toward that army.
     func forcedExits(for h: Hero) -> [Int: Int] {
         let g = guardMap(for: h)
         var out: [Int: Int] = [:]
@@ -180,54 +247,62 @@ extension GameState {
     // MARK: the walk (0x5439e0)
 
     /// Cut a walk as the mover does when it starts (0x5439e0); what is cut stays as the route
-    /// to go on with. A stack the player does not see but the hero makes out (its stealth not
-    /// above the army's scouting) stops the walk before its zone; one hidden from him lets him
-    /// step in and the walk ends there. In the zone of a stack the player sees the walk goes on
-    /// only straight toward the stack (each cell the one its predecessor points at, or the stack).
+    /// to go on with. An army the player does not see but the hero makes out (its stealth not
+    /// above the army's scouting) stops the walk before its zone; a stack hidden from him, or a
+    /// player's army one step too stealthy, lets him step in and the walk ends there (a player's
+    /// army stealthier still does not stop it). In the zone of an army the player sees the walk
+    /// goes on only straight toward it (each cell the one its predecessor points at, or the army).
     func cutWalk(_ h: Hero) {
+        guard let k = walkCut(h, h.path), k < h.path.count else { return }
+        h.plan = Array(h.path[k...]); h.path = Array(h.path[..<k])
+        h.walkCut = true
+    }
+    /// Where 0x5439e0 cuts the army's walk over `path` (the cells from its first step on): the
+    /// index of the first cell not walked, nil for the whole walk. The computer's movers cut
+    /// theirs with the computer's danger path finder too (0x48051a: `[player+0x2b0]`).
+    func walkCut(_ h: Hero, _ path: [(x: Int, y: Int)]) -> Int? {
         let g = guardMap(for: h), sc = visionLevel(of: h)
-        var tracking: (stack: Int, expected: (Int, Int))? = nil
+        var tracking: (army: ZoneArmy, expected: (Int, Int))? = nil
         var cut: Int? = nil
-        for (k, c) in h.path.enumerated() {
+        for (k, c) in path.enumerated() {
             var stopAfter = false
             if let a = g.a(c.x, c.y), a.dist > 0 {
                 let seenHere = g.b(c.x, c.y).map { $0.dir == a.dir && $0.dist == a.dist } ?? false
-                if !seenHere, let i = guardAttacker(at: (c.x, c.y), g) {
-                    if stealth(of: monsters[i]) - sc <= 0 { cut = k; break }
-                    stopAfter = true   // (a stack has no owner: it always ends the walk here)
+                if !seenHere, let a = guardAttacker(at: (c.x, c.y), g) {
+                    let diff = zoneStealth(a) - sc
+                    if diff <= 0 { cut = k; break }
+                    if case .stack = a { stopAfter = true } else if diff == 1 { stopAfter = true }   // (a stack has no owner)
                 }
             }
             let bClean = g.b(c.x, c.y)?.clean ?? false
             if bClean || tracking != nil {
                 if let t = tracking {
-                    let s = monsters.indices.contains(t.stack) ? (monsters[t.stack].x, monsters[t.stack].y) : (-1, -1)
+                    let s = zonePosition(t.army)
                     guard (c.x, c.y) == t.expected || (c.x, c.y) == s else { cut = k; break }
-                } else if let i = guardAttacker(at: (c.x, c.y), g) {
-                    tracking = (i, (0, 0))
+                } else if let a = guardAttacker(at: (c.x, c.y), g) {
+                    tracking = (a, (0, 0))
                 }
                 if tracking != nil {
                     let d = Passability.directions[g.a(c.x, c.y)?.dir ?? 0]
                     tracking!.expected = (c.x + d.dx, c.y + d.dy)
                 }
             }
-            if let a = g.a(c.x, c.y), a.dist == 0 { cut = k; break }   // a stack's own cell
+            if let a = g.a(c.x, c.y), a.dist == 0 { cut = k; break }   // an army's own cell
             if stopAfter { cut = k + 1; break }
         }
-        guard let k = cut, k < h.path.count else { return }
-        h.plan = Array(h.path[k...]); h.path = Array(h.path[..<k])
-        h.walkCut = true
+        return cut
     }
 
     // MARK: the end of a move (0x546d50 -> 0x4f81e0)
 
     /// A move of the army ended (its walk done, cut, stopped, or an object next to it used): once
-    /// nothing waits for the player, a stack whose zone holds its cell may fall on it.
+    /// nothing waits for the player, an army whose zone holds its cell may fall on it.
     func moveEnded(_ h: Hero) {
         if !pendingGuardChecks.contains(where: { $0 === h }) { pendingGuardChecks.append(h) }
     }
     /// Something waits for the player (a dialog, a battle, a stack charging).
     var adventureBusy: Bool {
-        charge != nil || pendingBattle != nil || pendingFlee != nil || pendingJoin != nil || pendingHeroBattle != nil || pendingSiege != nil || pendingTrade != nil
+        charge != nil || armyCharge != nil || pendingBattle != nil || pendingFlee != nil || pendingJoin != nil || pendingHeroBattle != nil || pendingSiege != nil || pendingTrade != nil
             || chestOffer != nil || question != nil || choice != nil || teleportChoice != nil || hireOpen != nil
             || dwellingOpen != nil || heroPick != nil || skillDialog != nil || shopOpen != nil || sanctuaryOpen != nil || puzzleOpen != nil || levelUp != nil || battleUnderway
             || !scripts.messages.isEmpty
@@ -238,24 +313,88 @@ extension GameState {
             guardAttack(h)
         }
     }
-    /// 0x4f81e0: the stack whose zone holds the army's cell walks its own route (a plain one, no
-    /// zones) up to the army and the battle follows; no route, no attack.
+    /// 0x4f81e0, for any army whose move ended (the player's, or a computer's on its turn): the
+    /// army whose zone holds its cell walks its own route (a plain one, no zones, 0x500160 type 1)
+    /// up to it and the battle follows; no route, no attack. A stack (no owner) always attacks; a
+    /// player's army only when the attacked army's side sees it (0x4f83c1: vtable+0x60(team)).
     func guardAttack(_ h: Hero) {
-        guard heroes.contains(where: { $0 === h }), h.z == level, !h.isWalking,
-              !h.army.isEmpty || !h.members.isEmpty, let i = threat(to: h, at: h.x, h.y) else { return }
+        guard heroes.contains(where: { $0 === h }) || enemyHeroes.contains(where: { $0 === h }), h.z == level, !h.isWalking,
+              !h.army.isEmpty || !h.members.isEmpty, let a = threat(to: h, at: h.x, h.y) else { return }
         var p = passability
         p.forcedExit = [:]; p.relief = 0; p.jumps = [:]
-        let afloat = p.isSea(monsters[i].x, monsters[i].y)   // a stack of sea creatures (0x642910)
-        guard let r = p.path(from: (monsters[i].x, monsters[i].y), to: (h.x, h.y), afloat: afloat), !r.isEmpty else { return }
-        log.append("\(tables?.creature(monsters[i].creature)?.plural ?? monsters[i].creature) attack \(h.name)!")
-        h.target = nil
-        // t_enemy_army_attack: the stack's walk list stops before the army (its cell is the stop)
-        let path = Array(r.dropLast())
-        var steps: [Int] = [], px = monsters[i].x, py = monsters[i].y
+        switch a {
+        case .stack(let i):
+            let afloat = p.isSea(monsters[i].x, monsters[i].y)   // a stack of sea creatures (0x642910)
+            guard let r = p.path(from: (monsters[i].x, monsters[i].y), to: (h.x, h.y), afloat: afloat), !r.isEmpty else { return }
+            log.append("\(tables?.creature(monsters[i].creature)?.plural ?? monsters[i].creature) attack \(h.name)!")
+            h.target = nil
+            // t_enemy_army_attack: the stack's walk list stops before the army (its cell is the stop)
+            let path = Array(r.dropLast())
+            var steps: [Int] = [], px = monsters[i].x, py = monsters[i].y
+            for c in path { steps.append(ArmyWalk.distance(px, py, c.x, c.y)); px = c.x; py = c.y }
+            charge = Charge(monster: i, hero: h, path: path, walk: ArmyWalk(steps: steps, gait: gait(monsters[i].model)),
+                            facing: path.first.map { Hero.facing(dx: $0.x - monsters[i].x, dy: $0.y - monsters[i].y) } ?? "s")
+            if path.isEmpty { finishCharge() }
+        case .army(let e):
+            guard zoneArmySeen(a, by: h) else { return }
+            p.free(e.x, e.y); p.free(h.x, h.y)   // (the attacked army's cell is the route's last step)
+            guard let r = p.path(from: (e.x, e.y), to: (h.x, h.y), afloat: e.boat != nil), !r.isEmpty else { return }
+            log.append("\(e.name) attacks \(h.name)!")
+            h.target = nil; h.attackTarget = nil; h.tradeTarget = nil
+            startArmyCharge(e, at: h, path: Array(r.dropLast()))
+        }
+    }
+
+    /// A player's army walking up to an army it falls on (t_enemy_army_attack 0x5472c0 over the
+    /// attacker's mover: no movement limit, no danger check, the walk loop at that army's speed),
+    /// then the attack (0x5474d0 -> 0x522560 with the attacked army: the attacker arrives).
+    public struct ArmyCharge {
+        public let attacker: Hero, target: Hero
+        var walk: ArmyWalk
+    }
+    func startArmyCharge(_ e: Hero, at target: Hero, path: [(x: Int, y: Int)]) {
+        var steps: [Int] = [], px = e.x, py = e.y
         for c in path { steps.append(ArmyWalk.distance(px, py, c.x, c.y)); px = c.x; py = c.y }
-        charge = Charge(monster: i, hero: h, path: path, walk: ArmyWalk(steps: steps, gait: gait(monsters[i].model)),
-                        facing: path.first.map { Hero.facing(dx: $0.x - monsters[i].x, dy: $0.y - monsters[i].y) } ?? "s")
-        if path.isEmpty { finishCharge() }
+        if e.z < passabilities.count { passabilities[e.z].free(e.x, e.y) }
+        e.path = path; e.progress = 0; e.animFrame = 0
+        if let n = path.first { e.facing = Hero.facing(dx: n.x - e.x, dy: n.y - e.y) }
+        armyCharge = ArmyCharge(attacker: e, target: target, walk: ArmyWalk(steps: steps, gait: gait(e.model)))
+        // nothing shown (an unanimated computer turn) or nowhere to walk: at once
+        if path.isEmpty || computerTurn.map({ !$0.animated }) == true {
+            for c in path { e.x = c.x; e.y = c.y }
+            finishArmyCharge()
+        } else { e.animState = "prewalk" }
+    }
+    /// A frame of the charge: the attacker's steps as its walk finishes them.
+    func advanceArmyCharge(dt: Float) {
+        guard var c = armyCharge else { return }
+        let e = c.attacker, g = gait(e.model)
+        let percent = heroes.contains { $0 === e } ? GameState.armySpeedPercent : GameState.otherArmySpeedPercent
+        var finished = c.walk.advance(dt, gait: g, percent: percent)
+        e.animState = c.walk.state; e.animFrame = c.walk.frame(g)
+        while finished > 0, let n = e.path.first {
+            finished -= 1
+            e.path.removeFirst(); e.x = n.x; e.y = n.y
+            if let m = e.path.first { e.facing = Hero.facing(dx: m.x - e.x, dy: m.y - e.y) }
+        }
+        e.progress = e.path.isEmpty ? 0 : c.walk.stepProgress
+        armyCharge = c
+        if e.path.isEmpty || c.walk.done { finishArmyCharge() }
+    }
+    /// The charge is over: the attacker stands beside the army, turns to it in its attack pose
+    /// and the battle opens, the attacker the army that walked (aiAttacking: a computer's).
+    func finishArmyCharge() {
+        guard let c = armyCharge else { return }
+        armyCharge = nil
+        let e = c.attacker, h = c.target
+        if let n = e.path.last { e.x = n.x; e.y = n.y }
+        e.path = []; e.progress = 0
+        if e.z < passabilities.count { passabilities[e.z].block(e.x, e.y) }
+        guardCache = nil
+        face(e, toward: (h.x, h.y))
+        armyReached(e, enemy: h)
+        if heroes.contains(where: { $0 === h }) { pendingHeroBattle = (h, e); aiAttacking = true }
+        else { pendingHeroBattle = (e, h); aiAttacking = false }
     }
 
     /// A click while the army walks only stops it (0x4f5d58 -> 0x546c20): it ends the step it is

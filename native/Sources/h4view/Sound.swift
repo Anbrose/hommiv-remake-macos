@@ -133,4 +133,7 @@ final class GameSound: NSObject, AVAudioPlayerDelegate {
     }
     func setMusicVolume(_ v: Float) { musicVolume = v; music?.volume = v }
     func stopMusic() { music?.stop(); music = nil; musicName = nil; playlist = [] }
+    /// Leaving a screen for another in the window: its loops and music stop, the decoded
+    /// sounds are dropped (the next screen decodes what it plays); effects still sounding finish.
+    func leaveScreen() { stopAllLoops(); stopMusic(); cache = [:] }
 }

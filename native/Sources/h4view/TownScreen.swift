@@ -74,29 +74,11 @@ final class TownScreen {
 
 extension Renderer {
     static let townMaterials = ["Gold", "Wood", "Ore", "Crystal", "Sulfur", "Mercury", "Gems"]
-    /// The town list's first row (the scrollbar's position).
-    private static var townListTopStore: [ObjectIdentifier: Int] = [:]
-    var townListTop: Int {
-        get { Renderer.townListTopStore[ObjectIdentifier(self)] ?? 0 }
-        set { Renderer.townListTopStore[ObjectIdentifier(self)] = newValue }
-    }
-    /// The split toggle (t_toggle_button +0x6b0): the next move splits the stack.
-    private static var townSplitStore: [ObjectIdentifier: Bool] = [:]
-    var townSplitOn: Bool {
-        get { Renderer.townSplitStore[ObjectIdentifier(self)] ?? false }
-        set { Renderer.townSplitStore[ObjectIdentifier(self)] = newValue }
-    }
 
     // MARK: a purchase's fade (re/town_build_fade_spec.md)
 
     /// `frozen`: a snapshot's fixed tick count.
     typealias TownFade = (town: Int, id: Int, replaced: Set<Int>, start: Date, frozen: Int?)
-    private static var townFadeStore: [ObjectIdentifier: TownFade] = [:]
-    /// The building bought last in the open town (0x8b4c90 with immediate = 0) while it fades in.
-    var townFade: TownFade? {
-        get { Renderer.townFadeStore[ObjectIdentifier(self)] }
-        set { Renderer.townFadeStore[ObjectIdentifier(self)] = newValue }
-    }
     /// The open town's fade: the bought building, the buildings it replaced and the 50 ms ticks
     /// (0x8b4f30) since; nil when none is running.
     var townFadeNow: (id: Int, replaced: Set<Int>, ticks: Int)? {

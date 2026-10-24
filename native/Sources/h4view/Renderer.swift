@@ -79,6 +79,8 @@ struct Quad {
 }
 
 final class Renderer: NSObject, MTKViewDelegate {
+    /// The walk sound looping on the adventure map (horse, ship or a creature's).
+    var currentWalkSound: String? = nil
     let device: MTLDevice
     let queue: MTLCommandQueue
     let pipeline: MTLRenderPipelineState
@@ -1290,12 +1292,21 @@ final class Renderer: NSObject, MTKViewDelegate {
             // the hero's ride: sound.hero horse.walk loops while a hero walks on the map
             followWalkingArmies()
             // at sea the ship's sound (sound.hero ship.walk) instead of the horse's
+            // an army without a hero, or a wandering stack charging, walks to its creature's own
+            // walk sound (the one it walks with in combat)
             let walker = g.heroes.first(where: { $0.isWalking }) ?? (g.computerTurn?.walk?.shown == true ? g.computerTurn?.walk?.hero : nil)
-            if !inCombat, townOpen == nil, let w = walker {
-                let key = w.boat != nil ? "ship" : "horse"
-                sound?.stopLoop(key == "ship" ? "horse" : "ship")
-                sound?.startLoop(key == "ship" ? "hero ship.walk" : "hero horse.walk", key: key)
-            } else { sound?.stopLoop("horse"); sound?.stopLoop("ship") }
+            var walkSound: String? = nil
+            if let w = walker {
+                if w.boat != nil { walkSound = "hero ship.walk" }
+                else if w.heroless, sound?.has("\(w.actor).walk") == true { walkSound = "\(w.actor).walk" }
+                else { walkSound = "hero horse.walk" }
+            } else if let c = g.charge, c.monster < g.monsters.count, let m = g.monsters[c.monster].model, sound?.has("\(m).walk") == true {
+                walkSound = "\(m).walk"
+            }
+            if !inCombat, townOpen == nil, let name = walkSound {
+                if currentWalkSound != name { sound?.stopLoop("mapwalk"); currentWalkSound = name }
+                sound?.startLoop(name, key: "mapwalk")
+            } else { sound?.stopLoop("mapwalk"); currentWalkSound = nil }
             updateAmbient(now)
             g.log.removeAll()
             collectFloaters(now: now)

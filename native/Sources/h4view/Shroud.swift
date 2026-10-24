@@ -10,6 +10,8 @@ final class ShroudCache {
     /// Per level: chunk index -> overlay (nil when that chunk is clear).
     var overlays: [[Int: Quad?]] = []
     var last: [[UInt8]] = []
+    /// How many overlays of a level stay before those out of view are dropped.
+    static let keep = 48
 }
 
 extension Renderer {
@@ -46,7 +48,7 @@ extension Renderer {
                 for k in now.indices where now[k] != before[k] {
                     let x = k / n, y = k % n
                     let (sx, sy) = screen(Float(x), Float(y))
-                    for (ci, c) in chunks.enumerated() where Float(c.x) - 64 <= sx && sx <= Float(c.x + c.bitmap.width) + 64 && Float(c.y) - 32 <= sy && sy <= Float(c.y + c.bitmap.height) + 32 {
+                    for (ci, c) in chunks.enumerated() where Float(c.x) - 64 <= sx && sx <= Float(c.x + c.width) + 64 && Float(c.y) - 32 <= sy && sy <= Float(c.y + c.height) + 32 {
                         dirty.insert(ci)
                     }
                 }
@@ -62,12 +64,21 @@ extension Renderer {
         guard let g = game, g.fogEnabled, g.level < g.fog.count, g.level < shroud.overlays.count, let star = shroudStar() else { return [] }
         let l = g.level, n = g.map.size, fog = g.fog[l]
         var out: [Quad] = []
+        var inView = Set<Int>()
         let minX = pan.x - 64, minY = pan.y - 64, maxX = pan.x + viewSize.x / zoom + 64, maxY = pan.y + viewSize.y / zoom + 64
+        // the overlays out of view go once there are many (each is a chunk-sized texture; one is
+        // rebuilt from the fog when it comes back into view)
+        defer {
+            if shroud.overlays[l].count > ShroudCache.keep {
+                for ci in shroud.overlays[l].keys where !inView.contains(ci) { shroud.overlays[l][ci] = nil }
+            }
+        }
         for (ci, c) in scenes[l].chunks.enumerated() {
-            if Float(c.x + c.bitmap.width) < minX || Float(c.x) > maxX || Float(c.y + c.bitmap.height) < minY || Float(c.y) > maxY { continue }
+            if Float(c.x + c.width) < minX || Float(c.x) > maxX || Float(c.y + c.height) < minY || Float(c.y) > maxY { continue }
+            inView.insert(ci)
             if let q = shroud.overlays[l][ci] { if let q = q { out.append(q) }; continue }
-            let bm = shroudBitmap(x: c.x, y: c.y, w: c.bitmap.width, h: c.bitmap.height, fog: fog, n: n, star: star)
-            let q = bm.map { Quad(texture: makeTexture($0), x: c.x, y: c.y, w: c.bitmap.width, h: c.bitmap.height) }
+            let bm = shroudBitmap(x: c.x, y: c.y, w: c.width, h: c.height, fog: fog, n: n, star: star)
+            let q = bm.map { Quad(texture: makeTexture($0), x: c.x, y: c.y, w: c.width, h: c.height) }
             shroud.overlays[l][ci] = q
             if let q = q { out.append(q) }
         }

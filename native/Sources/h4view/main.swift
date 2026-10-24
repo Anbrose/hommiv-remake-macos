@@ -150,7 +150,8 @@ for (k, a) in args.enumerated() where k + 1 < args.count {
     if a == "--align" { let p = args[k + 1].split(separator: ":").compactMap { Int($0) }; if p.count == 2, (0..<6).contains(p[1]) { RandomResolver.playerAlignments[p[0]] = 1 << p[1] } }
 }
 // every level of the map (the surface and, on most maps, the underground)
-let scenes = try (0..<max(1, map.levels)).map { try MapScene(map: map, level: $0, archive: archive, masks: masks) }
+// (top-level code has no autorelease pool that drains: one per level frees what building it autoreleased)
+let scenes = try (0..<max(1, map.levels)).map { l in try autoreleasepool { try MapScene(map: map, level: l, archive: archive, masks: masks) } }
 let scene = scenes[min(level, scenes.count - 1)]
 lap("scenes built: \(scenes.map { "\($0.chunks.count) terrain chunks, \($0.placed.count) objects" }.joined(separator: "; "))")
 let device = MTLCreateSystemDefaultDevice()!

@@ -287,6 +287,10 @@ final class CombatScreen {
         3: ["Trees.Swamp", "plants.swamp", "logs.swamp"], 4: ["Rocks.Lava", "Cracks.Lava", "Shrubs.burnt"], 5: ["Trees.Snow", "Rocks.Snow", "Shrubs.Snow"],
         6: ["Cactus", "cactus", "Rocks.Sand", "Trees.Palm", "Bones", "Shrubs.Dry"], 7: ["Rocks.Dirt", "Tree_trunks", "Shrubs.orange"], 8: ["Stalagmites", "Mushrooms.Big"]]
     var obstacleSprites: [String: Sprite] = [:]
+    /// The battle's actor sequences (each state and facing of each creature, every frame decoded),
+    /// loaded as they are drawn and let go when the battle closes (`releaseBattleSprites`).
+    var actorSprites: [String: Sprite] = [:]
+    func releaseBattleSprites() { actorSprites.removeAll(); obstacleSprites.removeAll() }
     func obstacleSprite(_ name: String) -> Sprite? {
         if obstacleSprites[name] == nil, let d = payload(name) { obstacleSprites[name] = try? Sprite(data: d) }
         return obstacleSprites[name]

@@ -85,9 +85,25 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// Every map level's scene; `scene` is the one in play (the game's level).
     let scenes: [MapScene]
     var scene: MapScene { game.map { scenes[min($0.level, scenes.count - 1)] } ?? scenes[0] }
-    var terrainByLevel: [[Quad]] = []
-    var terrain: [Quad] { terrainByLevel[min(game?.level ?? 0, terrainByLevel.count - 1)] }
-    var textures: [String: MTLTexture] = [:]
+    /// The terrain chunks' textures, made when a chunk comes into view (the packed pixels stay
+    /// with the scene); keyed by level and chunk index.
+    let terrainTextures = TextureCache<Int>(budget: 64 << 20)
+    /// The terrain of the level in play that the view (with a small margin) shows.
+    var terrain: [Quad] {
+        let l = min(game?.level ?? 0, scenes.count - 1)
+        let minX = pan.x - 64, minY = pan.y - 64, maxX = pan.x + viewSize.x / zoom + 64, maxY = pan.y + viewSize.y / zoom + 64
+        var out: [Quad] = []
+        for (i, c) in scenes[l].chunks.enumerated() where !c.isEmpty {
+            if Float(c.x + c.width) < minX || Float(c.x) > maxX || Float(c.y + c.height) < minY || Float(c.y) > maxY { continue }
+            let key = l << 20 | i
+            let t: MTLTexture
+            if let have = terrainTextures[key] { t = have } else { t = makeTexture(c.bitmap()); terrainTextures.insert(t, for: key) }
+            out.append(Quad(texture: t, x: c.x, y: c.y, w: c.width, h: c.height))
+        }
+        return out
+    }
+    /// The map objects' and actors' frames, uploaded when first drawn.
+    let textures = TextureCache<String>(budget: 160 << 20)
     var pan = SIMD2<Float>(0, 0)
     var zoom: Float = 1
     var viewSize = SIMD2<Float>(1, 1)
@@ -252,7 +268,8 @@ final class Renderer: NSObject, MTKViewDelegate {
             out.append(Quad(texture: uiTexture("ringcount|\(c)", { f.render(c, colour: (16, 12, 8)) }), x: ox + box.x + (box.width - w) / 2, y: oy + box.y + (box.height - f.size) / 2, w: w, h: f.size))
         }
     }
-    var uiTextures: [String: MTLTexture] = [:]
+    /// The screens' pictures and rendered texts (keys carry the text, so many are one-offs).
+    let uiTextures = TextureCache<String>(budget: 96 << 20)
     /// The combat field's cell overlays (grid, movement shadow), one rasterised image each, kept
     /// while their cells and colours stay the same.
     var fieldOverlays: [String: (cells: [Int: UInt32], texture: MTLTexture)] = [:]
@@ -597,7 +614,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     func uiTexture(_ key: String, _ make: () -> Bitmap) -> MTLTexture {
         if let t = uiTextures[key] { return t }
         let t = makeTexture(make())
-        uiTextures[key] = t
+        uiTextures.insert(t, for: key)
         if key.hasPrefix("button|") { buttonTextures.insert(ObjectIdentifier(t)) }
         return t
     }
@@ -677,12 +694,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         pipeline = try device.makeRenderPipelineState(descriptor: desc)
         vertexBuffer = device.makeBuffer(length: 1 << 20, options: .storageModeShared)!
         super.init()
-        for sc in scenes {
-            terrainByLevel.append(sc.chunks.map { c in Quad(texture: makeTexture(c.bitmap), x: c.x, y: c.y, w: c.bitmap.width, h: c.bitmap.height) })
-            for p in sc.placed {   // upload every frame of every object up front
-                for img in p.sprite.images { _ = texture(for: img, of: p.name) }
-            }
-        }
+        uiTextures.onEvict = { [unowned self] key, t in if key.hasPrefix("button|") { self.buttonTextures.remove(ObjectIdentifier(t)) } }
         pan = SIMD2(Float(scenes[0].width) / 2 - 640, Float(scenes[0].height) / 2 - 400)
     }
 
@@ -690,7 +702,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         let key = name + "|" + img.name
         if let t = textures[key] { return t }
         let t = makeTexture(img.bitmap)
-        textures[key] = t
+        textures.insert(t, for: key)
         return t
     }
 
@@ -1401,5 +1413,6 @@ final class Renderer: NSObject, MTKViewDelegate {
         if let p = present { cmd.present(p) }
         cmd.commit()
         if present == nil { cmd.waitUntilCompleted() }
+        terrainTextures.endFrame(); textures.endFrame(); uiTextures.endFrame()
     }
 }

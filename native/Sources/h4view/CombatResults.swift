@@ -176,6 +176,7 @@ extension Renderer {
 
     /// Leave the combat screen and apply the result to the map.
     func closeCombat() {
+        defer { combat?.releaseBattleSprites() }
         if let cs = combat, let b = cs.battle, let g = game, let h = cs.hero, let town = cs.siegeTown {   // a siege
             let won = b.finished ?? false
             for (hh, u) in zip(h.members, b.units.filter { $0.side == 0 && $0.stats.isHero }) { if let c = u.caster { hh.spellPoints = c.spellPoints } }

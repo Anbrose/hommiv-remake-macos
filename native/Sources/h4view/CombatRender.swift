@@ -56,8 +56,8 @@ extension Renderer {
             entry = a.sequenceEntry(state: "base_frame", facing: facing) ?? a.sequenceEntry(state: "fidget", facing: facing)
         }
         guard let e = entry, let real = r.entry(e) else { return nil }
-        if actorSprites[real] == nil { actorSprites[real] = try? Sprite(data: r.archive.payload(real)) }
-        guard let s = actorSprites[real] else { return nil }
+        if cs.actorSprites[real] == nil { cs.actorSprites[real] = try? Sprite(data: r.archive.payload(real)) }
+        guard let s = cs.actorSprites[real] else { return nil }
         return (s, real)
     }
 

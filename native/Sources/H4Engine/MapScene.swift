@@ -1,13 +1,54 @@
 import Foundation
+import Compression
 
 /// Everything a renderer needs to draw one level of a map: terrain composited into
 /// square chunk bitmaps, and the objects as sprite images with screen positions.
 /// Projection (see tools/h4render.py): cell (x, y) is a 64x32 diamond centred at
 /// ((y - x) * 32 + size * 32 + 32, (x + y) * 16 + 32).
 public final class MapScene {
+    /// A square of the composited terrain. Its pixels are kept LZFSE-packed (about a third of the
+    /// size: a level's terrain is width * height * 4 bytes, ~500 MB on an extra-large map) and
+    /// unpacked when a renderer needs them; a chunk wholly outside the map diamond has no pixels.
     public struct Chunk {
         public let x: Int, y: Int      // pixel origin on the map canvas
-        public let bitmap: Bitmap
+        public let width: Int, height: Int
+        let packed: Data?
+        let rawSize: Int
+        /// Nothing to draw: every pixel is transparent.
+        public var isEmpty: Bool { packed == nil }
+
+        init(x: Int, y: Int, bitmap b: Bitmap) {
+            self.x = x; self.y = y; width = b.width; height = b.height
+            rawSize = b.pixels.count
+            var opaque = false
+            b.pixels.withUnsafeBufferPointer { p in
+                var i = 3
+                while i < p.count { if p[i] != 0 { opaque = true; break }; i += 4 }
+            }
+            guard opaque else { packed = nil; return }
+            packed = b.pixels.withUnsafeBufferPointer { src -> Data in
+                // (a packed result no smaller than the pixels fails, and the pixels are kept raw)
+                let dst = UnsafeMutablePointer<UInt8>.allocate(capacity: src.count)
+                defer { dst.deallocate() }
+                let n = compression_encode_buffer(dst, src.count, src.baseAddress!, src.count, nil, COMPRESSION_LZFSE)
+                return n > 0 && n < src.count ? Data(bytes: dst, count: n) : Data(src)
+            }
+        }
+        /// The chunk's pixels (all transparent for an empty chunk).
+        public func bitmap() -> Bitmap {
+            var b = Bitmap(width: width, height: height)
+            guard let packed else { return b }
+            if packed.count == rawSize { b.pixels = [UInt8](packed); return b }
+            let n = b.pixels.withUnsafeMutableBufferPointer { dst in
+                packed.withUnsafeBytes { src in
+                    compression_decode_buffer(dst.baseAddress!, dst.count, src.bindMemory(to: UInt8.self).baseAddress!, packed.count, nil, COMPRESSION_LZFSE)
+                }
+            }
+            assert(n == rawSize, "terrain chunk unpacked to \(n) of \(rawSize) bytes")
+            return b
+        }
+        /// The packed size (for memory accounting).
+        public var storedBytes: Int { packed?.count ?? 0 }
     }
     public struct Placed {
         public let name: String        // archive entry of the sprite file (random placeholders already resolved)
@@ -129,7 +170,6 @@ public final class MapScene {
 
     private func buildTerrain(archive: H4Archive, masks: TransitionMasks) throws {
         let n = map.size, cs = MapScene.chunkSize
-        var canvas = Bitmap(width: width, height: height)
         var patches: [String: TerrainPatch] = [:]
         func patch(_ name: String) throws -> TerrainPatch {
             if let p = patches[name] { return p }
@@ -141,57 +181,70 @@ public final class MapScene {
         let road = masks.sets["road 1"] ?? []
         let cells = map.cells[level]
         let roadTypes = MapScene.roadTypes(map: map, level: level)
-        for x in 0..<n {
-            for y in 0..<n {
-                guard let cell = cells[x * n + y] else { continue }
-                let row = x + y, col = (y - x - (x + y) % 2) / 2
-                let ti = (MapScene.mod(row, 6) + 2) * 10 + (MapScene.mod(col, 6) + 2)
-                let (sx, sy) = screen(x: x, y: y)
-                let left = sx - 32, top = sy - 16
-                let base = try patch(MapScene.terrainFile(type: cell.type, variant: cell.variant, x: x, y: y) ?? "grass.2.1")
-                MapScene.blit(&canvas, base.tiles[ti], left, top, mask: nil)
-                // overlays and road pieces interleave by their order byte (roads sit at 10..14,
-                // overlays at 0..9 and 15..19, so terrain drawn after a road nibbles its edges)
-                enum Item { case overlay(Overlay), road(Road) }
-                var items: [(order: UInt8, item: Item)] = cell.overlays.map { ($0.order, .overlay($0)) }
-                items += cell.roads.map { ($0.order, .road($0)) }
-                for (_, item) in items.sorted(by: { $0.order < $1.order }) {
-                    switch item {
-                    case .overlay(let ov):
-                        guard ov.mask < land.count, let f = MapScene.terrainFile(type: ov.type, variant: ov.variant, x: x, y: y) else { continue }
-                        // land on water / water on land take the soft shoreline sets; the three
-                        // variants of each set alternate by position
-                        let baseWater = cell.type == 0 || cell.type == 9, overWater = ov.type == 0 || ov.type == 9
-                        let variant = MapScene.mod(x * 3 + y * 5, 3) + 1
-                        let setName = baseWater == overWater ? (overWater ? "water \(min(variant, 2))" : "land \(variant)")
-                            : (overWater ? (MapScene.shoreSwap ? "land_to_water \(variant)" : "water_to_land \(variant)")
-                                         : (MapScene.shoreSwap ? "water_to_land \(variant)" : "land_to_water \(variant)"))
-                        let set = masks.sets[setName] ?? land
-                        MapScene.blit(&canvas, try patch(f).tiles[ti], left, top, mask: set[min(ov.mask, set.count - 1)])
-                    case .road(let rd):
-                        guard rd.mask < road.count else { continue }
-                        let type = rd.kind == 0 ? roadTypes[x * n + y] : rd.kind
-                        guard let f = MapScene.roadFile[type] else { continue }
-                        // the body is the cell minus the mask (terrain shows in the mask), a shoulder is the mask itself
-                        MapScene.blit(&canvas, try patch("\(f).\(((x / 10) + (y / 10)) % 2 + 1)").tiles[ti], left, top, mask: road[rd.mask], invert: rd.kind == 0)
-                    }
-                }
-            }
-        }
+        // composited one band of chunks at a time (the whole level at once is width * height * 4
+        // bytes): a band takes every cell whose 32 px tile reaches into it, in the same order
         var list: [Chunk] = []
         var cy = 0
         while cy < height {
-            var cx = 0
-            while cx < width {
-                let w = min(cs, width - cx), h = min(cs, height - cy)
-                var b = Bitmap(width: w, height: h)
-                for yy in 0..<h {
-                    let src = ((cy + yy) * width + cx) * 4, dst = yy * w * 4
-                    b.pixels.replaceSubrange(dst..<(dst + w * 4), with: canvas.pixels[src..<(src + w * 4)])
+            let bandHeight = min(cs, height - cy)
+            var canvas = Bitmap(width: width, height: bandHeight)
+            // a cell's tile top is (x + y) * 16 + 16: only rows of x + y near the band can reach it
+            let sMin = max(0, (cy - 48) / 16 - 1), sMax = (cy + bandHeight) / 16 + 1
+            for x in 0..<n {
+                let yLo = max(0, sMin - x), yHi = min(n - 1, sMax - x)
+                guard yLo <= yHi else { continue }
+                for y in yLo...yHi {
+                    guard let cell = cells[x * n + y] else { continue }
+                    let (sx, sy) = screen(x: x, y: y)
+                    let left = sx - 32, top = sy - 16 - cy
+                    guard top + 32 > 0, top < bandHeight else { continue }
+                    let row = x + y, col = (y - x - (x + y) % 2) / 2
+                    let ti = (MapScene.mod(row, 6) + 2) * 10 + (MapScene.mod(col, 6) + 2)
+                    let base = try patch(MapScene.terrainFile(type: cell.type, variant: cell.variant, x: x, y: y) ?? "grass.2.1")
+                    MapScene.blit(&canvas, base.tiles[ti], left, top, mask: nil)
+                    // overlays and road pieces interleave by their order byte (roads sit at 10..14,
+                    // overlays at 0..9 and 15..19, so terrain drawn after a road nibbles its edges)
+                    enum Item { case overlay(Overlay), road(Road) }
+                    var items: [(order: UInt8, item: Item)] = cell.overlays.map { ($0.order, .overlay($0)) }
+                    items += cell.roads.map { ($0.order, .road($0)) }
+                    for (_, item) in items.sorted(by: { $0.order < $1.order }) {
+                        switch item {
+                        case .overlay(let ov):
+                            guard ov.mask < land.count, let f = MapScene.terrainFile(type: ov.type, variant: ov.variant, x: x, y: y) else { continue }
+                            // land on water / water on land take the soft shoreline sets; the three
+                            // variants of each set alternate by position
+                            let baseWater = cell.type == 0 || cell.type == 9, overWater = ov.type == 0 || ov.type == 9
+                            let variant = MapScene.mod(x * 3 + y * 5, 3) + 1
+                            let setName = baseWater == overWater ? (overWater ? "water \(min(variant, 2))" : "land \(variant)")
+                                : (overWater ? (MapScene.shoreSwap ? "land_to_water \(variant)" : "water_to_land \(variant)")
+                                             : (MapScene.shoreSwap ? "water_to_land \(variant)" : "land_to_water \(variant)"))
+                            let set = masks.sets[setName] ?? land
+                            MapScene.blit(&canvas, try patch(f).tiles[ti], left, top, mask: set[min(ov.mask, set.count - 1)])
+                        case .road(let rd):
+                            guard rd.mask < road.count else { continue }
+                            let type = rd.kind == 0 ? roadTypes[x * n + y] : rd.kind
+                            guard let f = MapScene.roadFile[type] else { continue }
+                            // the body is the cell minus the mask (terrain shows in the mask), a shoulder is the mask itself
+                            MapScene.blit(&canvas, try patch("\(f).\(((x / 10) + (y / 10)) % 2 + 1)").tiles[ti], left, top, mask: road[rd.mask], invert: rd.kind == 0)
+                        }
+                    }
                 }
-                list.append(Chunk(x: cx, y: cy, bitmap: b))
-                cx += cs
             }
+            // the band's chunks are cut out and packed side by side
+            let origins = Array(stride(from: 0, to: width, by: cs))
+            var band = [Chunk?](repeating: nil, count: origins.count)
+            band.withUnsafeMutableBufferPointer { out in
+                DispatchQueue.concurrentPerform(iterations: origins.count) { k in
+                    let cx = origins[k], w = min(cs, width - cx), h = bandHeight
+                    var b = Bitmap(width: w, height: h)
+                    for yy in 0..<h {
+                        let src = (yy * width + cx) * 4, dst = yy * w * 4
+                        b.pixels.replaceSubrange(dst..<(dst + w * 4), with: canvas.pixels[src..<(src + w * 4)])
+                    }
+                    out[k] = Chunk(x: cx, y: cy, bitmap: b)
+                }
+            }
+            list += band.compactMap { $0 }
             cy += cs
         }
         chunks = list
@@ -227,6 +280,8 @@ public final class MapScene {
         for (i, o) in map.objects.enumerated() where o.level == level && o.x >= -2 && o.x < n + 2 && o.y >= -2 && o.y < n + 2 { objs.append((i, o)) }
         let resolver = RandomResolver(archive: archive)
         let debug = ProcessInfo.processInfo.environment["H4DEBUG"] != nil
+        // (read once: each read builds the whole environment as autoreleased Foundation objects)
+        let pickCell = ProcessInfo.processInfo.environment["H4PICK"].map { $0.split(separator: ",").compactMap { Int($0) } }
         // random towns get factions in order: the first player's town first (Haven), then left to right on screen
         let records: [MapObject] = objs.map { $0.o }
         let townOrder = records.filter { $0.type == "random_town" }.sorted { (($0.owner ?? 99), $0.y - $0.x, $0.x + $0.y) < (($1.owner ?? 99), $1.y - $1.x, $1.x + $1.y) }
@@ -254,8 +309,7 @@ public final class MapScene {
             let sy = sy0 - 16
             // (x, y) is the top corner of the footprint; paint order follows the bottom corner
             let depth = (o.x + o.y + s.footprint.w + s.footprint.h - 2) * 1000 + (o.y - o.x) + 500
-            if let pick = ProcessInfo.processInfo.environment["H4PICK"] {   // H4PICK=x,y (map cell): list sprites covering that cell's centre
-                let c = pick.split(separator: ",").compactMap { Int($0) }
+            if let c = pickCell {   // H4PICK=x,y (map cell): list sprites covering that cell's centre
                 if c.count == 2 {
                     let (px, py0) = screen(x: c[0], y: c[1])
                     let py = py0 - 16

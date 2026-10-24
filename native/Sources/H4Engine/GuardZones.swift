@@ -174,6 +174,7 @@ extension GameState {
     func preparePlanner(for h: Hero) {
         passability.relief = GameState.terrainRelief(h)
         passability.forcedExit = forcedExits(for: h)
+        applyBorderGates(for: h.owner)   // (0x4cbc10 asks a border gate with the army)
     }
 
     // MARK: the walk (0x5439e0)

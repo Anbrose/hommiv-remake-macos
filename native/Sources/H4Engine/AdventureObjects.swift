@@ -165,6 +165,7 @@ extension GameState {
         }
         level = playing
         linkTunnels()
+        applyBorderGates(for: map.humanColour)   // shut to the player until he has their keys
     }
     static let pileMaterial = ["gold_pile": 0, "wood_pile": 1, "ore_pile": 2, "crystal_pile": 3, "sulfur_pile": 4, "pot_of_mecury": 5, "gem_pile": 6]
     static func pileMaterial(ofModel name: String) -> Int? {

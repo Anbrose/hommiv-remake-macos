@@ -182,6 +182,14 @@ public struct Passability {
     /// Pathfinding's relief on rough terrain for the army being routed (GameState sets it).
     public var relief: Float = 0
 
+    /// Make a free cell a stop or free it again (a border gate's passage: Keymasters.swift);
+    /// what stands there and its entry edges stay.
+    public mutating func setStop(_ x: Int, _ y: Int, _ stop: Bool) {
+        guard x >= 0, x < size, y >= 0, y < size else { return }
+        let i = x * size + y, v = stop || terrainBlocked[i]
+        if blocked[i] != v { blocked[i] = v; revision &+= 1 }
+    }
+
     public func isFree(_ x: Int, _ y: Int) -> Bool {
         x >= 0 && x < size && y >= 0 && y < size && !blocked[x * size + y]
     }
@@ -444,8 +452,10 @@ public final class GameState {
     public var hireOpen: HireOffer?
     /// A map dwelling's recruit dialog to open: the dwelling and the visiting hero.
     public var dwellingOpen: (dwelling: Int, hero: Hero)?
-    /// The keymaster tents' keys the player has (by colour subtype).
-    public var keys: Set<String> = []
+    /// Each player's keys from keymaster's tents (player +0xec: the tents' colour subtypes).
+    public var keys: [Int: Set<String>] = [:]
+    /// The border gates' passage cells (Keymasters.swift), found once.
+    var borderGateCache: [(z: Int, x: Int, y: Int, colour: String)]?
     /// A hero went through a portal (the view should follow).
     public var jumped = false
     /// The player's shroud and fog per map level (Fog.swift): 0 unexplored, 1 explored, 2 seen, and
@@ -758,7 +768,9 @@ public final class GameState {
 
     /// Objects a hero walks up to and uses: pickups, mines, dwellings, monsters and towns.
     public func isVisitable(_ p: MapScene.Placed) -> Bool {
-        hasVisit(p) || isPickup(p) || mine(for: p) != nil || dwelling(for: p) != nil || monster(for: p) != nil || town(for: p) != nil
+        // a border gate the player has the key of is open ground (0x439400)
+        if p.type == "border_gate", hasKey(map.humanColour, p.subtype) { return false }
+        return hasVisit(p) || isPickup(p) || mine(for: p) != nil || dwelling(for: p) != nil || monster(for: p) != nil || town(for: p) != nil
     }
 
     /// The town screen to open, set when a hero enters a town; the UI clears it.
@@ -798,6 +810,7 @@ public final class GameState {
             let n = monsters[i].count
             return ("\(n) \(n == 1 ? c.name : c.plural)", ["Level \(c.level) \(capitalised(c.alignment)) creature", "Attack \(c.attack), Defense \(c.defense), Damage \(c.damageLow)-\(c.damageHigh), Hit Points \(c.hitPoints)"])
         }
+        if p.type == "keymaster_tent" { return keymasterInfo(p) }
         if let i = town(for: p) {
             let town = towns[i]
             let kind = t.objectText("town", town.alignment, "name") ?? capitalised(town.alignment)

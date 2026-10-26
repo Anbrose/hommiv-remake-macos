@@ -150,4 +150,22 @@ final class ArmySplitMapTests: XCTestCase {
         XCTAssertEqual(g.heroes.count, 1)
         XCTAssertEqual(hero.army.first?.count, 5)
     }
+
+    /// The hero army moved whole into a heroless army beside it (the pirate band at the start of
+    /// The Pirate's Daughter): the band's place now holds the hero's army; the hero's old place goes.
+    func testHeroArmyMovedWholeIntoAHerolessArmyStays() throws {
+        let g = try state()
+        guard let c = openCell(g) else { throw XCTSkip("no open ground") }
+        let hero = Hero(actor: "hero.life_might_male", x: c.0, y: c.1)
+        hero.army = [Hero.Stack(creature: "squire", count: 5)]
+        let band = g.mapHeroless([Hero.Stack(creature: "pirate", count: 25)], x: c.0 - 1, y: c.1, z: 0, owner: hero.owner, boat: nil)
+        g.heroes = [hero, band]
+        let t = g.exchange(hero, with: band)
+        t.moveAll(from: 0, to: 1)
+        g.finishExchange(t)
+        XCTAssertEqual(g.heroes.count, 1)
+        XCTAssertTrue(g.heroes[0] === hero)
+        XCTAssertEqual([hero.x, hero.y], [c.0 - 1, c.1])
+        XCTAssertEqual(Set(hero.army.map(\.creature)), ["squire", "pirate"])
+    }
 }

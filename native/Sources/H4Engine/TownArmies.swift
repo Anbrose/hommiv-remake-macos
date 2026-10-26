@@ -162,9 +162,18 @@ extension GameState {
             else if let lead = leads[k], lead !== p.h, !p.enemy { heroes.insert(lead, at: 0) }
             if let v = townVisitor, v.hero === p.h { townVisitor = leads[k].map { (v.town, $0) } }
         }
+        // an emptied army leaves its list slot; when its leader went on to lead the other row (a
+        // hero army moved whole into a heroless one) only the old slot goes, not the new army
+        let emptied = places.indices.filter { leads[$0] == nil }.sorted { (slots[$0] ?? -1) > (slots[$1] ?? -1) }
+        for k in emptied {
+            let p = places[k], moved = leads.contains { $0 === p.h }
+            if p.enemy {
+                if moved, let i = slots[k], enemyHeroes.indices.contains(i), enemyHeroes[i] === p.h { enemyHeroes.remove(at: i) } else if !moved { enemyHeroes.removeAll { $0 === p.h } }
+                if p.z < passabilities.count { passabilities[p.z].free(p.x, p.y) }
+            } else if moved, let i = slots[k], heroes.indices.contains(i), heroes[i] === p.h { heroes.remove(at: i) }
+            else if !moved { heroes.removeAll { $0 === p.h } }
+        }
         for (k, p) in places.enumerated() where leads[k] == nil {
-            if p.enemy { enemyHeroes.removeAll { $0 === p.h }; if p.z < passabilities.count { passabilities[p.z].free(p.x, p.y) } }
-            else { heroes.removeAll { $0 === p.h } }
             if let b = p.boat {
                 boats.append(Boat(x: p.x, y: p.y, z: p.z, alignment: b, owner: p.owner))
                 if p.z < passabilities.count { passabilities[p.z].block(p.x, p.y) }

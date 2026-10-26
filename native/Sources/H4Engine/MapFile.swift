@@ -450,8 +450,8 @@ public struct MapFile {
                 out.append(o)
                 continue
             }
-            // a player's army carries its heroes; a neutral one is a stack to fight
-            guard owner == 6 || !heroes.isEmpty else { continue }
+            // a player's army (with or without heroes: The Pirate's Daughter starts a pirate band
+            // of its own beside the heroes); a neutral one is a stack to fight
             var o = MapObject(name: "army", type: owner == 6 ? "army" : "hero_army", subtype: "", terrain: "", x: x, y: y, level: lv)
             o.army = stacks; o.heroes = heroes
             o.owner = owner == 6 ? nil : owner

@@ -95,6 +95,16 @@ extension GameState {
         h.alignment = at.alignment; h.home = at.home; h.listRank = at.listRank
         return h
     }
+    /// A player's army the map places without a hero (t_army record with creatures only): its
+    /// figure is its strongest creature, with the day's full movement.
+    public func mapHeroless(_ stacks: [Hero.Stack], x: Int, y: Int, z: Int, owner: Int, boat: String?) -> Hero {
+        let h = Hero(actor: "", x: x, y: y, movement: 0)
+        h.heroless = true; h.name = ""; h.z = z; h.owner = owner; h.home = (x, y)
+        h.army = stacks; h.boat = boat; h.listRank = nextListRank()
+        refreshHeroless(h)
+        h.maxMovement = armyMovement(h); h.movement = h.maxMovement
+        return h
+    }
     /// After a heroless army's creatures changed: its figure is its strongest creature.
     func refreshHeroless(_ h: Hero) {
         guard h.heroless else { return }

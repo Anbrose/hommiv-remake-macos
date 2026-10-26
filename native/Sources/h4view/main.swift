@@ -207,6 +207,17 @@ func makeSession(_ args: [String]) throws -> GameSession {
         // the heroes the map places for the player (armies with heroes: "Beyond the Lake" starts a
         // level 15 and a level 10 hero together); a hero at the town gate when it has none
         let placed = map.objects.filter { $0.type == "hero_army" && $0.owner == map.humanColour && $0.level == scene.level && !$0.heroes.isEmpty }
+        var bands: [Hero] = []   // (listed after the heroes: the first hero starts selected)
+        defer { game.heroes += bands }
+        for o in map.objects where o.type == "hero_army" && o.owner == map.humanColour && o.heroes.isEmpty && o.level < scenes.count {
+            // a heroless army of the player's (The Pirate's Daughter's pirate band)
+            let stacks = (o.army ?? []).compactMap { $0 }.compactMap { s in s.creature < RuleTables.creatureIds.count ? Hero.Stack(creature: RuleTables.creatureIds[s.creature], count: s.count) : nil }
+            guard !stacks.isEmpty else { continue }
+            let h = game.mapHeroless(stacks, x: o.x, y: o.y, z: o.level, owner: map.humanColour, boat: o.boat.map { ["life", "order", "death", "chaos", "nature", "might"][$0] })
+            if let m = movementLeft { h.movement = m }
+            bands.append(h)
+            lap("heroless army \(stacks.map { "\($0.count)x\($0.creature)" }) at (\(o.x),\(o.y))")
+        }
         for o in placed {
             var all = o.heroes.map { Hero.fromMap($0, alignment: align, x: o.x, y: o.y, tables: game.tables, random: &game.random) }
             let hero = all.removeFirst()
@@ -260,6 +271,11 @@ func makeSession(_ args: [String]) throws -> GameSession {
     }
     // the other players' heroes: the map's armies of their colours; a player with a town and no
     // placed hero gets one of its town's alignment at the gate
+    for o in map.objects where o.type == "hero_army" && o.owner != map.humanColour && o.heroes.isEmpty && o.level < scenes.count {
+        let stacks = (o.army ?? []).compactMap { $0 }.compactMap { s in s.creature < RuleTables.creatureIds.count ? Hero.Stack(creature: RuleTables.creatureIds[s.creature], count: s.count) : nil }
+        guard !stacks.isEmpty else { continue }
+        game.place(enemy: game.mapHeroless(stacks, x: o.x, y: o.y, z: o.level, owner: o.owner ?? 1, boat: o.boat.map { ["life", "order", "death", "chaos", "nature", "might"][$0] }))
+    }
     for o in map.objects where o.type == "hero_army" && o.owner != map.humanColour && !o.heroes.isEmpty && o.level < scenes.count {
         let owned = game.towns.filter { $0.owner == o.owner }
         let align = owned.min { abs($0.x - o.x) + abs($0.y - o.y) < abs($1.x - o.x) + abs($1.y - o.y) }?.alignment ?? "might"

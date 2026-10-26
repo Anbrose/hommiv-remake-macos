@@ -145,7 +145,7 @@ extension Renderer {
     /// (its _Highlight for the selected slot), the label.
     func ringRowQuads(_ slots: [(piece: String, fx: Int, fy: Int)], items: [(icon: UILayer?, count: String?, hero: Bool)], selected: Int?) -> [Quad] {
         guard let ui = ui else { return [] }
-        var out: [Quad] = []
+        var out: [Quad] = [], labels: [Quad] = []
         for (k, s) in slots.enumerated() {
             let cx = s.fx + 41, cy = s.fy + 41
             if k < items.count, let icon = items[k].icon {
@@ -154,9 +154,10 @@ extension Renderer {
             if let p = ui.creatureRing(k == selected ? s.piece + "_Highlight" : s.piece) ?? ui.creatureRing(s.piece) {
                 out.append(Quad(texture: uiTexture("cring|\(p.name)", { p.bitmap }), x: s.fx + p.x, y: s.fy + p.y, w: p.width, h: p.height))
             }
-            if k < items.count, items[k].icon != nil || items[k].count != nil || items[k].hero { ringLabel(&out, ui: ui, cx: cx, cy: cy, count: items[k].count, hero: items[k].hero) }   // an empty place: no inset
+            // the count scrolls go over every ring (the lower row's rings overlap the upper row's scrolls)
+            if k < items.count, items[k].icon != nil || items[k].count != nil || items[k].hero { ringLabel(&labels, ui: ui, cx: cx, cy: cy, count: items[k].count, hero: items[k].hero) }   // an empty place: no inset
         }
-        return out
+        return out + labels
     }
     /// The ring items of an army: its heroes (the leader and companions), then its stacks.
     func ringItems(_ leader: Hero) -> [(icon: UILayer?, count: String?, hero: Bool)] {

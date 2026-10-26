@@ -229,7 +229,7 @@ extension GameState {
     }
 
     /// An army's value for the battle points (0x6411d0): Experience x count, 100 x (level + 1) a hero.
-    func armyValue(_ h: Hero) -> Int {
+    public func armyValue(_ h: Hero) -> Int {
         ThievesGuild.armyValue(stacks: h.army.map { (experience: tables?.creature($0.creature)?.experience ?? 0, count: $0.count) },
                                heroLevels: h.members.map { $0.level })
     }

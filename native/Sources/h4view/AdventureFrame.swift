@@ -9,6 +9,26 @@ import H4Engine
 /// army's rings (style 3: a column-major zig-zag ending in the full-height Right piece) and the town
 /// list (pitch 72: the town picture, the micro-map, the small_list Frame over them).
 extension Renderer {
+    /// 0x5400d0: rows are made while the next one fits, at a pitch of Army_Frame's height - 4.
+    static func heroListRows(listHeight: Int, frameHeight: Int) -> Int {
+        let pitch = max(1, frameHeight - 4)
+        var n = 0
+        while (n + 1) * pitch <= listHeight { n += 1 }
+        return n
+    }
+    /// 0x5420f7: the move bar shows movement points (100 a cell) out of a fixed 1500.
+    static func moveBarFill(movement: Float, height: Int) -> Int {
+        let points = Int((movement * 100).rounded())
+        return min(height, height * max(0, points) / 1500)
+    }
+    /// 0x542250: the right bar is the army's strength (0x6411d0) on a log scale from 100 to 18000.
+    static func strengthBarFill(value: Int, height: Int) -> Int {
+        guard value > 0 else { return 0 }
+        let num = Int((log(Double(value)) - log(100.0)) * 1000)
+        let den = Int((log(18000.0) - log(100.0)) * 1000)
+        return min(height, height * num / den)
+    }
+
     /// The frame pieces, in creation order (IGNORE and DONTUSE are never drawn by the exe).
     static let framePieces = ["Top", "Top_Border", "Left", "Left_Border", "Right", "Right_Border", "Bottom", "Bottom_Border"]
     /// t_material_display: resources in table order with the font the field's height picks.
@@ -104,30 +124,39 @@ extension Renderer {
             }
             if let rt = ui.dayScroll["Right"] { out.append(Quad(texture: uiTexture("scroll|right", { rt.bitmap }), x: slot.x + rt.x, y: slot.y + rt.y, w: rt.width, h: rt.height)) }
         }
-        // the hero list: rows at (747, 344 + 77k), the portrait, the move bar filling from the bottom, the mana bar, the frame
+        // the hero list (0x5400d0, adventure_hero_list_spec.md): 3 rows at (747, 344 + 77k), each
+        // [Empty_Background when no portrait] portrait, move bar, strength bar, Army_Frame or the highlight
         _ = ui.heroRing()
         if let rings = ui.armyRings, let list = ui.hotspot("Hero_List") {
             // (the list keeps its order; the selected army is heroes[0]; an army without a hero shows its strongest creature)
-            for (k, h) in g.armyList.prefix(AdventureUI.heroSlots.count).enumerated() {
-                let rx = list.x, ry = list.y + 77 * k
-                if let p = rings["portrait"], let pic = armyPortrait(h) {
-                    out.append(Quad(texture: uiTexture("icon|\(pic.name)", { pic.bitmap }), x: rx + p.x, y: ry + p.y, w: pic.width, h: pic.height))
+            let armies = g.armyList
+            let rows = Renderer.heroListRows(listHeight: list.height, frameHeight: rings["Army_Frame"]?.height ?? 81)
+            let selected = g.heroes.first.flatMap { s in armies.firstIndex { $0 === s } }
+            func draw(_ l: UILayer?, _ rx: Int, _ ry: Int) {
+                guard let l = l else { return }
+                out.append(Quad(texture: uiTexture("armyring|\(l.name)", { l.bitmap }), x: rx + l.x, y: ry + l.y, w: l.width, h: l.height))
+            }
+            /// A bar emptying from the top: its bottom `filled` rows stay in place.
+            func bar(_ b: UILayer?, _ filled: Int, _ rx: Int, _ ry: Int) {
+                guard let b = b else { return }
+                let f = min(filled, b.height)
+                guard f > 0 else { return }
+                let tex = uiTexture("ring|\(b.name)|\(f)", { Renderer.crop(b.bitmap, x: 0, y: b.height - f, w: b.width, h: f) })
+                out.append(Quad(texture: tex, x: rx + b.x, y: ry + b.y + b.height - f, w: b.width, h: f))
+            }
+            for k in 0..<rows {
+                let rx = list.x, ry = list.y + (rings["Army_Frame"].map { $0.height - 4 } ?? 77) * k
+                if k < armies.count {
+                    let h = armies[k]
+                    if let p = rings["portrait"], let pic = armyPortrait(h) {
+                        out.append(Quad(texture: uiTexture("icon|\(pic.name)", { pic.bitmap }), x: rx + p.x, y: ry + p.y, w: pic.width, h: pic.height))
+                    } else { draw(rings["Empty_Background"], rx, ry) }
+                    if let b = rings["Move_Bar"] { bar(b, Renderer.moveBarFill(movement: h.movement, height: b.height), rx, ry) }
+                    if let b = rings["Mana_Bar"] { bar(b, Renderer.strengthBarFill(value: g.armyValue(h), height: b.height), rx, ry) }
+                } else {
+                    draw(rings["Empty_Background"], rx, ry)
                 }
-                if let bar = rings["Move_Bar"], h.maxMovement > 0 {
-                    let filled = Int(Float(bar.height) * max(0, min(1, h.movement / h.maxMovement)))
-                    if filled > 0 {
-                        let tex = uiTexture("ring|move|\(filled)", { Renderer.crop(bar.bitmap, x: 0, y: bar.height - filled, w: bar.width, h: filled) })
-                        out.append(Quad(texture: tex, x: rx + bar.x, y: ry + bar.y + bar.height - filled, w: bar.width, h: filled))
-                    }
-                }
-                if let bar = rings["Mana_Bar"], !h.heroless {
-                    let top = max(1, g.maxSpellPoints(h))
-                    let filled = Int(Float(bar.height) * max(0, min(1, Float(g.spellPoints(h)) / Float(top))))
-                    if filled > 0 { out.append(Quad(texture: solid(40, 80, 232), x: rx + bar.x + 3, y: ry + bar.y + bar.height - filled, w: bar.width - 6, h: filled)) }
-                }
-                if let f = rings[h === g.heroes.first ? "Army_Frame_Highlight" : "Army_Frame"] ?? rings["Army_Frame"] {
-                    out.append(Quad(texture: uiTexture("armyring|\(f.name)", { f.bitmap }), x: rx + f.x, y: ry + f.y, w: f.width, h: f.height))
-                }
+                draw(k == selected ? rings["Army_Frame_Highlight"] ?? rings["Army_Frame"] : rings["Army_Frame"], rx, ry)
             }
         }
         // the selected army's rings (the first hero's army)
@@ -152,10 +181,14 @@ extension Renderer {
                 ringLabel(&out, ui: ui, cx: Int(at.0), cy: Int(at.1), count: l.split ? nil : count, hero: s.hero != nil)
             }
         }
-        // the town list: rows at (837, 354 + 72k)
+        // the town list (0x8a3970): rows at (837, 354 + 72k); an empty row keeps its Frame
         if let list = ui.hotspot("Town_list"), let sl = ui.smallList() {
-            for (i, t) in g.towns.filter({ $0.owned }).prefix(3).enumerated() {
+            let owned = g.towns.filter { $0.owned }
+            for i in 0..<3 {
                 let rx = list.x, ry = list.y + 72 * i
+                defer { if let f = sl["Frame"] { out.append(Quad(texture: uiTexture("smalllist|Frame", { f.bitmap }), x: rx + f.x, y: ry + f.y, w: f.width, h: f.height)) } }
+                guard i < owned.count else { continue }
+                let t = owned[i]
                 if let town = sl["town"], let pic = ui.townPicture(t.alignment) {   // the picture button, 68x48 of the 73-px card
                     let tw = town.width, th = town.height
                     let terrain = TownScreen.terrainNames[t.terrain] ?? "grass"
@@ -186,7 +219,6 @@ extension Renderer {
                     })
                     out.append(Quad(texture: tex, x: rx + m.x, y: ry + m.y, w: m.width, h: m.height))
                 }
-                if let f = sl["Frame"] { out.append(Quad(texture: uiTexture("smalllist|Frame", { f.bitmap }), x: rx + f.x, y: ry + f.y, w: f.width, h: f.height)) }
             }
         }
         return out

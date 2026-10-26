@@ -48,6 +48,10 @@ public struct Sprite {
     /// (t_underlay_adv_object_image: moss, tufts, cracks, lily pads ...) is drawn under every
     /// other object, in map order; it has no column depths.
     public let underlay: Bool
+    /// adv_object only: the model's animation rate in frames per second, the header's byte 2
+    /// (model reader 0x44cea0 -> model +0x20; default 10, 0x44f9d3). The image records' u16
+    /// speed field is not it (re/adventure_animation_phase_spec.md).
+    public let frameRate: Int
     /// adv_object only: the overlay image's sort depth per 32-pixel screen column (reader 0x7cc590:
     /// u32 n, n x i16 after the trailer's origin), from column `columnStart` (floor of the
     /// non-shadow images' left edge / 32, measured from the anchor cell's top vertex) on.
@@ -99,6 +103,16 @@ public struct Sprite {
             out.append((f, shadows[n]))
         }
         return out
+    }
+
+    /// An adv_object's animation cycle in ms, (1000 / fps) x frames: the range of the phase
+    /// heroes4.exe rolls per object (0x411e1a: rand() % cycle); 0 for a static sprite.
+    public var animationCycle: Int { (1000 / frameRate) * timeline.count }
+    /// The timeline index heroes4.exe draws at `ms` for an object whose phase is `phase`
+    /// (0x412320: ((ms + phase) * fps / 1000) % frames); 0 for a static sprite.
+    public func animationFrame(ms: Int, phase: Int, frames: Int) -> Int {
+        guard frames > 0 else { return 0 }
+        return Int((UInt32(truncatingIfNeeded: ms + phase) &* UInt32(frameRate) / 1000) % UInt32(frames))
     }
 
     /// The adv_object model header (heroes4.exe 0x44ca30, file version = the first u16):
@@ -234,6 +248,7 @@ public struct Sprite {
         let model = start >= 9 && (5...6).contains(r.byte(at: 0)) && r.byte(at: 1) == 0
         isAdvObject = model
         underlay = model ? Sprite.advObjectUnderlay(r, end: start) : false
+        frameRate = model && r.byte(at: 2) > 0 ? Int(r.byte(at: 2)) : 10
         var depths: [Int] = []
         if model, !underlay, rd.remaining >= 4 {
             let n = Int(rd.u32())

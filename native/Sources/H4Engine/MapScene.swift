@@ -64,6 +64,19 @@ public final class MapScene {
         /// The object's place in the map's object list: heroes4.exe adds map objects in record order
         /// and breaks draw-order ties by that (object table +4, re/adventure_draw_order_spec.md).
         public var seq: Int = 0
+        /// Where in its animation cycle the object is (ms): heroes4.exe rolls rand() % cycle once
+        /// per stationary object when its model is set (0x411d60, re/adventure_animation_phase_spec.md)
+        /// and draws ((ms + phase) * fps / 1000) % frames, so objects of one model are out of step.
+        public var animationPhase: Int = 0
+    }
+
+    /// A per-object phase in 0 ..< cycle standing in for the exe's rand() % cycle: a hash of the
+    /// object's cell, level and a salt (its record order), so it is the same on every frame and load.
+    public static func animationPhase(cycle: Int, x: Int, y: Int, level: Int, salt: Int = 0) -> Int {
+        guard cycle > 0 else { return 0 }
+        var h = UInt32(truncatingIfNeeded: x &* 73856093 ^ y &* 19349663 ^ level &* 83492791 ^ salt &* 2654435761)
+        h = (h ^ (h >> 13)) &* 0x5bd1e995
+        return Int(h % UInt32(cycle))
     }
 
     public static let chunkSize = 512
@@ -318,11 +331,12 @@ public final class MapScene {
                     }
                 }
             }
-            let p = Placed(name: key, sprite: s, image: img, shadow: s.shadow(for: img),
+            var p = Placed(name: key, sprite: s, image: img, shadow: s.shadow(for: img),
                            x: sx + Int(s.origin.x) + img.box.left, y: sy + Int(s.origin.y) + img.box.top,
                            anchorX: sx, anchorY: sy, cellX: o.x, cellY: o.y,
                            category: String(o.name.split(separator: ".").first ?? ""), depth: depth,
                            type: o.type, subtype: o.subtype, seq: seq)
+            p.animationPhase = MapScene.animationPhase(cycle: s.animationCycle, x: o.x, y: o.y, level: level, salt: seq)
             if presence == .pictureless { pictureless.append(p) } else { out.append(p) }
         }
         placed = out.sorted { $0.depth < $1.depth }
@@ -335,9 +349,10 @@ public final class MapScene {
         let (sx, sy0) = screen(x: x, y: y)
         let sy = sy0 - 16
         let depth = (x + y + p.sprite.footprint.w + p.sprite.footprint.h - 2) * 1000 + (y - x) + 500
-        let q = Placed(name: p.name, sprite: p.sprite, image: p.image, shadow: p.shadow,
+        var q = Placed(name: p.name, sprite: p.sprite, image: p.image, shadow: p.shadow,
                        x: sx + Int(p.sprite.origin.x) + p.image.box.left, y: sy + Int(p.sprite.origin.y) + p.image.box.top,
                        anchorX: sx, anchorY: sy, cellX: x, cellY: y, category: p.category, depth: depth, type: p.type, subtype: p.subtype, seq: p.seq)
+        q.animationPhase = p.animationPhase   // the exe keeps an object's phase when it moves
         placed.removeAll { $0.cellX == p.cellX && $0.cellY == p.cellY && $0.name == p.name && $0.depth == p.depth }
         let i = placed.firstIndex { $0.depth > depth } ?? placed.count
         placed.insert(q, at: i)

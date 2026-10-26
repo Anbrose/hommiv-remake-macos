@@ -23,9 +23,7 @@ extension GameState {
     /// object's cell so it stays put from frame to frame.
     public static func flagFrame(ms: Int, frameTime: Int, frames: Int, cellX: Int, cellY: Int, level: Int = 0) -> Int {
         guard frames > 0, frameTime > 0 else { return 0 }
-        var h = UInt32(truncatingIfNeeded: cellX &* 73856093 ^ cellY &* 19349663 ^ level &* 83492791)
-        h = (h ^ (h >> 13)) &* 0x5bd1e995
-        let phase = Int(h % UInt32(frames * frameTime))
+        let phase = MapScene.animationPhase(cycle: frames * frameTime, x: cellX, y: cellY, level: level)
         return ((ms + phase) / frameTime) % frames
     }
 }

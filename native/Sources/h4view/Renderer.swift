@@ -728,15 +728,29 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     var timelines: [String: [(frame: SpriteImage, shadow: SpriteImage?)]] = [:]
 
-    /// The object's current frame (and shadow) at time t.
+    /// The object's current frame (and shadow) at time t. An adv_object runs at its model's fps
+    /// from its own phase as heroes4.exe draws it (0x412320: ((ms + phase) * fps / 1000) % frames,
+    /// re/adventure_animation_phase_spec.md); other sprites (a creature's standing sequence) by the
+    /// file's speed.
     func frame(of p: MapScene.Placed, at t: Double) -> (SpriteImage, SpriteImage?) {
         if timelines[p.name] == nil { timelines[p.name] = p.sprite.timeline }
         let tl = timelines[p.name]!
         guard !tl.isEmpty else { return (p.image, p.shadow) }
-        let speed = tl[0].frame.speed
-        let period = speed > 0 ? Double(speed) / 60.0 : 0.125
-        let e = tl[Int(t / period) % tl.count]
+        let index: Int
+        if p.sprite.isAdvObject { index = p.sprite.animationFrame(ms: Int(t * 1000), phase: p.animationPhase, frames: tl.count) }
+        else {
+            let speed = tl[0].frame.speed
+            index = Int(t / (speed > 0 ? Double(speed) / 60.0 : 0.125)) % tl.count
+        }
+        let e = tl[index]
         return (e.frame, e.shadow ?? p.shadow)
+    }
+    /// A wandering stack's ring frame: each actor's highlight gets its own phase, rand() % (frames x
+    /// frame time) (0x4034b0 -> 0x402b60), here hashed from the stack's map record.
+    func ringFrame(_ ring: Sprite, of p: MapScene.Placed, at t: Double) -> SpriteImage {
+        let n = ring.frames.count, ms = 80
+        let phase = MapScene.animationPhase(cycle: n * ms, x: p.cellX, y: p.cellY, level: scene.level, salt: p.seq &+ 1)
+        return ring.frames[((Int(t * 1000) + phase) / ms) % n]
     }
 
     /// The map cell under a map-canvas point (rounding x and y separately picks the diamond).
@@ -1210,7 +1224,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             var ring: Quad? = nil
             if let g = game, let i = g.monster(for: p), g.monsters[i].bank == nil, let r = highlightRing, !r.frames.isEmpty,
                let (rx, ry) = Renderer.ringOrigin(r, centre: (p.anchorX, p.anchorY + 16)) {
-                let f = r.frames[Int(t / 0.08) % r.frames.count]
+                let f = ringFrame(r, of: p, at: t)
                 ring = Quad(texture: texture(for: f, of: "highlight_ring"), x: rx + f.box.left, y: ry + f.box.top, w: f.bitmap.width, h: f.bitmap.height)
             }
             var (f, sh) = frame(of: p, at: t)
@@ -1231,7 +1245,7 @@ final class Renderer: NSObject, MTKViewDelegate {
                     if let dc = g.chargeDrawCell { cell = dc }
                     // its ring goes with it
                     if let r = highlightRing, !r.frames.isEmpty, let (rx, ry) = Renderer.ringOrigin(r, centre: (ax, ay + 16)) {
-                        let rf = r.frames[Int(t / 0.08) % r.frames.count]
+                        let rf = ringFrame(r, of: p, at: t)
                         ring = Quad(texture: texture(for: rf, of: "highlight_ring"), x: rx + rf.box.left, y: ry + rf.box.top, w: rf.bitmap.width, h: rf.bitmap.height)
                     }
                     seq = (c.animState, c.facing, c.animFrame)

@@ -26,7 +26,7 @@ final class StartPlacementTests: XCTestCase {
         XCTAssertEqual(types, [6, 2, 2, 6])   // sand, rough, rough, sand
         let masks = try TransitionMasks(data: a.payload("transition.Transitions.h4d"))
         let scene = try MapScene(map: m, level: 0, archive: a, masks: masks)
-        let p = Passability(map: m, level: 0, objects: scene.placed)
+        let p = Passability(map: m, level: 0, objects: scene.placed, transitions: masks)
         XCTAssertTrue(p.isFree(33, 106))
         let route = try XCTUnwrap(p.path(from: (33, 106), to: (36, 105)))
         XCTAssertEqual(route.count, 3)

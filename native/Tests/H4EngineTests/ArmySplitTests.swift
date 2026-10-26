@@ -84,7 +84,8 @@ final class ArmySplitMapTests: XCTestCase {
         let names = Set(archive.names(prefix: "adv_object.").map { String($0.dropFirst("adv_object.".count).dropLast(4)) })
         let m = try MapFile(data: Data(contentsOf: map), objectNames: names)
         let g = GameState(map: m, level: 0, scenes: [])
-        g.passabilities = [Passability(map: m, level: 0, objects: [])]
+        let masks = try TransitionMasks(data: archive.payload("transition.Transitions.h4d"))
+        g.passabilities = [Passability(map: m, level: 0, objects: [], transitions: masks)]
         g.level = 0
         return g
     }

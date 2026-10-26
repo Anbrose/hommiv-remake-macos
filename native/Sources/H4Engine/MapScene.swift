@@ -69,6 +69,9 @@ public final class MapScene {
     public static let chunkSize = 512
     public let map: MapFile
     public let level: Int
+    /// The transition masks the terrain was drawn with; their shape codes decide which water
+    /// cells are land (TransitionMasks.isLand, read by Passability).
+    public let transitions: TransitionMasks
     public let width: Int, height: Int
     public private(set) var chunks: [Chunk] = []
     /// The objects that show: drawn, hovered, clicked, heard (re/hidden_objects_spec.md).
@@ -137,6 +140,7 @@ public final class MapScene {
     public init(map: MapFile, level: Int, archive: H4Archive, masks: TransitionMasks) throws {
         self.map = map
         self.level = level
+        transitions = masks
         let n = map.size
         width = 2 * n * 32 + 64
         height = n * 32 + 96

@@ -166,7 +166,9 @@ public struct Sprite {
         var list: [SpriteImage] = []
         var fp = (w: 1, h: 1)
         var occupied: [(x: Int, y: Int)] = [], visit: [(x: Int, y: Int)] = []
-        if start >= 9, r.byte(at: 0) == 6 {
+        // every model version from 3 (the oldest shipped) has k, w, h and the footprint at the
+        // same place; 0x44ca30 reads the footprint for all of them (the 2x2 v5 Ice flows.06 blocks)
+        if start >= 9, (3...6).contains(r.byte(at: 0)), r.byte(at: 1) == 0 {
             let w = Int(r.peekU16(at: 5)), h = Int(r.peekU16(at: 7))
             if w >= 1, w <= 16, h >= 1, h <= 16 {
                 fp = (w, h)

@@ -13,7 +13,8 @@ public struct Passability {
     public private(set) var bridgeAxis: [UInt8]
     /// Road type on the cell (0 none, 1 stone, 2 dirt, 3 cobble); road-to-road moves cost the road's rate.
     public private(set) var roadType: [UInt8]
-    /// Open sea (terrain 0): where ships sail.
+    /// Open sea: water terrain (0, or 9) that is not land by its overlays (heroes4.exe 0x405350,
+    /// TransitionMasks.isLand): where ships sail.
     public private(set) var water: [Bool]
     /// Cells blocked by the ground itself (water, rivers, the map's edge); `blocked` adds what stands there.
     var terrainBlocked: [Bool]
@@ -35,7 +36,7 @@ public struct Passability {
     /// Movement rate of a road type for road-to-road moves.
     public static func roadRate(_ type: UInt8) -> Float { type == 2 ? 1 : 0.75 }
 
-    public init(map: MapFile, level: Int, objects: [MapScene.Placed]) {
+    public init(map: MapFile, level: Int, objects: [MapScene.Placed], transitions: TransitionMasks) {
         size = map.size
         blocked = [Bool](repeating: true, count: size * size)
         cost = [Float](repeating: 1, count: size * size)
@@ -53,9 +54,14 @@ public struct Passability {
             for y in 0..<size {
                 guard let c = cells[x * size + y] else { continue }
                 let i = x * size + y
-                switch c.type {
-                case 0, 9, 10, 11: blocked[i] = true; water[i] = c.type == 0 || c.type == 9; continue   // water and type 9 (by ship, as the exe's water test 0/9), other rivers (need a bridge)
-                default: cost[i] = Passability.terrainCost(c.type)
+                // the exe's one medium test (0x405350, both for a ship's and a land army's step,
+                // 0x4fea80 / 0x4ff70b): water (0, and type 9) whose land overlays close the
+                // cell is land, walked at its base terrain's cost (0x63fe30: water 100)
+                if transitions.isLand(c) {
+                    if c.type == 10 || c.type == 11 { continue }   // other rivers (need a bridge)
+                    cost[i] = Passability.terrainCost(c.type)
+                } else {
+                    water[i] = true; continue
                 }
                 blocked[i] = false; terrainBlocked[i] = false
             }
@@ -736,7 +742,7 @@ public final class GameState {
         self.level = min(level, scenes.count - 1)
         // (event triggers add nothing: no blocked cell, and their trigger cells neither stop routes nor
         // are entered -- 0x4cbc10 / 0x4d7580 ask vtable +0x18 / +0x4c, false for them)
-        passabilities = scenes.map { Passability(map: map, level: $0.level, objects: $0.placed) }
+        passabilities = scenes.map { Passability(map: map, level: $0.level, objects: $0.placed, transitions: $0.transitions) }
         // the map's empty ships (t_army records with a ship and no creatures)
         for o in map.objects where o.type == "boat" {
             guard let b = o.boat else { continue }

@@ -74,6 +74,9 @@ public struct TerrainPatch {
 /// each column padded to whole bytes: bits for hard masks, nibbles (low first) for soft ones.
 public struct TransitionMasks {
     public let sets: [String: [[UInt8]]]
+    /// Each mask's shape code (its record's u32 header), by set: four decimal digits, one per
+    /// corner, each 0..3 (4 marks the four single-corner masks 4, 40, 400, 4000).
+    public let codes: [String: [UInt32]]
 
     public init(data d: Data) throws {
         let widths: [Int] = {
@@ -84,6 +87,7 @@ public struct TransitionMasks {
         var r = ByteReader(d)
         let nsec = Int(r.u8())
         var sets: [String: [[UInt8]]] = [:]
+        var codes: [String: [UInt32]] = [:]
         for _ in 0..<nsec {
             let name = r.string16()
             let count = Int(r.u32())
@@ -112,9 +116,64 @@ public struct TransitionMasks {
                 }
                 masks.append(m)
             }
+            var shapes: [UInt32] = []
+            for i in 0..<count {
+                let p = r.pos + i * size
+                var v: UInt32 = 0
+                for k in 0..<4 { v |= UInt32(r.byte(at: p + k)) << UInt32(8 * k) }
+                shapes.append(v)
+            }
+            codes[name] = shapes
             r.pos += count * size
             sets[name] = masks
         }
         self.sets = sets
+        self.codes = codes
+    }
+
+    /// heroes4.exe's transition set slots (name table 0xa86e88, loaded by 0x8c60b0 into 32-byte
+    /// slots at 0xad1d80; 0x8c6370 returns slot k): a map overlay's fifth byte names its slot.
+    public static let slots = ["water_to_land 1", "water_to_land 1", "water_to_land 2", "water_to_land 2", "water_to_land 3",
+                               "land_to_water 1", "land_to_water 1", "land_to_water 2", "land_to_water 2", "land_to_water 3",
+                               "road 1", "road 1", "road 2", "road 2", "road 2",
+                               "land 1", "land 2", "land 2", "land 3", "land 3"]
+
+    /// A shape code packed into a byte (0x8c4c50): the decimal digits least significant first,
+    /// each shifted in two bits at a time (so the units digit lands in bits 6-7); a digit 4
+    /// gives 0x103 - its position instead (more than a byte: never part of a cell's union).
+    static func packedCorners(_ code: UInt32) -> Int {
+        var acc = 0, d: UInt32 = 1
+        for i in 0..<4 {
+            let digit = Int((code / d) % 10)
+            if digit == 4 { return 0x103 - i }
+            acc = acc << 2 | digit
+            d *= 10
+        }
+        return acc
+    }
+    /// The packed codes that make a water cell land (0x8c4ca0: table 0xad1b54, built once from
+    /// the 49 codes at 0x99762c..0x9976ec): the coverage patterns that close the cell.
+    static let landCorners: Set<Int> = {
+        let list: [UInt32] = [4, 40, 101, 102, 103, 121, 123, 201, 202, 203, 212, 301, 302, 303, 312, 331, 333, 400,
+        1010, 1012, 1030, 1202, 1203, 1210, 1212, 1230, 1233, 2020, 2021, 2030, 2031, 2101, 2120, 2121, 2301, 2331,
+        3010, 3012, 3020, 3030, 3033, 3120, 3123, 3302, 3303, 3312, 3330, 3333, 4000]
+        return Set(list.map(packedCorners))
+    }()
+
+    /// heroes4.exe's "is land" (0x405350) for a map cell: ground other than water (0) and the
+    /// ship-borne type 9 is land; a water cell is land when the union of the corner codes of its
+    /// land overlays (0x8c4c50 of the code of mask `mask & 0x1ff` in the overlay's slot, those of
+    /// a byte or less OR'd together) is one of the closing patterns (0x8c4ca0). Water overlays
+    /// (types 0 / 9) take no part.
+    public func isLand(_ c: Cell) -> Bool {
+        guard c.type == 0 || c.type == 9 else { return true }
+        var acc = 0
+        for o in c.overlays where o.type & 0x1f != 0 && o.type & 0x1f != 9 {
+            let slot = Int(o.order & 0x1f), k = o.mask & 0x1ff
+            guard slot < TransitionMasks.slots.count, let set = codes[TransitionMasks.slots[slot]], k < set.count else { continue }
+            let p = TransitionMasks.packedCorners(set[k])
+            if p <= 0xff { acc |= p }
+        }
+        return TransitionMasks.landCorners.contains(acc)
     }
 }

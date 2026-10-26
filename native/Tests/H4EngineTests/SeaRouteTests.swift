@@ -358,4 +358,20 @@ final class SeaRouteTests: XCTestCase {
         XCTAssertEqual(r.army.first { $0.creature == "squire" }?.count, 4)
         XCTAssertFalse(g.enemyHeroes.contains { $0 === m })
     }
+
+    /// The sea west of the iceberg (157,85) and the lighthouse's sea (165,88) do not meet: the v5
+    /// model Ice flows.06 at (160,87) blocks its whole 2x2 footprint (0x44ca30 reads every
+    /// version's), closing the gap at (160..161, 87..88). The snow-edged water cells (158..160, 90)
+    /// stay sea: their overlays' corner codes (100, 2100, 2000) do not close a cell (0x405350),
+    /// while the lone water cell (162,82) under a 1233 grass overlay is land.
+    func testIcebergPocketIsCutOffFromTheLighthouseSea() throws {
+        let g = try pirateDaughter()
+        let p = g.passability
+        for c in [(160, 87), (161, 87), (160, 88), (161, 88)] { XCTAssertFalse(p.isFreeWater(c.0, c.1), "\(c)") }
+        for c in [(158, 90), (159, 90), (160, 90)] { XCTAssertTrue(p.isSea(c.0, c.1), "\(c)") }
+        XCTAssertFalse(p.isWater(162, 82)); XCTAssertTrue(p.isFree(162, 82))
+        XCTAssertNotNil(p.path(from: (157, 89), to: (153, 86), afloat: true))
+        XCTAssertNil(p.path(from: (157, 89), to: (164, 84), afloat: true))
+        XCTAssertNil(p.path(from: (153, 86), to: (189, 107), afloat: true))
+    }
 }

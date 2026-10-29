@@ -253,7 +253,7 @@ extension Renderer {
     /// The generic dialog frame (layers.dialog.generic as a t_window_background of that size).
     func frameQuads(x mx: Int, y my: Int, w mw: Int, h mh: Int) -> [Quad] {
         guard let ui = ui, let d = ui.dialog("generic"), mw > 0, mh > 0 else { return [] }
-        return [Quad(texture: uiTexture("generic|\(mw)x\(mh)", { nineSlice(d, w: mw, h: mh) }), x: mx, y: my, w: mw, h: mh)]
+        return [Quad(texture: uiTexture("generic|\(mw)x\(mh)", { Renderer.nineSlice(d, w: mw, h: mh) }), x: mx, y: my, w: mw, h: mh)]
     }
     func messageBoxQuads() -> [Quad] {
         guard let ui = ui, let m = messageBox() else { return [] }

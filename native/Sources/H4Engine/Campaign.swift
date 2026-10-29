@@ -7,6 +7,9 @@ import Foundation
 public struct CampaignFile {
     public let name: String, description: String
     public let carryIn: Bool, carryOut: Bool
+    /// The campaigns whose results a carry-in campaign starts from (header +8, read with the
+    /// carry-in flag +0x38; 0x5a9d1a).
+    public let carryInCampaigns: [String]
     let slices: [Data]
     public var count: Int { slices.count }
 
@@ -39,10 +42,10 @@ public struct CampaignFile {
         let hver = Int(r.u16())
         name = r.string16()
         description = hver >= 1 ? r.string16() : ""
-        var cin = false, cout = false
+        var cin = false, cout = false, sources: [String] = []
         if hver >= 2 {
             cin = r.u8() != 0
-            if cin { let n = Int(r.u16()); for _ in 0..<n { _ = r.string16() } }
+            if cin { let n = Int(r.u16()); sources = (0..<n).map { _ in r.string16() } }
             cout = r.u8() != 0
         }
         if hver >= 3 {   // the "choose your position" block (0x5ad6f0)
@@ -55,7 +58,7 @@ public struct CampaignFile {
                 }
             }
         }
-        carryIn = cin; carryOut = cout
+        carryIn = cin; carryOut = cout; carryInCampaigns = sources
         let n = Int(r.u16())
         let sizes = (0..<n).map { _ in Int(r.u32()) }
         var at = r.pos, out: [Data] = []
@@ -64,6 +67,23 @@ public struct CampaignFile {
             out.append(d.subdata(in: (d.startIndex + at)..<(d.startIndex + at + s))); at += s
         }
         slices = out
+    }
+    /// The carry-in campaigns without stored results (0x5aa330, the campaign's vtable +0x2c), in
+    /// header order: none unless the carry-in flag is set; else each name needs its entry in
+    /// data/carryover.dat (`stored`; without the file every name is missing).
+    public func missingCarryIn(stored: Set<String>) -> [String] {
+        carryIn ? carryInCampaigns.filter { !stored.contains($0) } : []
+    }
+    /// What 0x76c110 shows before it abandons the start when results are missing:
+    /// campaign.carryin_data_not_available with %campaign_name and %other_campaigns, the list as
+    /// 0x74f2d0 builds it (each name put in front of the ones before: the second with " and ",
+    /// every further one with ", ", so the last comes first).
+    public func carryInRefusal(missing: [String], strings: [String: String]) -> String {
+        let template = strings["campaign.carryin_data_not_available"] ?? "You must complete %other_campaigns before your heroes will be ready for %campaign_name."
+        let and = strings["and.dialog"] ?? "and"
+        var list = ""
+        for (k, n) in missing.enumerated() { list = k == 0 ? n : n + (k == 1 ? " \(and) " : ", ") + list }
+        return template.replacingOccurrences(of: "%other_campaigns", with: list).replacingOccurrences(of: "%campaign_name", with: name)
     }
     /// Scenario i's map bytes (what MapFile reads).
     public func scenario(_ i: Int) throws -> Data { try gunzip(slices[i], expected: slices[i].count * 12) }

@@ -164,6 +164,14 @@ func makeSession(_ args: [String]) throws -> GameSession {
     // the rule tables first: random monsters are drawn from the creature table
     let textURL = URL(fileURLWithPath: args[1]).deletingLastPathComponent().appendingPathComponent("text.h4r")
     let ruleTables = (try? H4Archive(url: textURL)).flatMap { try? RuleTables(archive: $0) }
+    // a carry-in campaign's first scenario without the imported heroes: the exe never starts it
+    // (0x76c110 refuses with its message before the map loads, re/carryover_placeholder_spec.md)
+    if let ref = campaignRef, ref.index == 0, carryFile == nil, let c = try? CampaignFile.load(ref.id, from: archive) {
+        let missing = c.missingCarryIn(stored: [])
+        if !missing.isEmpty {
+            throw H4Error.missing(c.carryInRefusal(missing: missing, strings: ruleTables?.strings ?? [:]))
+        }
+    }
     if let t = ruleTables {
         let expansion = max(0, min(2, map.version - 27))
         let sea: Set<String> = ["mermaid", "sea monster", "pirate"]

@@ -34,6 +34,8 @@ final class MenuView: NSView {
     var screenOpened = Date()
     var popup: Popup? = nil
     var options: GameSettings? = nil
+    /// An open message box (t_basic_dialog with OK, 0x844ce0) over the screen.
+    var notice: String? = nil
     var hover: (Float, Float) = (-1, -1)
     var pressedAt: (Float, Float)? = nil
     var snapshotting = false
@@ -88,6 +90,7 @@ final class MenuView: NSView {
         switch p.first {
         case "scenarios": openScenarios()
         case "campaigns": screen = .campaigns(set: Int(p.count > 1 ? p[1] : "0") ?? 0)
+        case "choose": screen = .campaigns(set: CampaignFile.sets.firstIndex { $0.contains(Int(p[1]) ?? 1) } ?? 0); chooseCampaign(Int(p[1]) ?? 1)
         case "briefing": screen = .briefing(id: Int(p[1]) ?? 1, index: Int(p[2]) ?? 0, carry: nil); if p.count > 3 { briefingTab = Int(p[3]) ?? 3 }
         case "epilogue": screen = .epilogue(id: Int(p[1]) ?? 1, index: Int(p[2]) ?? 0, carry: nil)
         case "popup": openNewGameMenu()
@@ -195,6 +198,10 @@ final class MenuView: NSView {
             let (ox, oy) = OptionsView.origin(1024, 768)
             framePictures.append((0, 0, 0, 0, .modal))   // the options dialog is modal
             draw(OptionsView.items(kit, o, ox: ox, oy: oy, hover: hover))
+        }
+        if let n = notice, let box = noticeBox(n) {
+            framePictures.append((0, 0, 0, 0, .modal))
+            draw(box.items)
         }
         pressTargets = PressTarget.collect(framePictures)
         ctx = nil
@@ -406,11 +413,48 @@ final class MenuView: NSView {
     func clickCampaigns(_ set: Int, _ x: Float, _ y: Float) {
         guard let f = layers(campaignSet(set).layout) else { return }
         let (ox, oy) = dialogOrigin(800, 599)
-        for k in 0..<6 where hit(MenuKit.find(f, "Campaign_\(k)"), ox, oy, x, y) {
-            briefingTab = 3
-            screen = .briefing(id: CampaignFile.sets[set][k], index: 0, carry: nil); return
-        }
+        for k in 0..<6 where hit(MenuKit.find(f, "Campaign_\(k)"), ox, oy, x, y) { chooseCampaign(CampaignFile.sets[set][k]); return }
         if hit(MenuKit.find(f, "Cancel_Button"), ox, oy, x, y, w: 76, h: 44) { screen = .main }
+    }
+    /// A campaign picked (0x76eb80 -> 0x76f320): a carry-in campaign needs the results of the ones
+    /// it imports from (data/carryover.dat, which the remake does not keep yet), else 0x76c110 shows
+    /// its message and nothing starts; otherwise the first scenario's briefing.
+    func chooseCampaign(_ id: Int) {
+        if let c = campaign(id) {
+            let missing = c.missingCarryIn(stored: [])
+            if !missing.isEmpty {
+                notice = c.carryInRefusal(missing: missing, strings: strings)
+                return
+            }
+        }
+        briefingTab = 3
+        screen = .briefing(id: id, index: 0, carry: nil)
+    }
+    /// A text-only basic dialog with OK (the 0x5595d0 / 0x558b90 layout of BasicDialog.swift):
+    /// layers.dialog.generic round a text band of the fitted lines (Prose 18, black, the grey halo)
+    /// and the OK button under it, centred on the screen.
+    func noticeBox(_ msg: String) -> (items: [UIItem], ok: UIRect)? {
+        guard let gen = kit.file("dialog.generic"), let okf = kit.file("button.ok"), let okl = MenuKit.find(okf, "Released") else { return nil }
+        let f = kit.font(18), lh = f.lineHeight
+        let fit = Renderer.fitWrap(msg, font: f, minW: 0, maxW: 1024 - 150)
+        let th = min(fit.lines.count * lh, 768 - 200)
+        let band = th < 60 ? "small" : "large", bf = kit.file("text_background.\(band)")
+        let m = bf.map(Renderer.sliceMargins) ?? (l: 12, t: 8, r: 13, b: 9)
+        let bandW = fit.w + m.l + m.r, bandH = th + m.t + m.b
+        let bw = okl.x + okl.width, bh = okl.y + okl.height
+        let W = max(bandW, 15 + bw) + 29, H = 15 + bandH + 10 + bh + 31
+        let x = (1024 - W) / 2, y = (768 - H) / 2, inner = W - 29
+        var out = [UIItem(key: "notice|generic|\(W)x\(H)", make: { Renderer.nineSlice(gen, w: W, h: H) }, x: x, y: y, w: W, h: H)]
+        let bx = x + 15 + (inner - bandW) / 2, by = y + 15
+        if let bf = bf { out.append(UIItem(key: "notice|band|\(band)|\(bandW)x\(bandH)", make: { Renderer.nineSlice(bf, w: bandW, h: bandH) }, x: bx, y: by, w: bandW, h: bandH)) }
+        let shown = fit.lines.prefix(max(1, th / lh))
+        for (i, line) in shown.enumerated() where !line.isEmpty {
+            let w = f.measure(line)
+            out.append(UIItem(key: "notice|text|\(line)", make: { f.render(line, colour: (0, 0, 0), halo: Renderer.armyHalo) }, x: x + 15 + (inner - fit.w) / 2 + (fit.w - w) / 2, y: by + m.t + (th - shown.count * lh) / 2 + i * lh, w: w, h: f.size))
+        }
+        let ok = UIRect(x + 15 + (inner - bw) / 2, y + 15 + bandH + 10, bw, bh)
+        out += kit.button("ok", look(ok), ok.x, ok.y)
+        return (out, ok)
     }
     func scenarioMap(_ id: Int, _ index: Int) -> MapFile? {
         guard let c = campaign(id), index < c.count, let d = try? c.scenario(index) else { return nil }
@@ -700,6 +744,7 @@ final class MenuView: NSView {
         defer { needsDisplay = true }
         if let p = popup { clickPopup(p, x, y); return }
         if options != nil { clickOptions(x, y); return }
+        if let n = notice { if noticeBox(n)?.ok.contains(x, y) == true { notice = nil }; return }
         let double = e.clickCount >= 2
         switch screen {
         case .main: clickMain(x, y)
@@ -723,10 +768,12 @@ final class MenuView: NSView {
         if highScoreKey(e) { return }
         if e.keyCode == 53 {   // Esc: close what is open, else back to the menu
             if popup != nil { popup = nil }
+            else if notice != nil { sound.play("miscellaneous.button"); notice = nil }
             else if options != nil { sound.play("miscellaneous.button"); options = nil }   // Cancel's hot key: its click
             else if case .main = screen {} else { sound.play("miscellaneous.button"); screen = .main }
             needsDisplay = true
         } else if e.keyCode == 36 || e.keyCode == 76 {   // Enter: the screen's default button (its hot key: its click)
+            if notice != nil { sound.play("miscellaneous.button"); notice = nil; needsDisplay = true; return }   // OK's hot key
             switch screen {
             case .scenarios: sound.play("miscellaneous.button"); begin()
             case .load: sound.play("miscellaneous.button"); loadSelected()

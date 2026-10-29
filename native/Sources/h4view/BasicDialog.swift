@@ -25,7 +25,7 @@ extension Renderer {
     /// A t_window_background: the file's eight border pieces and background around a W x H window
     /// (0x8cd470/0x8cd890): corners at their boxes (the right/bottom ones moved by the growth), edges
     /// tiled from their own boxes with the last tile clipped, the background tiled from background_rect.
-    func nineSlice(_ f: LayerFile, w W: Int, h H: Int) -> Bitmap {
+    static func nineSlice(_ f: LayerFile, w W: Int, h H: Int) -> Bitmap {
         func l(_ n: String) -> UILayer? { f.layers.first { $0.name.lowercased() == n } }
         let names = ["top_left", "top", "top_right", "left", "right", "bottom_left", "bottom", "bottom_right"]
         let pieces = names.compactMap(l)
@@ -63,7 +63,7 @@ extension Renderer {
         return bm
     }
     /// A t_window_background's margins: client_area minus the border pieces' bounding box (L, T, R, B).
-    func sliceMargins(_ f: LayerFile) -> (l: Int, t: Int, r: Int, b: Int) {
+    static func sliceMargins(_ f: LayerFile) -> (l: Int, t: Int, r: Int, b: Int) {
         let pieces = ["top_left", "top", "top_right", "left", "right", "bottom_left", "bottom", "bottom_right"].compactMap { n in f.layers.first { $0.name.lowercased() == n } }
         guard let c = f.layers.first(where: { $0.name.lowercased() == "client_area" }), !pieces.isEmpty else { return (15, 15, 14, 16) }
         let bx0 = pieces.map(\.x).min()!, by0 = pieces.map(\.y).min()!
@@ -95,7 +95,7 @@ extension Renderer {
         d.th = min(d.lines.count * lh, AdventureUI.height - 200)
         d.fit = max(1, d.th / lh)
         d.band = d.th < 60 ? "small" : "large"
-        let m = ui.popupFrame(d.band).map(sliceMargins) ?? (l: 12, t: 8, r: 13, b: 9)
+        let m = ui.popupFrame(d.band).map(Renderer.sliceMargins) ?? (l: 12, t: 8, r: 13, b: 9)
         // no text (the computer turn's progress box): no scroll band (inferred)
         if !text.isEmpty { d.bandW = d.tw + m.l + m.r; d.bandH = d.th + m.t + m.b; d.bandT = m.t }
         // pass 1: sizes
@@ -143,9 +143,9 @@ extension Renderer {
     func basicDialogQuads(_ d: BasicDialog, x: Int, y: Int, scroll: Int = 0, pressed: String? = nil) -> [Quad] {
         guard let ui = ui, let gen = ui.dialog("generic") else { return [] }
         var out: [Quad] = []
-        out.append(Quad(texture: uiTexture("generic|\(d.W)x\(d.H)", { nineSlice(gen, w: d.W, h: d.H) }), x: x, y: y, w: d.W, h: d.H))
+        out.append(Quad(texture: uiTexture("generic|\(d.W)x\(d.H)", { Renderer.nineSlice(gen, w: d.W, h: d.H) }), x: x, y: y, w: d.W, h: d.H))
         if d.bandH > 0, let bf = ui.popupFrame(d.band) {
-            out.append(Quad(texture: uiTexture("band|\(d.band)|\(d.bandW)x\(d.bandH)", { nineSlice(bf, w: d.bandW, h: d.bandH) }), x: x + d.bandX, y: y + d.bandY, w: d.bandW, h: d.bandH))
+            out.append(Quad(texture: uiTexture("band|\(d.band)|\(d.bandW)x\(d.bandH)", { Renderer.nineSlice(bf, w: d.bandW, h: d.bandH) }), x: x + d.bandX, y: y + d.bandY, w: d.bandW, h: d.bandH))
         }
         let f = ui.font(18)
         let shown = Array(d.lines.dropFirst(scroll).prefix(d.fit))

@@ -30,7 +30,7 @@ final class MenuView: NSView {
     let strings: [String: String]
     let kit: MenuKit
     let sound: GameSound
-    var screen: Screen = .main { didSet { screenOpened = Date() } }
+    var screen: Screen = .main { didSet { screenOpened = Date(); sound.stopVoice(); voicePlaying = nil } }   // a voice-over ends with its screen
     var screenOpened = Date()
     var popup: Popup? = nil
     var options: GameSettings? = nil
@@ -506,17 +506,19 @@ final class MenuView: NSView {
         let voice = cut?.voice ?? ""
         if !snapshotting, !voice.isEmpty, voicePlaying != "\(id)|\(index)|\(epilogue)" {
             voicePlaying = "\(id)|\(index)|\(epilogue)"
-            _ = sound.play("Voice_Over.\(CampaignFile.voiceOver(voice))")
+            paused = false
+            sound.playVoice("Voice_Over.\(CampaignFile.voiceOver(voice))")
         }
     }
     func clickBriefing(_ id: Int, _ index: Int, carry: String?, epilogue: Bool, _ x: Float, _ y: Float) {
         guard let f = layers(epilogue ? "dialog.Campaign_Epilogue" : "dialog.Campaign") else { return }
         let (ox, oy) = dialogOrigin(800, epilogue ? 456 : 599)
         func l(_ n: String) -> UILayer? { MenuKit.find(f, n) }
-        if hit(l("Pause_released"), ox, oy, x, y) { paused.toggle(); return }
+        if hit(l("Pause_released"), ox, oy, x, y) { paused.toggle(); sound.pauseVoice(paused); return }
         if hit(l("Replay_Released"), ox, oy, x, y) { voicePlaying = nil; screenOpened = Date(); return }
         if epilogue {
             guard hit(l("Next"), ox, oy, x, y, w: 166, h: 40) else { return }
+            sound.stopVoice(); voicePlaying = nil
             afterEpilogue(id: id, index: index, carry: carry)   // the next briefing, or the campaign's results
             return
         }
@@ -527,7 +529,7 @@ final class MenuView: NSView {
         }
         if hit(l("Creature_Guard_Released"), ox, oy, x, y) { guardsMove.toggle(); return }
         if hit(l("Back"), ox, oy, x, y, w: 166, h: 40) { screen = .main; return }
-        if hit(l("Begin"), ox, oy, x, y, w: 166, h: 40) { start(["campaign:\(id):\(index)", "--difficulty", "\(difficulty)"] + (carry.map { ["--carry", $0] } ?? [])) }
+        if hit(l("Begin"), ox, oy, x, y, w: 166, h: 40) { sound.stopVoice(); start(["campaign:\(id):\(index)", "--difficulty", "\(difficulty)"] + (carry.map { ["--carry", $0] } ?? [])) }
     }
 
     // MARK: new game options (menus_spec B.2)

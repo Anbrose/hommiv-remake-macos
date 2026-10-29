@@ -21,6 +21,7 @@ final class GameSound: NSObject, AVAudioPlayerDelegate {
     private(set) var musicName: String?
     private var playlist: [String] = []
     private var loops: [String: AVAudioPlayer] = [:]
+    private var voice: AVAudioPlayer?   // a briefing's voice-over: one at a time, stopped with its screen
     var effectVolume: Float = 0.8
     var musicVolume: Float = 0.5
 
@@ -135,5 +136,19 @@ final class GameSound: NSObject, AVAudioPlayerDelegate {
     func stopMusic() { music?.stop(); music = nil; musicName = nil; playlist = [] }
     /// Leaving a screen for another in the window: its loops and music stop, the decoded
     /// sounds are dropped (the next screen decodes what it plays); effects still sounding finish.
-    func leaveScreen() { stopAllLoops(); stopMusic(); cache = [:] }
+    func leaveScreen() { stopAllLoops(); stopMusic(); stopVoice(); cache = [:] }
+
+    /// Play a voice-over in place of the one playing (nothing if the game has no such sound).
+    func playVoice(_ name: String) {
+        stopVoice()
+        guard let d = data(name), let p = try? AVAudioPlayer(data: d) else {
+            if ProcessInfo.processInfo.environment["H4DEBUG"] != nil { print("sound missing: \(name)") }
+            return
+        }
+        p.volume = effectVolume
+        p.play()
+        voice = p
+    }
+    func pauseVoice(_ on: Bool) { if on { voice?.pause() } else { voice?.play() } }
+    func stopVoice() { voice?.stop(); voice = nil }
 }

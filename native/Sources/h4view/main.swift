@@ -197,44 +197,50 @@ func makeSession(_ args: [String]) throws -> GameSession {
     game.setupObjects()   // chests, piles, generators: their contents are rolled as the game starts
     game.setupMonths()    // next month's creature is drawn as the game starts (0x4d1db2)
     let ownedByFirst = map.objects.first { ($0.type == "town" || $0.type == "random_town") && $0.owner == map.humanColour && $0.level == scene.level }
-    if let town = scene.placed.first(where: { p in ownedByFirst.map { p.category == "castle" && p.cellX == $0.x && p.cellY == $0.y } ?? false })
-        ?? scene.placed.filter({ $0.category == "castle" }).min(by: { ($0.cellY - $0.cellX) < ($1.cellY - $1.cellX) }) {
-        let align = faction(of: town.name)
+    let startTown = scene.placed.first(where: { p in ownedByFirst.map { p.category == "castle" && p.cellX == $0.x && p.cellY == $0.y } ?? false })
+        ?? scene.placed.filter({ $0.category == "castle" }).min(by: { ($0.cellY - $0.cellX) < ($1.cellY - $1.cellX) })
+    // (a random hero's class follows the start town's alignment)
+    let align = startTown.map { faction(of: $0.name) } ?? "life"
+    // the heroes the map places for the player on either level, with or without a town of
+    // theirs (The Unexpected Prize starts Dogwoggle townless, underground)
+    // (armies with heroes: "Beyond the Lake" starts a level 15 and a level 10 hero together);
+    // a hero at the town gate when it has none
+    let placed = map.objects.filter { $0.type == "hero_army" && $0.owner == map.humanColour && $0.level < scenes.count && !$0.heroes.isEmpty }
+    var bands: [Hero] = []   // (listed after the heroes: the first hero starts selected)
+    for o in map.objects where o.type == "hero_army" && o.owner == map.humanColour && o.heroes.isEmpty && o.level < scenes.count {
+        // a heroless army of the player's (The Pirate's Daughter's pirate band)
+        let stacks = (o.army ?? []).compactMap { $0 }.compactMap { s in s.creature < RuleTables.creatureIds.count ? Hero.Stack(creature: RuleTables.creatureIds[s.creature], count: s.count) : nil }
+        guard !stacks.isEmpty else { continue }
+        let h = game.mapHeroless(stacks, x: o.x, y: o.y, z: o.level, owner: map.humanColour, boat: o.boat.map { ["life", "order", "death", "chaos", "nature", "might"][$0] })
+        if let m = movementLeft { h.movement = m }
+        bands.append(h)
+        lap("heroless army \(stacks.map { "\($0.count)x\($0.creature)" }) at (\(o.x),\(o.y))")
+    }
+    for o in placed {
+        var all = o.heroes.map { Hero.fromMap($0, alignment: align, x: o.x, y: o.y, tables: game.tables, random: &game.random) }
+        let hero = all.removeFirst()
+        hero.companions = all
+        hero.home = (o.x, o.y); hero.z = o.level
+        hero.army = (o.army ?? []).compactMap { $0 }.compactMap { s in
+            s.creature < RuleTables.creatureIds.count ? Hero.Stack(creature: RuleTables.creatureIds[s.creature], count: s.count) : nil }
+        hero.maxMovement = game.armyMovement(hero); hero.movement = hero.maxMovement
+        if let m = movementLeft { hero.movement = m }
+        hero.owner = map.humanColour
+        if let b = o.boat {   // the army starts aboard its ship (t_army record +0xbc)
+            hero.boat = ["life", "order", "death", "chaos", "nature", "might"][b]
+            hero.maxMovement = game.armyMovement(hero); hero.movement = movementLeft ?? hero.maxMovement
+        }
+        game.heroes.append(hero)
+        lap("\(hero.name) level \(hero.level) \(hero.classKeyword) at (\(o.x),\(o.y)) skills \(hero.skills) with \(all.map { "\($0.name) level \($0.level) \($0.classKeyword) \($0.skills)" })")
+    }
+    game.heroes += bands
+    // the view opens on the first hero's level (unless --level asks for one)
+    if opt("--level") == nil, let h = game.heroes.first { game.level = h.z }
+    if let town = startTown {
         // (a campaign scenario gives the player only the towns the map gives)
         if !(campaignRef != nil && ownedByFirst == nil), let i = game.towns.firstIndex(where: { $0.x == town.cellX && $0.y == town.cellY }) { game.towns[i].owned = true; game.towns[i].owner = map.humanColour }
         // the gate is in the middle of the lower-right wall of right-facing (" R") towns, lower-left otherwise
         let right = town.name.lowercased().hasSuffix(" r.h4d")
-        // the heroes the map places for the player (armies with heroes: "Beyond the Lake" starts a
-        // level 15 and a level 10 hero together); a hero at the town gate when it has none
-        let placed = map.objects.filter { $0.type == "hero_army" && $0.owner == map.humanColour && $0.level == scene.level && !$0.heroes.isEmpty }
-        var bands: [Hero] = []   // (listed after the heroes: the first hero starts selected)
-        defer { game.heroes += bands }
-        for o in map.objects where o.type == "hero_army" && o.owner == map.humanColour && o.heroes.isEmpty && o.level < scenes.count {
-            // a heroless army of the player's (The Pirate's Daughter's pirate band)
-            let stacks = (o.army ?? []).compactMap { $0 }.compactMap { s in s.creature < RuleTables.creatureIds.count ? Hero.Stack(creature: RuleTables.creatureIds[s.creature], count: s.count) : nil }
-            guard !stacks.isEmpty else { continue }
-            let h = game.mapHeroless(stacks, x: o.x, y: o.y, z: o.level, owner: map.humanColour, boat: o.boat.map { ["life", "order", "death", "chaos", "nature", "might"][$0] })
-            if let m = movementLeft { h.movement = m }
-            bands.append(h)
-            lap("heroless army \(stacks.map { "\($0.count)x\($0.creature)" }) at (\(o.x),\(o.y))")
-        }
-        for o in placed {
-            var all = o.heroes.map { Hero.fromMap($0, alignment: align, x: o.x, y: o.y, tables: game.tables, random: &game.random) }
-            let hero = all.removeFirst()
-            hero.companions = all
-            hero.home = (o.x, o.y); hero.z = o.level
-            hero.army = (o.army ?? []).compactMap { $0 }.compactMap { s in
-                s.creature < RuleTables.creatureIds.count ? Hero.Stack(creature: RuleTables.creatureIds[s.creature], count: s.count) : nil }
-            hero.maxMovement = game.armyMovement(hero); hero.movement = hero.maxMovement
-            if let m = movementLeft { hero.movement = m }
-            hero.owner = map.humanColour
-            if let b = o.boat {   // the army starts aboard its ship (t_army record +0xbc)
-                hero.boat = ["life", "order", "death", "chaos", "nature", "might"][b]
-                hero.maxMovement = game.armyMovement(hero); hero.movement = movementLeft ?? hero.maxMovement
-            }
-            game.heroes.append(hero)
-            lap("\(hero.name) level \(hero.level) \(hero.classKeyword) at (\(o.x),\(o.y)) skills \(hero.skills) with \(all.map { "\($0.name) level \($0.level) \($0.classKeyword) \($0.skills)" })")
-        }
         if placed.isEmpty, campaignRef == nil, let cell = heroAt ?? game.freeCell(near: town.cellX + (right ? 3 : 6), town.cellY + (right ? 6 : 3)) {
             // a might hero of the town's alignment, picked from the heroes table (the male model exists for every class)
             let cls = RuleTables.classes[align]?.might ?? "knight"

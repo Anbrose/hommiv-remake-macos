@@ -411,7 +411,7 @@ extension Renderer {
     /// The status line over an enemy: "Attack <creature> for N - M damage" (the game's
     /// attack.combat and text_damage_range texts), the range from the damage rules.
     func combatStatusText(x: Float, y: Float) -> String? {
-        guard let cs = combat, let b = cs.battle, !cs.busy, cs.result == nil, let cur = b.current, cur.side == 0, x < 885, let t = game?.tables else { return nil }
+        guard let cs = combat, let b = cs.battle, !cs.busy, cs.result == nil, let cur = b.current, b.commander(of: cur) == 0, x < 885, let t = game?.tables else { return nil }
         func range(_ lo: Int, _ hi: Int) -> String {
             lo == hi ? (t.strings["text_damage_range_1"] ?? "%damage damage").replacingOccurrences(of: "%damage", with: "\(lo)")
                      : (t.strings["text_damage_range_2"] ?? "%damage_low - %damage_high damage").replacingOccurrences(of: "%damage_low", with: "\(lo)").replacingOccurrences(of: "%damage_high", with: "\(hi)")
@@ -435,7 +435,7 @@ extension Renderer {
     /// Which combat cursor fits the cell under the pointer.
     func combatCursor(x: Float, y: Float) -> String {
         combatTarget = nil; combatArea = nil
-        guard let cs = combat, let b = cs.battle, cs.info == nil, prompt == nil, spellBook == nil, !cs.busy, cs.result == nil, !cs.autoCombat, let cur = b.current, cur.side == 0, x < 885 else { return "combat.normal" }
+        guard let cs = combat, let b = cs.battle, cs.info == nil, prompt == nil, spellBook == nil, !cs.busy, cs.result == nil, !cs.autoCombat, let cur = b.current, b.commander(of: cur) == 0, x < 885 else { return "combat.normal" }
         if let spell = casting {
             // an area spell aims at any cell: every stack in its radius is marked (0x717b40)
             if Battle.areaRadius(spell) != nil {

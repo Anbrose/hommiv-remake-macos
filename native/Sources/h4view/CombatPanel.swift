@@ -32,7 +32,7 @@ extension Renderer {
     /// pressed and enabled while auto combat runs.
     func combatButtons(_ cs: CombatScreen, _ b: Battle) -> [CombatButton] {
         let cur = b.current
-        let own = cur.map { $0.side == 0 && !$0.hypnotized } ?? false && !cs.busy && cs.result == nil && !cs.autoCombat
+        let own = cur.map { b.commander(of: $0) == 0 } ?? false && !cs.busy && cs.result == nil && !cs.autoCombat
         let aiming = casting != nil
         let mode = cur.map { cs.shownMode($0) } ?? 0
         let canCast = own && cur.map { !b.castable($0).isEmpty } ?? false
@@ -125,7 +125,7 @@ extension Renderer {
             }
             return
         }
-        guard !cs.busy, cs.result == nil, !cs.autoCombat, let cur = b.current, cur.side == 0 else { return }
+        guard !cs.busy, cs.result == nil, !cs.autoCombat, let cur = b.current, b.commander(of: cur) == 0 else { return }
         if let spell = casting {   // aiming a spell: what it can land on (Battle.aim), anything else cancels
             let first = castFirst
             casting = nil; castFirst = nil

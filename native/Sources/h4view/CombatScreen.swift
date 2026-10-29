@@ -170,11 +170,11 @@ final class CombatScreen {
     /// Auto combat (the toggle): the player's side acts on its own while it is on.
     var autoCombat = false
     /// The active stack waits for the local player's orders (heroes4.exe battlefield state
-    /// +0x500 = 2, 0x574159): nothing playing, not the computer's side, not Berserk or Hypnotized,
+    /// +0x500 = 2, 0x574159): nothing playing, the stack takes the player's orders (Battle.commander),
     /// no auto combat. Only then is the movement shadow of the current stack shown.
     var awaitingOrders: Bool {
         guard let b = battle, b.finished == nil, result == nil, !busy, !autoCombat, let u = b.current else { return false }
-        return u.side == 0 && !u.hypnotized && !u.stats.under(6)
+        return b.commander(of: u) == 0
     }
     /// The stack a right press put the movement shadow on (0x56c9d0), while its creature window is
     /// open and for 3 s after it closed (timer +0x418, 3000 ms, 0x56cbb0); `current` is the stack
@@ -494,7 +494,7 @@ final class CombatScreen {
     func pump() {
         guard let b = battle else { return }
         take(b.takeEvents())
-        if holds == 0, queue.isEmpty, b.finished == nil, let u = b.current, u.side == 1 || u.hypnotized || u.stats.under(6) || autoCombat { b.autoAct(); take(b.takeEvents()) }
+        if holds == 0, queue.isEmpty, b.finished == nil, let u = b.current, b.commander(of: u) != 0 || autoCombat { b.autoAct(); take(b.takeEvents()) }
     }
     /// Forget everything playing (a new battle).
     func resetPlayback() {

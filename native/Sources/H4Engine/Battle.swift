@@ -1057,6 +1057,13 @@ public final class Battle {
 
     /// The side a unit fights for now (a hypnotized one fights for the other).
     public func side(of u: Unit) -> Int { u.hypnotized ? 1 - u.side : u.side }
+    /// The side whose player gives the stack its orders (0x5737e0 / 0x5740cc), or nil when it acts
+    /// on its own whoever owns it: the Berserk ability (3) or the Berserk spell (6). A hypnotized or
+    /// charmed stack takes the orders of the side it fights for now (0x5f3fc0), so the player
+    /// commands an enemy stack they hypnotized and the computer one of theirs it hypnotized.
+    public func commander(of u: Unit) -> Int? {
+        u.stats.has("berserk") || u.stats.under(6) ? nil : side(of: u)
+    }
 
     /// The start of a stack's turn (0x567ef0): Regeneration heals the top creature (the spell's
     /// power; the ability 50, a hero 20 + 2 x level), then Poison and Plague deal their stored damage.

@@ -119,6 +119,9 @@ extension Battle {
         if [59, 36, 182, 106].contains(spell), enemy, !anySide { return false }   // cast on friends (the Enemy flag is for the struck attacker)
         // magic immunity, Anti-Magic and Sanctuary turn every spell away, friendly ones too (0x5b37d0)
         if t.stats.has("magic_immunity") || t.stats.under(3) || t.stats.under(137) { return false }
+        // the Berserk ability is immune to fear: no Fear spell lands (Terror, Panic, Aura of Fear's
+        // effect; 0x5b3ab4 / 0x5b6097)
+        if s.has("Fear"), t.stats.has("berserk") { return false }
         // the creature types (0x5b3ca0): phantoms are not mechanical here, and a caster with
         // negate_mind_immunity skips the checks for Mind spells
         let negate = s.has("Mind") && u.stats.has("negate_mind_immunity")

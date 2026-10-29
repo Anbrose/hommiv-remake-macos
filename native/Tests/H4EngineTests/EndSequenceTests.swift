@@ -259,7 +259,30 @@ final class EndSequenceTests: XCTestCase {
         XCTAssertEqual(g.scenarioScore(team: g.team(of: g.map.humanColour)).total, 0)
     }
 
-    func loadGame() throws -> GameState {
+    // "The Unexpected Prize" (campaign 10, scenario 1): its continuous event wins once Dogwoggle's
+    // side has the Frost Hammer (236) -- which Adram Blacksword wears, so beating him must win
+    func testBeatingAdramWinsTheUnexpectedPrize() throws {
+        let g = try loadGame(campaign: (10, 0))
+        g.loadScripts()
+        // the two armies as the session places them (main.swift): the heroes with their worn items
+        func army(_ name: String) throws -> Hero {
+            let o = try XCTUnwrap(g.map.objects.first { $0.heroes.contains { $0.name == name } })
+            let h = Hero.fromMap(o.heroes[0], alignment: "might", x: o.x, y: o.y, tables: g.tables, random: &g.random)
+            h.owner = o.owner ?? 0
+            return h
+        }
+        let dog = try army("Dogwoggle"), adram = try army("Adram Blacksword")
+        g.heroes = [dog]
+        g.place(enemy: adram)
+        g.runContinuous()
+        XCTAssertNil(g.outcome)   // not yet
+        g.finishHeroBattle(hero: dog, enemy: adram, won: true, army: dog.army, enemyArmy: [], value: 0)
+        XCTAssertTrue(dog.members.contains { $0.equipped.contains(236) || $0.backpack.contains(236) })
+        XCTAssertEqual(g.outcome, true)   // 0x4d7800 ran the continuous events (0x4ddf30) after the battle
+        XCTAssertTrue(g.scripts.messages.contains { $0.hasPrefix("After defeating Adram") })
+    }
+
+    func loadGame(campaign: (Int, Int)? = nil) throws -> GameState {
         let data = URL(fileURLWithPath: NSHomeDirectory() + "/Games/HoMM4/prefix/drive_c/Games/HoMM4/Data")
         let mapURL = data.deletingLastPathComponent().appendingPathComponent("Maps/A Land without a King.h4c")
         guard FileManager.default.fileExists(atPath: mapURL.path) else { throw XCTSkip("game data not installed") }
@@ -268,7 +291,8 @@ final class EndSequenceTests: XCTestCase {
         let tables = try RuleTables(archive: H4Archive(url: data.appendingPathComponent("text.h4r")))
         RandomResolver.creaturePool = (1...4).map { lv in tables.creatures.filter { $0.level == lv && $0.expansion == 0 }.map { $0.keyword } }
         let names = Set(archive.names(prefix: "adv_object.").map { String($0.dropFirst("adv_object.".count).dropLast(4)) })
-        let map = try MapFile(data: Data(contentsOf: mapURL), objectNames: names)
+        let map = try campaign.map { try MapFile(data: CampaignFile.load($0.0, from: archive).scenario($0.1), objectNames: names) }
+            ?? MapFile(data: Data(contentsOf: mapURL), objectNames: names)
         let masks = try TransitionMasks(data: archive.payload("transition.Transitions.h4d"))
         let scene = try MapScene(map: map, level: 0, archive: archive, masks: masks)
         let g = GameState(map: map, level: 0, scenes: [scene])

@@ -72,6 +72,7 @@ extension GameState {
             let e = scripts.placedEvents[i]
             guard e.enabled, e.flags & (human ? 1 : 2) != 0, colour >= 0, colour < 6, e.players & (1 << colour) != 0 else { continue }
             run(event: &scripts.placedEvents[i], ScriptContext(current: colour, hero: hero))
+            runContinuous()   // 0x4de569: the continuous events after each one (0x4ddf30)
         }
     }
 
@@ -232,6 +233,18 @@ extension GameState {
         case "owns_town":
             guard let p = player(n.int(0), c) else { return false }
             return towns.contains { $0.owner == p && $0.name.caseInsensitiveCompare(n.text(1)) == .orderedSame }
+        case "has_artifact":
+            // 0x82c660 reads a flag (1: a player, 0: a hero target) and the target; the player form
+            // (0x82c4a0) asks each of the player's armies (+0x10) whether it carries the artifact
+            // (army vfunc +0x30: its heroes' worn and backpack items); the hero form (0x82c3f0)
+            // looks through one hero's items
+            let art = n.int(2)
+            func holds(_ h: Hero) -> Bool { h.equipped.contains(art) || h.backpack.contains(art) }
+            if n.int(0) != 0 {
+                guard player(n.int(1), c) == human else { return false }
+                return heroes.contains { a in holds(a) || a.members.contains(where: holds) }
+            }
+            return c.hero.map { a in holds(a) || a.members.contains(where: holds) } ?? false
         case "owns_hero": return player(n.int(0), c) == human && heroes.contains { $0.name.caseInsensitiveCompare(n.text(1)) == .orderedSame }
         case "is_alignment":
             guard let p = player(n.int(0), c), p < 6, let spec = map.playerSpecs.first(where: { $0.colour == p }) else { return false }

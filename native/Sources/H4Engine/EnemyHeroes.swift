@@ -96,6 +96,9 @@ extension GameState {
         }
         refreshMovement(hero)
         pendingHeroBattle = nil
+        // after a battle (0x4d7800): the end check, the continuous events (0x4ddf30), the end check
+        checkScenario()
+        runContinuous()
         checkScenario()
     }
 

@@ -147,6 +147,7 @@ final class GameSound: NSObject, AVAudioPlayerDelegate {
         }
         p.volume = effectVolume
         p.play()
+        if ProcessInfo.processInfo.environment["H4DEBUG"] != nil { print("voice: \(name) \(Int(p.duration)) s") }
         voice = p
     }
     func pauseVoice(_ on: Bool) { if on { voice?.pause() } else { voice?.play() } }

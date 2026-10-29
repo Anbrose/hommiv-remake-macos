@@ -30,7 +30,7 @@ final class MenuView: NSView {
     let strings: [String: String]
     let kit: MenuKit
     let sound: GameSound
-    var screen: Screen = .main { didSet { screenOpened = Date(); sound.stopVoice(); voicePlaying = nil } }   // a voice-over ends with its screen
+    var screen: Screen = .main { didSet { screenOpened = Date(); sound.stopVoice(); voicePlaying = nil; carryStored = nil } }   // a voice-over ends with its screen
     var screenOpened = Date()
     var popup: Popup? = nil
     var options: GameSettings? = nil
@@ -46,6 +46,10 @@ final class MenuView: NSView {
     var scroll = 0, selected = 0
     var saves: [(name: String, date: Date)] = []
     var campaignCache: [Int: CampaignFile] = [:]
+    /// The finished campaigns' stored names (CarryoverStore), read when a screen opens.
+    var carryStored: Set<String>?
+    /// A right-clicked button's help, shown while the button is held.
+    var heldHelp: (text: String, cx: Int, cy: Int)?
     // the high scores and the campaign results (HighScoreMenu.swift)
     var menuRules: RuleTables?
     var highScores: HighScores?
@@ -93,6 +97,13 @@ final class MenuView: NSView {
         case "choose": screen = .campaigns(set: CampaignFile.sets.firstIndex { $0.contains(Int(p[1]) ?? 1) } ?? 0); chooseCampaign(Int(p[1]) ?? 1)
         case "briefing": screen = .briefing(id: Int(p[1]) ?? 1, index: Int(p[2]) ?? 0, carry: nil); if p.count > 3 { briefingTab = Int(p[3]) ?? 3 }
         case "epilogue": screen = .epilogue(id: Int(p[1]) ?? 1, index: Int(p[2]) ?? 0, carry: nil)
+        case "campaignhelp":   // a campaign button held with the right button: "campaignhelp:<set>:<button>"
+            let set = Int(p.count > 1 ? p[1] : "1") ?? 1, k = Int(p.count > 2 ? p[2] : "5") ?? 5
+            screen = .campaigns(set: set)
+            if let l = MenuKit.find(layers(campaignSet(set).layout), "Campaign_\(k)") {
+                let (ox, oy) = dialogOrigin(800, 599)
+                heldHelp = campaignHelp(set, Float(ox + l.x + 1), Float(oy + l.y + 1))
+            }
         case "popup": openNewGameMenu()
         case "options": openOptionsMenu()
         case "settings": options = GameSettings.load()
@@ -203,6 +214,7 @@ final class MenuView: NSView {
             framePictures.append((0, 0, 0, 0, .modal))
             draw(box.items)
         }
+        if let h = heldHelp, let box = noticeBox(h.text, centre: (h.cx, h.cy)) { draw(box.items) }
         pressTargets = PressTarget.collect(framePictures)
         ctx = nil
     }
@@ -399,8 +411,10 @@ final class MenuView: NSView {
         if let t = l("Title") { draw(kit.text(text("title.campaign_selection", "Campaign Selection"), UIRect(t, ox, oy), MenuKit.Style(t.height, just: 1, vcentre: true), clip: false)) }
         if let c = l("Cancel_Button") { draw(kit.button("cancel", look(UIRect(ox + c.x, oy + c.y, 76, 44)), ox + c.x, oy + c.y)) }
         for k in 0..<6 {
-            guard let slot = l("Campaign_\(k)"), let face = MenuKit.find(layers("Campaign_Splashscreens.192x154.\(s.faces[k])"), "frame 001") else { continue }
-            draw(kit.image(face, "face.\(s.faces[k])", ox + slot.x, oy + slot.y))
+            // a carry-in campaign without its imported results: the face's _grayed copy, disabled (0x680cd0)
+            let face = s.faces[k] + (campaignAvailable(CampaignFile.sets[set][k]) ? "" : "_grayed")
+            guard let slot = l("Campaign_\(k)"), let fr = MenuKit.find(layers("Campaign_Splashscreens.192x154.\(face)"), "frame 001") else { continue }
+            draw(kit.image(fr, "face.\(face)", ox + slot.x, oy + slot.y))
         }
         draw(kit.image(l("Frame"), s.layout, ox, oy))   // created last: over the faces
     }
@@ -413,15 +427,50 @@ final class MenuView: NSView {
     func clickCampaigns(_ set: Int, _ x: Float, _ y: Float) {
         guard let f = layers(campaignSet(set).layout) else { return }
         let (ox, oy) = dialogOrigin(800, 599)
-        for k in 0..<6 where hit(MenuKit.find(f, "Campaign_\(k)"), ox, oy, x, y) { chooseCampaign(CampaignFile.sets[set][k]); return }
+        for k in 0..<6 where hit(MenuKit.find(f, "Campaign_\(k)"), ox, oy, x, y) {
+            let id = CampaignFile.sets[set][k]
+            if campaignAvailable(id) { chooseCampaign(id) }   // a disabled button takes no press (0x5a0dd0, +0xe4)
+            return
+        }
         if hit(MenuKit.find(f, "Cancel_Button"), ox, oy, x, y, w: 76, h: 44) { screen = .main }
     }
+    func storedCampaigns() -> Set<String> {
+        if let s = carryStored { return s }
+        let s = CarryoverStore.load(Renderer.carryStoreURL).stored
+        carryStored = s
+        return s
+    }
+    /// The selection screen's check per button (0x680cd0 calls the campaign's vtable +0x2c, 0x5aa330).
+    func campaignAvailable(_ id: Int) -> Bool { campaign(id).map { $0.missingCarryIn(stored: storedCampaigns()).isEmpty } ?? true }
+    /// The short names 0x874500 gives the campaign ids, for campaign.grayed_out_help.<name> (only
+    /// the two carry-in campaigns can be greyed).
+    static let campaignShortNames: [Int: String] = [12: "gathering_storm", 18: "winds_of_war"]
+    /// A campaign button's right-click help (+0x80, 0x680cd0): the expansions' sets show the
+    /// campaign's description (0x5a9840), a greyed button campaign.grayed_out_help.<short name>.
+    func campaignHelp(_ set: Int, _ x: Float, _ y: Float) -> (text: String, cx: Int, cy: Int)? {
+        guard set != 0, let f = layers(campaignSet(set).layout) else { return nil }
+        let (ox, oy) = dialogOrigin(800, 599)
+        for k in 0..<6 {
+            guard let l = MenuKit.find(f, "Campaign_\(k)"), hit(l, ox, oy, x, y) else { continue }
+            let id = CampaignFile.sets[set][k]
+            var t = campaign(id)?.description ?? ""
+            if !campaignAvailable(id), let n = MenuView.campaignShortNames[id] { t = strings["campaign.grayed_out_help.\(n)"] ?? t }
+            return t.isEmpty ? nil : (t, ox + l.x + l.width / 2, oy + l.y + l.height / 2)
+        }
+        return nil
+    }
+    override func rightMouseDown(with e: NSEvent) {
+        let (x, y) = canvasPoint(e)
+        if notice == nil, popup == nil, options == nil, case .campaigns(let set) = screen { heldHelp = campaignHelp(set, x, y); needsDisplay = true }
+    }
+    override func rightMouseUp(with e: NSEvent) { if heldHelp != nil { heldHelp = nil; needsDisplay = true } }
     /// A campaign picked (0x76eb80 -> 0x76f320): a carry-in campaign needs the results of the ones
-    /// it imports from (data/carryover.dat, which the remake does not keep yet), else 0x76c110 shows
-    /// its message and nothing starts; otherwise the first scenario's briefing.
+    /// it imports from (CarryoverStore, the exe's data/carryover.dat), else 0x76c110 shows its
+    /// message and nothing starts; otherwise the first scenario's briefing. The selection screen
+    /// greys such a button, so only other ways in (the --screen choose hook) reach the message.
     func chooseCampaign(_ id: Int) {
         if let c = campaign(id) {
-            let missing = c.missingCarryIn(stored: [])
+            let missing = c.missingCarryIn(stored: storedCampaigns())
             if !missing.isEmpty {
                 notice = c.carryInRefusal(missing: missing, strings: strings)
                 return
@@ -433,7 +482,9 @@ final class MenuView: NSView {
     /// A text-only basic dialog with OK (the 0x5595d0 / 0x558b90 layout of BasicDialog.swift):
     /// layers.dialog.generic round a text band of the fitted lines (Prose 18, black, the grey halo)
     /// and the OK button under it, centred on the screen.
-    func noticeBox(_ msg: String) -> (items: [UIItem], ok: UIRect)? {
+    /// With `centre` it is a right-click help box instead (a basic dialog without buttons, the
+    /// remake's pointBoxQuads look): centred there, kept on the screen.
+    func noticeBox(_ msg: String, centre: (Int, Int)? = nil) -> (items: [UIItem], ok: UIRect)? {
         guard let gen = kit.file("dialog.generic"), let okf = kit.file("button.ok"), let okl = MenuKit.find(okf, "Released") else { return nil }
         let f = kit.font(18), lh = f.lineHeight
         let fit = Renderer.fitWrap(msg, font: f, minW: 0, maxW: 1024 - 150)
@@ -442,8 +493,10 @@ final class MenuView: NSView {
         let m = bf.map(Renderer.sliceMargins) ?? (l: 12, t: 8, r: 13, b: 9)
         let bandW = fit.w + m.l + m.r, bandH = th + m.t + m.b
         let bw = okl.x + okl.width, bh = okl.y + okl.height
-        let W = max(bandW, 15 + bw) + 29, H = 15 + bandH + 10 + bh + 31
-        let x = (1024 - W) / 2, y = (768 - H) / 2, inner = W - 29
+        let help = centre != nil
+        let W = (help ? bandW : max(bandW, 15 + bw)) + 29, H = help ? bandH + 31 : 15 + bandH + 10 + bh + 31
+        let x = centre.map { max(0, min($0.0 - W / 2, 1024 - W)) } ?? (1024 - W) / 2
+        let y = centre.map { max(0, min($0.1 - H / 2, 768 - H)) } ?? (768 - H) / 2, inner = W - 29
         var out = [UIItem(key: "notice|generic|\(W)x\(H)", make: { Renderer.nineSlice(gen, w: W, h: H) }, x: x, y: y, w: W, h: H)]
         let bx = x + 15 + (inner - bandW) / 2, by = y + 15
         if let bf = bf { out.append(UIItem(key: "notice|band|\(band)|\(bandW)x\(bandH)", make: { Renderer.nineSlice(bf, w: bandW, h: bandH) }, x: bx, y: by, w: bandW, h: bandH)) }
@@ -453,7 +506,7 @@ final class MenuView: NSView {
             out.append(UIItem(key: "notice|text|\(line)", make: { f.render(line, colour: (0, 0, 0), halo: Renderer.armyHalo) }, x: x + 15 + (inner - fit.w) / 2 + (fit.w - w) / 2, y: by + m.t + (th - shown.count * lh) / 2 + i * lh, w: w, h: f.size))
         }
         let ok = UIRect(x + 15 + (inner - bw) / 2, y + 15 + bandH + 10, bw, bh)
-        out += kit.button("ok", look(ok), ok.x, ok.y)
+        if !help { out += kit.button("ok", look(ok), ok.x, ok.y) }
         return (out, ok)
     }
     func scenarioMap(_ id: Int, _ index: Int) -> MapFile? {

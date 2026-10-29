@@ -10,6 +10,10 @@ public struct CampaignFile {
     /// The campaigns whose results a carry-in campaign starts from (header +8, read with the
     /// carry-in flag +0x38; 0x5a9d1a).
     public let carryInCampaigns: [String]
+    /// The "choose your position" block is on (header +0x4c, 0x5ad6f0; The Last Bastion's
+    /// "Choose your conqueror!"): at map start the carried human heroes go to the lists of the
+    /// colour they played (0x5bd290 from 0x4d12d0) and human placeholders take from their colour's.
+    public let choosesPosition: Bool
     let slices: [Data]
     public var count: Int { slices.count }
 
@@ -48,9 +52,11 @@ public struct CampaignFile {
             if cin { let n = Int(r.u16()); sources = (0..<n).map { _ in r.string16() } }
             cout = r.u8() != 0
         }
+        var position = false
         if hver >= 3 {   // the "choose your position" block (0x5ad6f0)
             let v = r.u16()
-            if r.u8() != 0 {
+            position = r.u8() != 0
+            if position {
                 _ = r.string16(); _ = r.u8()
                 for _ in 0..<6 where r.u8() != 0 {
                     _ = r.u32()
@@ -58,7 +64,7 @@ public struct CampaignFile {
                 }
             }
         }
-        carryIn = cin; carryOut = cout; carryInCampaigns = sources
+        carryIn = cin; carryOut = cout; carryInCampaigns = sources; choosesPosition = position
         let n = Int(r.u16())
         let sizes = (0..<n).map { _ in Int(r.u32()) }
         var at = r.pos, out: [Data] = []
@@ -124,7 +130,73 @@ public struct Carryover: Codable {
     /// The human's carried artifact pool (t_carryover_data +8, one list per artifact id): the
     /// won map's carry-out artifacts taken off its heroes, for the next map's strongest hero.
     public var artifacts: [Int]? = nil
+    /// The colour the `human` heroes played (each carried hero's +0x598, the owner's colour when
+    /// 0x4e5470 builds the carry); nil once merged or redistributed.
+    public var humanColour: Int? = nil
     public init() {}
+
+    /// 0x5bd290 (map start in a campaign with the position choice): every human-list hero whose
+    /// colour is a player colour moves to the end of that colour's list.
+    public mutating func distributeHumanByColour() {
+        guard let col = humanColour, (0..<6).contains(col) else { return }
+        byColour[col, default: []] += human
+        human = []; humanColour = nil
+    }
+}
+
+/// The finished campaigns' carry-out (data/carryover.dat, re/campaign_carryover_store_spec.md):
+/// one entry per campaign name, "cross_campaign_carryover.<name>.h4d" in the exe's H4R archive.
+/// The remake keeps the same contents as JSON (the exe's payload is its t_hero serialization).
+public struct CarryoverStore: Codable {
+    public struct Entry: Codable {
+        /// The entry's flag (u8 after the u16 1, entry +8): the campaign's carry-out flag +0x39.
+        public var carries: Bool
+        /// The carry written in the cross-campaign mode (0x5bcf60 with 0: no scores); nil without the flag.
+        public var carry: Carryover?
+        /// The entry's time stamp (time(0), 0x8020b0 / 0x8012d0).
+        public var time: Date
+    }
+    public var entries: [String: Entry] = [:]
+    public init() {}
+
+    /// 0x5aa960 (from 0x771070 when the won scenario was the campaign's last): the campaign's
+    /// entry is replaced (or added), the others stay.
+    public mutating func record(_ c: CampaignFile, carry: Carryover, at time: Date = Date()) {
+        var stored: Carryover? = nil
+        if c.carryOut { var k = carry; k.scores = nil; stored = k }
+        entries[c.name] = Entry(carries: c.carryOut, carry: stored, time: time)
+    }
+    /// The names a carry-in check counts as present (0x5aa330: the entry exists and its flag is set).
+    public var stored: Set<String> { Set(entries.filter { $0.value.carries }.map(\.key)) }
+
+    /// 0x5aa580 (the campaign's vtable +0x10, from 0x76f320 after the check): a campaign without
+    /// the carry-in flag starts from an empty carry; else every imported campaign's entry, in header
+    /// order, is appended (0x5bc000: the artifact pool, each colour's list, the human list). A
+    /// missing or flagless entry gives no carry at all (nil). With the position choice each entry's
+    /// human heroes then join the list of the colour they played (0x5bd290).
+    public func carryIn(for c: CampaignFile) -> Carryover? {
+        guard c.carryIn else { return Carryover() }
+        var out = Carryover(), parts: [Carryover] = []
+        for name in c.carryInCampaigns {
+            guard let e = entries[name], e.carries, let k = e.carry else { return nil }
+            parts.append(k)
+            for (col, hs) in k.byColour.sorted(by: { $0.key < $1.key }) { out.byColour[col, default: []] += hs }
+            if let a = k.artifacts { out.artifacts = (out.artifacts ?? []) + a }
+        }
+        // the human list in entry order; with the position choice 0x5bd290 later moves each hero
+        // to the end of its colour's list (after every entry's computer heroes of that colour)
+        for k in parts {
+            if c.choosesPosition, let col = k.humanColour, (0..<6).contains(col) { out.byColour[col, default: []] += k.human }
+            else { out.human += k.human }
+        }
+        return out
+    }
+    public static func load(_ url: URL) -> CarryoverStore {
+        (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode(CarryoverStore.self, from: $0) } ?? CarryoverStore()
+    }
+    public func save(_ url: URL) throws {
+        try JSONEncoder().encode(self).write(to: url, options: .atomic)
+    }
 }
 
 extension GameState {
@@ -135,6 +207,7 @@ extension GameState {
         var mine = heroes.flatMap { $0.members } + towns.filter(\.owned).flatMap { $0.garrisonHeroes } + sanctuaryGuests.values.flatMap { $0.members }
         mine.sort { rank($0) > rank($1) }
         c.human = mine.map { SaveGame.state(of: $0) }
+        c.humanColour = map.humanColour
         // the map's carry-out artifacts leave their holders for the pool (0x5be4a0: the slot is
         // emptied after 0x5bbd20 records it), worn ones first, then the backpack
         let out = map.carryOutArtifacts
@@ -157,7 +230,11 @@ extension GameState {
     }
     /// Put the carried heroes on their placeholders (0x5bf3c0 / 0x5bef90): named ones claim their
     /// hero first, the others take the next of their side; each becomes an army of its own there.
-    public func placeCarried(_ c: Carryover) {
+    /// With the campaign's position choice (`byColour`, game +0x398 with +0x399) the human list is
+    /// first redistributed by colour (0x5bd290) and a human placeholder takes the next of its colour.
+    public func placeCarried(_ c: Carryover, positionChoice: Bool = false) {
+        var c = c
+        if positionChoice { c.distributeHumanByColour() }
         var human = c.human, byColour = c.byColour
         let holders = scenes.indices.flatMap { l in scenes[l].placed.filter { $0.type == "carryover_hero" }.map { (l, $0) } }
         var claimed: [String: SaveGame.HeroState] = [:]
@@ -173,7 +250,7 @@ extension GameState {
             let key = "\(l)|\(p.cellX)|\(p.cellY)"
             var st = claimed[key]
             if st == nil {
-                if owner == map.humanColour { if !human.isEmpty { st = human.removeFirst() } }
+                if owner == map.humanColour, !positionChoice { if !human.isEmpty { st = human.removeFirst() } }
                 else if var list = byColour[owner], !list.isEmpty { st = list.removeFirst(); byColour[owner] = list }
             }
             level = l

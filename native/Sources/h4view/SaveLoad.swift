@@ -23,6 +23,12 @@ extension Renderer {
         try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
         return d
     }
+    /// The finished campaigns' results (the exe's data/carryover.dat; CarryoverStore): next to the
+    /// saves, or H4CARRYSTORE for testing.
+    static var carryStoreURL: URL {
+        if let p = ProcessInfo.processInfo.environment["H4CARRYSTORE"] { return URL(fileURLWithPath: p) }
+        return savesDirectory.deletingLastPathComponent().appendingPathComponent("campaign_carryover.json")
+    }
     static func savedGames() -> [(name: String, date: Date)] {
         let dir = savesDirectory
         let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []

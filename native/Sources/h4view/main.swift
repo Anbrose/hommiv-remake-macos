@@ -155,7 +155,8 @@ func makeSession(_ args: [String]) throws -> GameSession {
         guard p.count == 3, p[0] == "campaign", let id = Int(p[1]), let k = Int(p[2]) else { return nil }
         return (id, k)
     }()
-    var map = try campaignRef.map { try MapFile(data: CampaignFile.load($0.id, from: archive).scenario($0.index), objectNames: objNames) }
+    let campaignFile = try campaignRef.map { try CampaignFile.load($0.id, from: archive) }
+    var map = try campaignRef.map { try MapFile(data: campaignFile!.scenario($0.index), objectNames: objNames) }
         ?? MapFile(data: Data(contentsOf: URL(fileURLWithPath: args[2])), objectNames: objNames)
     lap("loaded '\(map.name)'")
     if ProcessInfo.processInfo.environment["H4DEBUG"] != nil {
@@ -165,12 +166,16 @@ func makeSession(_ args: [String]) throws -> GameSession {
     let textURL = URL(fileURLWithPath: args[1]).deletingLastPathComponent().appendingPathComponent("text.h4r")
     let ruleTables = (try? H4Archive(url: textURL)).flatMap { try? RuleTables(archive: $0) }
     // a carry-in campaign's first scenario without the imported heroes: the exe never starts it
-    // (0x76c110 refuses with its message before the map loads, re/carryover_placeholder_spec.md)
-    if let ref = campaignRef, ref.index == 0, carryFile == nil, let c = try? CampaignFile.load(ref.id, from: archive) {
-        let missing = c.missingCarryIn(stored: [])
+    // (0x76c110 refuses with its message before the map loads, re/carryover_placeholder_spec.md);
+    // with them, the finished campaigns' stored heroes are the carry (0x5aa580)
+    var storedCarry: Carryover? = nil
+    if let ref = campaignRef, ref.index == 0, carryFile == nil, let c = campaignFile, c.carryIn {
+        let store = CarryoverStore.load(Renderer.carryStoreURL)
+        let missing = c.missingCarryIn(stored: store.stored)
         if !missing.isEmpty {
             throw H4Error.missing(c.carryInRefusal(missing: missing, strings: ruleTables?.strings ?? [:]))
         }
+        storedCarry = store.carryIn(for: c)
     }
     if let t = ruleTables {
         let expansion = max(0, min(2, map.version - 27))
@@ -319,12 +324,17 @@ func makeSession(_ args: [String]) throws -> GameSession {
     // a campaign scenario: the heroes carried from the last one take their placeholders
     if let ref = campaignRef {
         game.campaign = ref
-        let carry = carryFile.flatMap { try? Data(contentsOf: URL(fileURLWithPath: $0)) }.flatMap { try? JSONDecoder().decode(Carryover.self, from: $0) } ?? Carryover()
-        game.placeCarried(carry)
+        let carry = carryFile.flatMap { try? Data(contentsOf: URL(fileURLWithPath: $0)) }.flatMap { try? JSONDecoder().decode(Carryover.self, from: $0) } ?? storedCarry ?? Carryover()
+        game.placeCarried(carry, positionChoice: campaignFile?.choosesPosition ?? false)
         game.carriedIn = carry   // the earlier scenarios' scores go on to the campaign's results
         lap("campaign \(ref.id) scenario \(ref.index + 1): \(game.heroes.map { "\($0.name)@\($0.x),\($0.y) lv\($0.level)" }) carried in")
         if let out = ProcessInfo.processInfo.environment["H4CARRYOUT"] {   // debugging: write what this scenario would hand on, and stop
             try? JSONEncoder().encode(game.carryOut()).write(to: URL(fileURLWithPath: out)); print("carry-out written"); exit(0)
+        }
+        if ProcessInfo.processInfo.environment["H4FINISHCAMPAIGN"] != nil, let c = campaignFile {   // debugging: store this map's heroes as the campaign's finished result, and stop
+            var store = CarryoverStore.load(Renderer.carryStoreURL)
+            store.record(c, carry: game.carryOut())
+            try store.save(Renderer.carryStoreURL); print("campaign '\(c.name)' recorded in \(Renderer.carryStoreURL.path)"); exit(0)
         }
     }
     if ProcessInfo.processInfo.environment["H4DEBUG"] != nil {

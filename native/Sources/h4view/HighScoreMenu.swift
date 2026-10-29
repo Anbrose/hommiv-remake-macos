@@ -181,6 +181,18 @@ extension MenuView {
     }
     func afterEpilogue(id: Int, index: Int, carry: String?) {
         if let c = campaign(id), index + 1 < c.count { screen = .briefing(id: id, index: index + 1, carry: carry) }
-        else { campaignResultsScroll = 0; screen = .campaignResults(id: id, carry: carry) }
+        else {
+            if let c = campaign(id) { storeFinishedCampaign(c, carry: carry) }
+            campaignResultsScroll = 0; screen = .campaignResults(id: id, carry: carry)
+        }
+    }
+    /// The last scenario won, after its epilogue (0x7712c1 -> 0x5aa960): the game's carry becomes the
+    /// campaign's entry in the finished campaigns' store, replacing an earlier one (the exe asks to
+    /// retry when the file cannot be written; the remake keeps the old store then).
+    func storeFinishedCampaign(_ c: CampaignFile, carry: String?) {
+        let k = carry.flatMap { try? Data(contentsOf: URL(fileURLWithPath: $0)) }.flatMap { try? JSONDecoder().decode(Carryover.self, from: $0) } ?? Carryover()
+        var store = CarryoverStore.load(Renderer.carryStoreURL)
+        store.record(c, carry: k)
+        try? store.save(Renderer.carryStoreURL)
     }
 }

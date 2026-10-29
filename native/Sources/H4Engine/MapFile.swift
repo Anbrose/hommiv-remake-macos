@@ -429,6 +429,8 @@ public struct MapFile {
         let r = ByteReader(d)
         var out: [MapObject] = []
         var p = 0
+        let mid = Double(size - 1) / 2
+        func inDiamond(_ x: Int, _ y: Int) -> Bool { abs(Double(x) - mid) + abs(Double(y) - mid) <= Double(size) / 2 }
         while p + 30 < end {
             defer { p += 1 }
             guard r.byte(at: p + 12) == 1 else { continue }
@@ -451,7 +453,9 @@ public struct MapFile {
                 continue
             }
             // a player's army (with or without heroes: The Pirate's Daughter starts a pirate band
-            // of its own beside the heroes); a neutral one is a stack to fight
+            // of its own beside the heroes); a neutral one is a stack to fight. (A heroless one off
+            // the playable diamond is an editor leftover: two contest maps keep one at (0,0).)
+            if owner != 6 && heroes.isEmpty && !inDiamond(x, y) { continue }
             var o = MapObject(name: "army", type: owner == 6 ? "army" : "hero_army", subtype: "", terrain: "", x: x, y: y, level: lv)
             o.army = stacks; o.heroes = heroes
             o.owner = owner == 6 ? nil : owner

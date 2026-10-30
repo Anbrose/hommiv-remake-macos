@@ -123,6 +123,15 @@ public struct Cell {
     public let variant: UInt8
     public let overlays: [Overlay]
     public let roads: [Road]
+    /// The cell record's rock byte (+3; heroes4.exe reader 0x413b30 keeps it 0..2 in cell bits
+    /// 8-9): 0 none, 1 cave, 2 stone ("rock.<none|cave|Stone>.terrain").
+    public var rock: UInt8 = 0
+    /// The byte after it (+4, cell bit 10): a rock cell whose terrain is still drawn (the rock's
+    /// rim, under the cavern wall pieces).
+    public var rockEdge = false
+    /// Solid rock: the terrain renderer (0x789d05 / 0x78a18b) fills the cell black (0x58a4d0 with
+    /// colour 0) instead of drawing its terrain, overlays and roads.
+    public var isSolidRock: Bool { rock != 0 && !rockEdge }
 }
 
 /// A decoded .h4c scenario. Format: tools/h4map.py.
@@ -314,7 +323,9 @@ public struct MapFile {
             guard m <= 8, q + 1 + 4 * m <= d.count else { return nil }
             var rd: [Road] = []
             for i in 0..<m { let p = q + 1 + i * 4; rd.append(Road(kind: r.byte(at: p), mask: Int(r.byte(at: p + 1)), order: r.byte(at: p + 3))) }
-            out.append(Cell(type: t, variant: v, overlays: ov, roads: rd))
+            var cell = Cell(type: t, variant: v, overlays: ov, roads: rd)
+            cell.rock = r.byte(at: pos + 3); cell.rockEdge = r.byte(at: pos + 4) != 0
+            out.append(cell)
             pos = q + 1 + 4 * m
         }
         return (out, pos)

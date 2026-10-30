@@ -127,6 +127,8 @@ public struct SaveGame: Codable {
         public var mapEventsEnabled: [Bool]
         public var townEventsEnabled: [String: [Bool]]
         public var placedEventsEnabled: [Bool]? = nil
+        public var heroEventsEnabled: [String: [Bool]]? = nil
+        public var armyEventsEnabled: [String: [Bool]]? = nil
     }
 
     public func write(to url: URL) throws {
@@ -163,7 +165,9 @@ extension GameState {
         let sc = SaveGame.ScriptSave(numbers: scripts.numbers, flags: scripts.flags, messages: scripts.messages,
                                      victoryText: scripts.victoryText, lossText: scripts.lossText, standardVictoryOn: scripts.standardVictoryOn,
                                      mapEventsEnabled: scripts.mapEvents.map { $0.enabled }, townEventsEnabled: townEv,
-                                     placedEventsEnabled: scripts.placedEvents.map { $0.enabled })
+                                     placedEventsEnabled: scripts.placedEvents.map { $0.enabled },
+                                     heroEventsEnabled: scripts.heroEvents.mapValues { $0.map(\.enabled) },
+                                     armyEventsEnabled: scripts.armyEvents.mapValues { $0.map(\.enabled) })
         var s = SaveGame(mapPath: mapPath, day: day, resources: resources, heroes: heroStates, towns: townStates, mines: mineFlags,
                          dwellings: dwellingCounts, monsters: monsterStates, removed: scene.removed, moved: scene.moved, scripts: sc,
                          outcome: outcome, victoryDays: victoryDays)
@@ -247,6 +251,16 @@ extension GameState {
             guard let t = Int(k), var evs = scripts.townEvents[t] else { continue }
             for (i, e) in list.enumerated() where i < evs.count { evs[i].enabled = e }
             scripts.townEvents[t] = evs
+        }
+        for (k, list) in s.scripts.heroEventsEnabled ?? [:] {
+            guard var evs = scripts.heroEvents[k] else { continue }
+            for (i, e) in list.enumerated() where i < evs.count { evs[i].enabled = e }
+            scripts.heroEvents[k] = evs
+        }
+        for (k, list) in s.scripts.armyEventsEnabled ?? [:] {
+            guard var evs = scripts.armyEvents[k] else { continue }
+            for (i, e) in list.enumerated() where i < evs.count { evs[i].enabled = e }
+            scripts.armyEvents[k] = evs
         }
         outcome = s.outcome; victoryDays = s.victoryDays
         // a save from before the teams: a running hold was the human's

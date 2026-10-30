@@ -282,7 +282,7 @@ final class EndSequenceTests: XCTestCase {
         XCTAssertTrue(g.scripts.messages.contains { $0.hasPrefix("After defeating Adram") })
     }
 
-    func loadGame(campaign: (Int, Int)? = nil) throws -> GameState {
+    func loadGame(campaign: (Int, Int)? = nil, allLevels: Bool = false) throws -> GameState {
         let data = URL(fileURLWithPath: NSHomeDirectory() + "/Games/HoMM4/prefix/drive_c/Games/HoMM4/Data")
         let mapURL = data.deletingLastPathComponent().appendingPathComponent("Maps/A Land without a King.h4c")
         guard FileManager.default.fileExists(atPath: mapURL.path) else { throw XCTSkip("game data not installed") }
@@ -294,8 +294,8 @@ final class EndSequenceTests: XCTestCase {
         let map = try campaign.map { try MapFile(data: CampaignFile.load($0.0, from: archive).scenario($0.1), objectNames: names) }
             ?? MapFile(data: Data(contentsOf: mapURL), objectNames: names)
         let masks = try TransitionMasks(data: archive.payload("transition.Transitions.h4d"))
-        let scene = try MapScene(map: map, level: 0, archive: archive, masks: masks)
-        let g = GameState(map: map, level: 0, scenes: [scene])
+        let scenes = try (0..<(allLevels ? max(1, map.levels) : 1)).map { try MapScene(map: map, level: $0, archive: archive, masks: masks) }
+        let g = GameState(map: map, level: 0, scenes: scenes)
         g.tables = tables
         g.registerObjects(townFactions: [:])
         g.quickCombatOnly = true

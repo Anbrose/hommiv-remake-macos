@@ -48,6 +48,7 @@ extension GameState {
                 for k in passabilities.indices { passabilities[k].forcedExit = [:] }   // (the player's view of guard zones is not the computer's)
                 playing(colour) {
                     caravanArrivals(for: colour)   // its turn starts (0x4b2ce0 -> 0x4b1010)
+                    runOwnedTimedEvents(for: colour)   // its towns', armies' and heroes' timed events (0x7d5750, 0x523710, 0x7321a0)
                     // start_turn 0x47bd10 -> 0x7e2ee0, 0x47bfb0, 0x47c170
                     aiComputeWeights(colour)
                     aiComputeBudget(colour, withIncome: false)

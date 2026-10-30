@@ -27,6 +27,9 @@ public struct MapObject {
     public var monsterRange: (min: Int, max: Int)? = nil
     /// A sign's or bottle's message; the name of an event trigger's or Pandora's box's event.
     public var text: String? = nil
+    /// A placed army's own events (t_army record v6+: three standard ones, then the timed,
+    /// triggerable and continuous lists).
+    public var armyEvents: [MapEvent] = []
     /// A prison's hero.
     public var prisoner: MapHero? = nil
     /// An obelisk marker's radius for the dig site.
@@ -460,11 +463,25 @@ public struct MapFile {
             o.army = stacks; o.heroes = heroes
             o.owner = owner == 6 ? nil : owner
             o.boat = armyBoat(d, at: rd.pos, version: v)
+            o.armyEvents = armyEvents(d, at: rd.pos, version: v)
             out.append(o)
         }
         return out
     }
 
+    /// The events of a t_army record (v6+, read as armyBoat below lays the record out).
+    static func armyEvents(_ d: Data, at start: Int, version v: Int) -> [MapEvent] {
+        guard v >= 6 else { return [] }
+        var sr = ScriptReader(d, at: start)
+        do {
+            if try (v >= 5 ? sr.byte() : 1) != 0 { _ = try sr.byte(); _ = try sr.byte() }
+            var out = try (0..<3).map { try sr.builtinEvent(slot: $0) }
+            out += try sr.list { try $0.timedEvent() }
+            out += try sr.list { try $0.triggerableEvent() }
+            out += try sr.list { try $0.continuousEvent() }
+            return out
+        } catch { return [] }
+    }
     /// What follows a t_army record's creature array (0x523b8e..0x523e81): v4+ the formation
     /// (v5+ a u8 "set" flag first; when 0 nothing else), i8 and u8; v6+ three standard events and
     /// the timed, triggerable and continuous lists; v7+ i8 ship alignment (-1 none). Returns
@@ -520,7 +537,7 @@ public struct MapFile {
             // the class's own body (vtable slot 36, objbodies_spec)
             var sr = ScriptReader(d, at: rd.pos)
             switch cats[0] {
-            case "sign", "ocean_bottle", "event_trigger", "pandoras_box":
+            case "sign", "ocean_bottle", "event_trigger", "pandoras_box", "deletion_marker":   // (a marker's name: 0x44a750)
                 if let v = try? sr.word(), v == 1, let t = try? sr.string() { o.text = t }
             case "garrison", "mine":
                 // 0x7d3fb0 (a mine's body too, 0x7d3f60): u16 v, u8 owner (6 none); v >= 2: a flag when owned, 4 built-in events and

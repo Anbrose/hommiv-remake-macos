@@ -24,10 +24,15 @@ final class EndGameWindow {
 }
 
 extension Renderer {
-    /// The scenario is over: open the win / lose window once nothing else is up.
+    /// The scenario is over: open the win / lose window once nothing else is up. The levels the
+    /// last battle earned are taken first: the exe asks for them inside the experience award
+    /// (0x641310 -> 0x72bc80, before the end check 0x4d7800 of the battle's aftermath), so a hero
+    /// never reaches the end -- or the next scenario -- with levels still to take.
     func startEndSequenceIfDue() {
-        guard let g = game, let won = g.outcome, endGame == nil, !outcomeShown, prompt == nil, !inCombat,
+        guard let g = game, g.outcome != nil, endGame == nil, !outcomeShown, prompt == nil, !inCombat,
               g.scripts.messages.isEmpty else { return }
+        g.nextLevelUp()
+        guard g.levelUp == nil, let won = g.outcome else { return }
         outcomeShown = true
         sound?.stopAllLoops()   // 0x503bd0
         sound?.stopMusic()      // 0x7a4620

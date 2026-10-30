@@ -250,7 +250,7 @@ extension Renderer {
         guard let g = game, ui != nil, !inCombat, !computerTurnBusy, endGame == nil, townOpen == nil, armySession == nil, caravanUI == nil,
               splitDialog == nil, puzzle == nil, !thievesGuildOpen, shop == nil, sanctuary == nil, hire == nil, mapRecruit == nil, optionsOpen == nil,
               spellBook == nil, menu == nil, !Renderer.scenarioInfoOpen, saveDialog == nil, prompt == nil, g.scripts.messages.isEmpty, g.choice == nil,
-              g.heroPick == nil, g.skillDialog == nil, g.teleportChoice == nil, g.levelUp == nil, market == nil, overview == nil, armyPopup == nil,
+              g.heroPick == nil, g.skillDialog == nil, g.teleportChoice == nil, g.levelUp == nil, g.booty == nil, market == nil, overview == nil, armyPopup == nil,
               popup == nil, adventureDialog == nil, creatureDialog == nil else { return false }
         return true
     }

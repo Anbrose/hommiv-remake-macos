@@ -20,6 +20,8 @@ public struct MapObject {
     public var army: [(creature: Int, count: Int)?]? = nil
     /// The heroes of a placed army (players' starting heroes are armies placed on the map).
     public var heroes: [MapHero] = []
+    /// The artifacts a placed army's creature stacks carry (each stack's backpack, slot order).
+    public var armyArtifacts: [Int] = []
     /// A placed army that starts at sea: its ship's alignment (t_army record v7+, 0x523e1c:
     /// i8, -1 = on land; 0 life, 1 order, 2 death, 3 chaos, 4 nature, 5 might).
     public var boat: Int? = nil
@@ -341,6 +343,12 @@ public struct MapFile {
     /// A creature array (0x640d00): u16 0, then 7 slots -- 0xff empty, 0 a creature stack
     /// (u16 version, i16 creature, i16 count[, u16 0]), 1 a hero (parseHero).
     static func parseCreatureArray(_ rd: inout ByteReader, heroes: inout [MapHero]) -> [(creature: Int, count: Int)?]? {
+        var artifacts: [Int] = []
+        return parseCreatureArray(&rd, heroes: &heroes, artifacts: &artifacts)
+    }
+    /// The same, keeping the stacks' artifacts (0x653760: u16 n, then each u16 id, a scroll or a
+    /// spell potion with its u16 spell).
+    static func parseCreatureArray(_ rd: inout ByteReader, heroes: inout [MapHero], artifacts: inout [Int]) -> [(creature: Int, count: Int)?]? {
         guard rd.remaining >= 2, rd.u16() == 0 else { return nil }
         var out: [(creature: Int, count: Int)?] = []
         for _ in 0..<7 {
@@ -362,6 +370,7 @@ public struct MapFile {
                     guard rd.remaining >= 2 else { return nil }
                     let a = rd.u16()
                     if a == 0x7c || a == 0xa6 { guard rd.remaining >= 2 else { return nil }; _ = rd.u16() }
+                    if a <= 0xf8 { artifacts.append(Int(a)) }
                 }
             }
             out.append(id >= 0 ? (id, n) : nil)
@@ -440,8 +449,8 @@ public struct MapFile {
             let owner = Int(r.byte(at: p + 15))
             guard (3...9).contains(v), owner <= 6 else { continue }
             var rd = ByteReader(d, at: p + 16)
-            var heroes: [MapHero] = []
-            guard let stacks = MapFile.parseCreatureArray(&rd, heroes: &heroes) else { continue }
+            var heroes: [MapHero] = [], carried: [Int] = []
+            guard let stacks = MapFile.parseCreatureArray(&rd, heroes: &heroes, artifacts: &carried) else { continue }
             if !stacks.contains(where: { $0 != nil }) && heroes.isEmpty {
                 // an army with no creatures and a ship is an empty ship waiting on the water (the
                 // editor's boats are t_army records; 0x523a30 reads them like any other army)
@@ -457,7 +466,7 @@ public struct MapFile {
             // the playable diamond is an editor leftover: two contest maps keep one at (0,0).)
             if owner != 6 && heroes.isEmpty && !inDiamond(x, y) { continue }
             var o = MapObject(name: "army", type: owner == 6 ? "army" : "hero_army", subtype: "", terrain: "", x: x, y: y, level: lv)
-            o.army = stacks; o.heroes = heroes
+            o.army = stacks; o.heroes = heroes; o.armyArtifacts = carried
             o.owner = owner == 6 ? nil : owner
             o.boat = armyBoat(d, at: rd.pos, version: v)
             out.append(o)

@@ -17,7 +17,7 @@ extension Renderer {
     func iconSheet(_ name: String) -> [String: UILayer] {
         if let s = iconSheets[name] { return s }
         var map: [String: UILayer] = [:]
-        if let ui = ui, let d = try? ui.archive.payload("layers.icons.\(name).h4d"), let f = try? LayerFile(data: d) {
+        if let ui = ui, let d = ui.payload("layers.icons.\(name).h4d"), let f = try? LayerFile(data: d) {   // the expansion's sheet first (x2 adds e.g. Frost_Hammer)
             for l in f.layers { map[l.name.lowercased()] = l }
         }
         iconSheets[name] = map

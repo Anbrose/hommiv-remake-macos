@@ -17,7 +17,7 @@ extension Renderer {
     /// its messages, a level up): clicks and keys on the map and the panel do nothing (inferred).
     var computerTurnBusy: Bool {
         guard let g = game, g.computerTurn != nil else { return false }
-        return !inCombat && prompt == nil && g.levelUp == nil && g.scripts.messages.isEmpty
+        return !inCombat && prompt == nil && g.levelUp == nil && g.booty == nil && g.scripts.messages.isEmpty
     }
 
     /// t_ai_progress_bar (0x479c10): a t_basic_dialog holding one picture, the t_progress_bar

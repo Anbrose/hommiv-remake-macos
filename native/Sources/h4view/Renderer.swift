@@ -231,6 +231,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     var townSelected: (row: Int, k: Int)? = nil
     var townDrag: (row: Int, k: Int)? = nil
     var shop: ShopState? = nil             // a blacksmith's or conservatory's shop
+    var bootyView: BootyView? = nil        // the spoils dialog's places and the artifact in hand
     var sanctuary: SanctuaryOffer? = nil   // a sanctuary's dialog
     var heroPickSelected: Int? = nil   // the ring picked in an altar's / magic gem's hero pick
     var puzzle: String? = nil              // the puzzle map shown (an obelisk colour)
@@ -669,6 +670,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         out += shopQuads().modal()
         out += sanctuaryQuads().modal()
         out += levelUpQuads().modal()
+        out += bootyQuads().modal()   // the spoils come before the level-ups (0x7fcdb0 runs first) [inferred]
         out += splitQuads().modal()
         out += choiceQuads().modal()
         out += heroPickQuads().modal()

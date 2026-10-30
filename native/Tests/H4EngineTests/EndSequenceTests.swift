@@ -276,10 +276,41 @@ final class EndSequenceTests: XCTestCase {
         g.place(enemy: adram)
         g.runContinuous()
         XCTAssertNil(g.outcome)   // not yet
+        let worn = adram.members.flatMap { $0.equipped.compactMap { $0 } + $0.backpack }
+        XCTAssertTrue(worn.contains(236))
         g.finishHeroBattle(hero: dog, enemy: adram, won: true, army: dog.army, enemyArmy: [], value: 0)
-        XCTAssertTrue(dog.members.contains { $0.equipped.contains(236) || $0.backpack.contains(236) })
-        XCTAssertEqual(g.outcome, true)   // 0x4d7800 ran the continuous events (0x4ddf30) after the battle
+        // the spoils dialog (0x7fcdb0 -> t_dialog_booty) holds everything Adram carried, and the
+        // post-battle step (0x4d7800) waits for it
+        let b = try XCTUnwrap(g.booty)
+        XCTAssertEqual(b.artifacts, worn)
+        XCTAssertTrue(adram.members.allSatisfy { $0.backpack.isEmpty && $0.equipped.allSatisfy { $0 == nil } })
+        XCTAssertNil(g.outcome)
+        // the Frost Hammer dragged onto Dogwoggle's portrait, the rest left to Okay (booty to the first hero)
+        XCTAssertTrue(g.bootyGive(try XCTUnwrap(b.artifacts.firstIndex(of: 236)), to: dog))
+        XCTAssertTrue(dog.equipped.contains(236) || dog.backpack.contains(236))
+        if g.booty != nil { XCTAssertNil(g.outcome); g.closeBooty() }
+        XCTAssertNil(g.booty)
+        XCTAssertEqual(g.outcome, true)   // 0x4d7800 ran the continuous events (0x4ddf30) after the dialog
         XCTAssertTrue(g.scripts.messages.contains { $0.hasPrefix("After defeating Adram") })
+    }
+
+    /// A computer winner takes the beaten army's artifacts at once (0x7fdb96 -> 0x7fb560), no dialog.
+    func testComputerWinnerTakesTheSpoils() throws {
+        let g = try loadGame(campaign: (10, 0))
+        func army(_ name: String) throws -> Hero {
+            let o = try XCTUnwrap(g.map.objects.first { $0.heroes.contains { $0.name == name } })
+            let h = Hero.fromMap(o.heroes[0], alignment: "might", x: o.x, y: o.y, tables: g.tables, random: &g.random)
+            h.owner = o.owner ?? 0
+            return h
+        }
+        let dog = try army("Dogwoggle"), adram = try army("Adram Blacksword")
+        dog.backpack = [10]
+        g.heroes = [dog]
+        g.place(enemy: adram)
+        g.finishHeroBattle(hero: dog, enemy: adram, won: false, army: [], enemyArmy: adram.army, value: 0)
+        XCTAssertNil(g.booty)
+        XCTAssertTrue(adram.equipped.contains(10) || adram.backpack.contains(10))
+        XCTAssertTrue(dog.backpack.isEmpty)
     }
 
     func loadGame(campaign: (Int, Int)? = nil) throws -> GameState {

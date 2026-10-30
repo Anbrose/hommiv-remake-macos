@@ -120,6 +120,7 @@ public struct SaveGame: Codable {
         public var z: Int? = nil
         public var origin: MonthOrigin? = nil
         public var uid: Int? = nil
+        public var artifacts: [Int]? = nil
     }
     public struct ScriptSave: Codable {
         public var numbers: [String: Int], flags: [String: Bool], messages: [String]
@@ -156,7 +157,7 @@ extension GameState {
         var monsterStates: [SaveGame.MonsterState] = []
         for m in monsters {
             let extra: [SaveGame.Stack] = m.extra.map { SaveGame.Stack(creature: $0.creature, count: $0.count) }
-            monsterStates.append(SaveGame.MonsterState(x: m.x, y: m.y, name: m.name, creature: m.creature, count: m.count, extra: extra, z: m.z, origin: m.origin, uid: m.uid))
+            monsterStates.append(SaveGame.MonsterState(x: m.x, y: m.y, name: m.name, creature: m.creature, count: m.count, extra: extra, z: m.z, origin: m.origin, uid: m.uid, artifacts: m.artifacts.isEmpty ? nil : m.artifacts))
         }
         var townEv: [String: [Bool]] = [:]
         for (k, v) in scripts.townEvents { townEv["\(k)"] = v.map { $0.enabled } }
@@ -233,7 +234,7 @@ extension GameState {
         // the monsters as saved: the beaten ones are gone (their objects are in `removed`), the rest keep their size
         monsters = s.monsters.map { st in
             var m = Monster(x: st.x, y: st.y, name: st.name, creature: st.creature, count: st.count, extra: st.extra.map { ($0.creature, $0.count) })
-            m.z = st.z ?? 0; m.origin = st.origin
+            m.z = st.z ?? 0; m.origin = st.origin; m.artifacts = st.artifacts ?? []
             if let u = st.uid { m.uid = u }
             return m
         }

@@ -437,6 +437,8 @@ public final class GameState {
     public var pendingSiege: (hero: Hero, town: Int)?
     /// A battle with an enemy hero army waiting for the combat screen.
     public var pendingHeroBattle: (hero: Hero, enemy: Hero)?
+    /// The "Spoils of War" dialog after a won battle (Booty.swift): open while non-nil.
+    public var booty: Booty?
     /// Two of the player's armies met (the trade): the army screen of the two waits for the UI.
     public var pendingTrade: (hero: Hero, other: Hero)?
     /// Each adventure object's rolled contents and state, by "level|x|y".
@@ -563,6 +565,8 @@ public final class GameState {
         /// The lower-level stack spending what is left of the monster's value (heroes4.exe 0x7f32b0).
         /// The army's other stacks: a random monster's escort, or a placed army's further stacks.
         public var extra: [(creature: String, count: Int)] = []
+        /// What a placed army's stacks carry (their backpacks, t_stack_with_backpack): the spoils.
+        public var artifacts: [Int] = []
         /// What a month-spawned stack carries over from its spawn record (t_army +0xec..+0xf8,
         /// +0xb4, +0xb8); nil for every other stack (the exe's -1s, re/month_events_spec.md).
         public var origin: MonthOrigin? = nil
@@ -1057,6 +1061,7 @@ public final class GameState {
         }
         hero.army = army
         refreshMovement(hero)
+        var waits = false
         if monsters[i].bank == "script", let sb = scriptBattle {   // a script's fight: its win or lose action
             monsters.remove(at: i)
             scriptBattle = nil
@@ -1096,6 +1101,8 @@ public final class GameState {
             monsters.remove(at: i)
         } else if won {
             giveExperience(experience, to: hero)
+            // a placed army's stacks carried artifacts: the spoils (0x7fde50 on the beaten army)
+            waits = awardSpoils(monsters[i].artifacts, to: hero, human: true, heroBattle: false)
             rememberMonthSpawn(monsters[i])   // a beaten neutral stack's place (0x522f3a)
             scene.remove(p)
             passability.free(p.cellX, p.cellY)
@@ -1109,6 +1116,10 @@ public final class GameState {
         if !won && hero.heroless { heroes.removeAll { $0 === hero } }   // a beaten army without a hero is gone
         hero.target = nil
         pendingBattle = nil
+        if waits { return }   // the post-battle step follows the spoils dialog (closeBooty)
+        afterStackBattle()
+    }
+    func afterStackBattle() {
         runContinuous()
         checkScenario()
     }
@@ -1286,7 +1297,9 @@ public final class GameState {
                 let shown = stacks.max { (t.creature($0.creature)?.level ?? 0) < (t.creature($1.creature)?.level ?? 0) }
                 if let lead = shown, let k = stacks.firstIndex(where: { $0.creature == lead.creature }) {
                     var rest = stacks; rest.remove(at: k)
-                    monsters.append(Monster(x: p.cellX, y: p.cellY, name: p.name, creature: lead.creature, count: lead.count, extra: rest))
+                    var m = Monster(x: p.cellX, y: p.cellY, name: p.name, creature: lead.creature, count: lead.count, extra: rest)
+                    m.artifacts = record.armyArtifacts
+                    monsters.append(m)
                     passability.block(p.cellX, p.cellY); passability.openTrigger(p.cellX, p.cellY, object: Int.max)
                     if ProcessInfo.processInfo.environment["H4DEBUG"] != nil { print("army: \(stacks) at (\(p.cellX),\(p.cellY))") }
                 }

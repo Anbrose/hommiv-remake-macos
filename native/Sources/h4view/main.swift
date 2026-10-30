@@ -226,6 +226,7 @@ func makeSession(_ args: [String]) throws -> GameSession {
         guard !stacks.isEmpty else { continue }
         let h = game.mapHeroless(stacks, x: o.x, y: o.y, z: o.level, owner: map.humanColour, boat: o.boat.map { ["life", "order", "death", "chaos", "nature", "might"][$0] })
         if let m = movementLeft { h.movement = m }
+        h.backpack = o.armyArtifacts
         bands.append(h)
         lap("heroless army \(stacks.map { "\($0.count)x\($0.creature)" }) at (\(o.x),\(o.y))")
     }
@@ -293,7 +294,9 @@ func makeSession(_ args: [String]) throws -> GameSession {
     for o in map.objects where o.type == "hero_army" && o.owner != map.humanColour && o.heroes.isEmpty && o.level < scenes.count {
         let stacks = (o.army ?? []).compactMap { $0 }.compactMap { s in s.creature < RuleTables.creatureIds.count ? Hero.Stack(creature: RuleTables.creatureIds[s.creature], count: s.count) : nil }
         guard !stacks.isEmpty else { continue }
-        game.place(enemy: game.mapHeroless(stacks, x: o.x, y: o.y, z: o.level, owner: o.owner ?? 1, boat: o.boat.map { ["life", "order", "death", "chaos", "nature", "might"][$0] }))
+        let e = game.mapHeroless(stacks, x: o.x, y: o.y, z: o.level, owner: o.owner ?? 1, boat: o.boat.map { ["life", "order", "death", "chaos", "nature", "might"][$0] })
+        e.backpack = o.armyArtifacts   // what its stacks carry (the creatures' backpacks)
+        game.place(enemy: e)
     }
     for o in map.objects where o.type == "hero_army" && o.owner != map.humanColour && !o.heroes.isEmpty && o.level < scenes.count {
         let owned = game.towns.filter { $0.owner == o.owner }
@@ -426,6 +429,12 @@ if let out = snapshot {
     renderer.combat = combatScreen
     renderer.movies = movies
     if let m = ProcessInfo.processInfo.environment["H4SAVEDIALOG"] { renderer.openSaveDialog(m == "load" ? .load : .save) }   // snapshot the save / load dialog
+    if let b = ProcessInfo.processInfo.environment["H4BOOTY"], let h = game.heroes.first {   // snapshot the spoils dialog: "236,1,2" (H4BOOTYHELD=k: the k-th in hand)
+        game.debugSpoils(b.split(separator: ",").compactMap { Int($0) }, for: h)
+        if let k = ProcessInfo.processInfo.environment["H4BOOTYHELD"].flatMap({ Int($0) }), renderer.bootyState() != nil {
+            renderer.bootyView?.pressed = k; renderer.bootyView?.at = (500, 600)
+        }
+    }
     if let t = ProcessInfo.processInfo.environment["H4CHEAT"] { renderer.openCheatBox(text: t) }   // snapshot: the Tab box with this text
     if let m = ProcessInfo.processInfo.environment["H4MENU"] { if m == "game" { renderer.openGameMenu() } else if m == "info" { Renderer.scenarioInfoOpen = true } else { renderer.openSystemMenu() } }   // snapshot the system menu (game: the game menu, info: scenario information)
     // --walk snapshots resolve fights at once (H4WALKBATTLE=1: the battle waits, the map shows the meeting)
@@ -884,6 +893,7 @@ final class MapView: MTKView {
         let scale = Float(window?.backingScaleFactor ?? 1)
         renderer.pressSound(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale)
         if renderer.cheatBoxClick(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale) { return }
+        if renderer.game?.booty != nil, !renderer.inCombat { renderer.bootyPress(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale); return }   // the spoils dialog
         if armySession != nil { renderer.armyScreenPress(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale); return }
         if renderer.caravanUI != nil { renderer.caravanPress(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale); return }
         if renderer.townOpen != nil { renderer.townPress(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale); return }
@@ -894,6 +904,13 @@ final class MapView: MTKView {
         if splitDialog != nil {   // the split dialog's scrollbar follows the pointer
             let p = convert(e.locationInWindow, from: nil), sc = Float(window?.backingScaleFactor ?? 1)
             renderer.splitClick(x: Float(p.x) * sc / renderer.uiScale, y: Float(bounds.height - p.y) * sc / renderer.uiScale, drag: true)
+            return
+        }
+        if renderer.game?.booty != nil, !renderer.inCombat {   // an artifact carried out of the spoils dialog
+            if dragged >= 4 {
+                let p = convert(e.locationInWindow, from: nil), sc = Float(window?.backingScaleFactor ?? 1)
+                renderer.bootyDragged(x: Float(p.x) * sc / renderer.uiScale, y: Float(bounds.height - p.y) * sc / renderer.uiScale)
+            }
             return
         }
         if armySession != nil {   // a stack lifted in the army screen
@@ -930,6 +947,7 @@ final class MapView: MTKView {
         if swallowMouseUp { swallowMouseUp = false; return }
         let p0 = convert(e.locationInWindow, from: nil), sc = Float(window?.backingScaleFactor ?? 1)
         renderer.clickCount = e.clickCount
+        if renderer.game?.booty != nil, !renderer.inCombat { renderer.bootyRelease(x: Float(p0.x) * sc / renderer.uiScale, y: Float(bounds.height - p0.y) * sc / renderer.uiScale); return }
         if armySession != nil, splitDialog == nil, renderer.armyScreenRelease(x: Float(p0.x) * sc / renderer.uiScale, y: Float(bounds.height - p0.y) * sc / renderer.uiScale, shift: e.modifierFlags.contains(.shift)) { return }
         if renderer.caravanUI != nil, renderer.caravanDrag != nil {   // a drop in a caravan dialog's rows
             let x = Float(p0.x) * sc / renderer.uiScale, y = Float(bounds.height - p0.y) * sc / renderer.uiScale
@@ -1055,6 +1073,7 @@ final class MapView: MTKView {
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
         let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale
         // an artifact's text while the button is held: the army screen's doll and backpack, a blacksmith's goods
+        if renderer.game?.booty != nil, !renderer.inCombat, renderer.bootyRightDown(x: cx, y: cy) { return }
         if armySession != nil, renderer.armyScreenRightDown(x: cx, y: cy) { return }
         if renderer.shop != nil, renderer.shopRightDown(x: cx, y: cy) { return }
         // a creature ability's icon in a creature window (any screen): its help while the button is held

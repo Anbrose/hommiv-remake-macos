@@ -114,6 +114,7 @@ extension Renderer {
     }
     /// The hot keys of the open dialog (Enter / Esc and the like); true when one took the key.
     func dialogKey(_ code: UInt16) -> Bool {
+        if game?.booty != nil, !inCombat { return bootyKey(code) }
         if splitDialog != nil { return splitKey(code) }
         if game?.skillDialog != nil, prompt == nil, game?.scripts.messages.isEmpty != false { return skillDialogKey(code) }
         if caravanUI != nil, prompt == nil { return caravanKey(code) }
@@ -167,6 +168,7 @@ extension Renderer {
     }
     /// The balloon of what is under the pointer in the open object dialog.
     func dialogTip(x: Float, y: Float) -> String? {
+        if game?.booty != nil, !inCombat { return bootyTip(x: x, y: y) }
         if shop != nil { return shopTip(x: x, y: y) }
         if puzzle != nil { return puzzleTip(x: x, y: y) }
         if thievesGuildOpen { return thievesGuildTip(x: x, y: y) }

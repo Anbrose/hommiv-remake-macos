@@ -3,8 +3,8 @@ import Foundation
 /// The other players' heroes and battles between heroes (heroes4.exe 0x80eb70 / 0x7fd530 /
 /// 0x7fe8a0): the moving army attacks from the bottom left; the winner's living heroes share the
 /// loser's casualties' experience (creatures' Experience x killed, (level + 1) x 100 per hero,
-/// divided by the difficulty for a human winner), weighted by level + 2; all the loser's
-/// artifacts go to the winner; the loser's heroes are taken prisoner.
+/// divided by the difficulty for a human winner), weighted by level + 2; the loser's artifacts
+/// are the winner's spoils (Booty.swift); the loser's heroes are taken prisoner.
 extension GameState {
     public func enemyAt(_ x: Int, _ y: Int) -> Hero? { enemyHeroes.first { $0.z == level && $0.x == x && $0.y == y } }
 
@@ -78,25 +78,28 @@ extension GameState {
         let mine = hero.members, theirs = enemy.members
         if won { recordBattleWin(colour: map.humanColour, winnerValue: armyValue(hero), loserValue: armyValue(enemy)) }
         else { recordBattleWin(colour: enemy.owner, winnerValue: armyValue(enemy), loserValue: armyValue(hero)) }
+        // the beaten army's artifacts (0x7fde50) are the winner's spoils: the human's dialog, or the
+        // computer's booty at once (0x7fdb96)
+        let waits: Bool
         if won {
             hero.army = army
             share(value + theirs.reduce(0) { $0 + ($1.level + 1) * 100 }, among: mine)
-            // the booty: every artifact of the beaten army to the first hero (0x7fb560)
-            giveLoot(theirs.flatMap { $0.equipped.compactMap { $0 } + $0.backpack }, to: hero)
-            for h in theirs { h.equipped = Array(repeating: nil, count: h.equipped.count); h.backpack = [] }
+            waits = awardSpoils(takeSpoils(from: enemy), to: hero, human: true, heroBattle: true)
             removeEnemy(enemy)
             log.append("\(enemy.name)'s army is destroyed; \(theirs.map { $0.name }.joined(separator: ", ")) taken prisoner")
         } else {
             enemy.army = enemyArmy
             share(value + mine.reduce(0) { $0 + ($1.level + 1) * 100 }, among: theirs)
-            giveLoot(mine.flatMap { $0.equipped.compactMap { $0 } + $0.backpack }, to: enemy)
-            for h in mine { h.equipped = Array(repeating: nil, count: h.equipped.count); h.backpack = [] }
+            waits = awardSpoils(takeSpoils(from: hero), to: enemy, human: false, heroBattle: true)
             heroes.removeAll { $0 === hero }
             log.append("\(hero.name)'s army is destroyed")
         }
         refreshMovement(hero)
         pendingHeroBattle = nil
-        // after a battle (0x4d7800): the end check, the continuous events (0x4ddf30), the end check
+        if !waits { afterHeroBattle() }
+    }
+    /// After a battle (0x4d7800): the end check, the continuous events (0x4ddf30), the end check.
+    func afterHeroBattle() {
         checkScenario()
         runContinuous()
         checkScenario()

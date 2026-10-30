@@ -267,7 +267,8 @@ final class AdventureUI {
                 let row = Float(py) / Float(size) * Float(n) + Float(n) / 2
                 let x = Int(((row - col) / 2).rounded()), y = Int(((row + col) / 2).rounded())
                 guard x >= 0, x < n, y >= 0, y < n, let c = cells[x * n + y] else { continue }
-                if g.fogState(x, y) == GameState.fogUnexplored {   // unexplored: black (explored and seen look alike)
+                // unexplored: black (explored and seen look alike); rock, rim or not, too (0x79fd7a)
+                if g.fogState(x, y) == GameState.fogUnexplored || c.rock != 0 {
                     let o = (py * size + px) * 4
                     bm.pixels[o] = 0; bm.pixels[o + 1] = 0; bm.pixels[o + 2] = 0; bm.pixels[o + 3] = 255
                     continue

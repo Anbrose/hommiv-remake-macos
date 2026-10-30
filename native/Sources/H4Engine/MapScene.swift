@@ -217,6 +217,8 @@ public final class MapScene {
                     guard top + 32 > 0, top < bandHeight else { continue }
                     let row = x + y, col = (y - x - (x + y) % 2) / 2
                     let base = try patch(MapScene.terrainFile(type: cell.type, variant: cell.variant, x: x, y: y) ?? "grass.2.1")
+                    // solid rock: the cell's diamond filled black, nothing else (0x789d05 -> 0x58a4d0)
+                    if cell.isSolidRock { MapScene.blit(&canvas, base.tile(row: row, col: col), left, top, mask: nil, black: true); continue }
                     MapScene.blit(&canvas, base.tile(row: row, col: col), left, top, mask: nil)
                     // overlays and road pieces interleave by their order byte (roads sit at 10..14,
                     // overlays at 0..9 and 15..19, so terrain drawn after a road nibbles its edges)
@@ -404,7 +406,7 @@ public final class MapScene {
     static func mod(_ a: Int, _ m: Int) -> Int { ((a % m) + m) % m }
 
     /// Copy a 64x32 tile onto the canvas at (left, top), optionally through a 64x32 1-bit mask.
-    static func blit(_ canvas: inout Bitmap, _ tile: Bitmap, _ left: Int, _ top: Int, mask: [UInt8]?, invert: Bool = false) {
+    static func blit(_ canvas: inout Bitmap, _ tile: Bitmap, _ left: Int, _ top: Int, mask: [UInt8]?, invert: Bool = false, black: Bool = false) {
         for y in 0..<32 {
             let yy = top + y
             guard yy >= 0, yy < canvas.height else { continue }
@@ -417,7 +419,9 @@ public final class MapScene {
                 if let m = mask { a = Int(m[y * 64 + x]); if invert { a = 15 - a } }
                 if a == 0 { continue }
                 let d = (yy * canvas.width + xx) * 4
-                if a >= 15 {
+                if black {
+                    canvas.pixels[d] = 0; canvas.pixels[d + 1] = 0; canvas.pixels[d + 2] = 0
+                } else if a >= 15 {
                     canvas.pixels[d] = tile.pixels[s]; canvas.pixels[d + 1] = tile.pixels[s + 1]; canvas.pixels[d + 2] = tile.pixels[s + 2]
                 } else {   // the soft shoreline masks: blend by the 4-bit coverage
                     for k in 0..<3 { canvas.pixels[d + k] = UInt8((Int(tile.pixels[s + k]) * a + Int(canvas.pixels[d + k]) * (15 - a)) / 15) }

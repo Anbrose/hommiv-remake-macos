@@ -18,10 +18,11 @@ extension GameState {
     public func nextListRank() -> Int { (heroes.map(\.listRank).max() ?? 0) + 1 }
     /// Select an army (0x4b5eb0): it becomes the one acting; the list keeps its order.
     public func select(_ h: Hero) {
-        guard let k = heroes.firstIndex(where: { $0 === h }), k != 0 else { return }
+        guard let k = heroes.firstIndex(where: { $0 === h }) else { return }
+        level = h.z   // (the view goes to its level, the selected army's too)
+        guard k != 0 else { return }
         if heroes.allSatisfy({ $0.listRank == 0 }) { for (r, a) in heroes.enumerated() { a.listRank = r } }
         heroes.remove(at: k); heroes.insert(h, at: 0)
-        level = h.z
     }
 
     /// Walk up to a friendly army and meet it (0x522560 -> 0x522c6a): the army screen of the two.

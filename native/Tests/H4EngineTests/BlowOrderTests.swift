@@ -117,8 +117,10 @@ final class BlowOrderTests: XCTestCase {
         _ = u
     }
 
-    /// In a melee exchange a stack wiped out before its own swing reaches its hit frame lands nothing
-    /// (its die resets its pose at once, 0x564480, and the cut swing ends without its hit, 0x7dd1b5).
+    /// In a melee exchange a stack wiped out before its own swing reaches its hit frame lands nothing then
+    /// (its die resets its pose at once, 0x564480, and the cut swing ends without its hit, 0x7dd1b5), but
+    /// its blow was recorded on the target as it started (0x575fe0 -> 0x5f2c50, +0x9c0) and lands with
+    /// the next blow on that stack (0x5ef290).
     func testWipedOutBeforeItsHitLandsNothing() {
         for (peasantFirst, struck) in [(false, false), (true, true)] {
             let (b, u, t) = battle(fighter("squire", 10, hp: 100, dmg: 100, fast: true), fighter("peasant", 3, hp: 1, dmg: 10, fast: false), from: (48, 50))
@@ -128,6 +130,32 @@ final class BlowOrderTests: XCTestCase {
             XCTAssertFalse(t.alive)
             XCTAssertEqual(order(b, [u.id: "A", t.id: "B"]).prefix(4), ["A>B", "+", "B>A", "xB"])
             XCTAssertEqual(u.stats.totalHealth < health, struck)
+            XCTAssertEqual(u.pendingDamage > 0, !struck)
         }
+    }
+
+    /// 3 Berserkers (no First Strike) attack 2 Black Dragons (no First Strike): both blows are rolled
+    /// from the stacks before the exchange; the dragons' swing hits first (frame 4 at 9 fps against the
+    /// berserkers' frame 7) and wipes them out, so the berserkers' blow does not land then -- it stays
+    /// recorded on the dragons and lands with the next blow they take. Quick combat (0x845d0d) applies
+    /// both at once.
+    func testCutBerserkerBlowIsKeptOnTheDragons() {
+        let (b, u, t) = battle(fighter("berserker", 3, hp: 25, dmg: 20, fast: true), fighter("black_dragon", 2, hp: 400, dmg: 100, fast: false), from: (48, 50))
+        b.meleeHitTime = { $0.keyword == "berserker" ? 7.0 / 9 : 4.0 / 9 }
+        let full = t.stats.totalHealth
+        XCTAssertTrue(b.attack(t.id))
+        XCTAssertFalse(u.alive)
+        XCTAssertEqual(t.stats.totalHealth, full)
+        let owed = t.pendingDamage
+        XCTAssertGreaterThan(owed, 0)
+        _ = b.takeEvents()
+        // the next blow on the dragons carries what the berserkers' cut swing left
+        let (b2, a2, _) = battle(fighter("squire", 1, hp: 50, dmg: 1, fast: true), fighter("black_dragon", 2, hp: 400, dmg: 100, fast: false), from: (48, 50))
+        let d2 = b2.units.first { $0.side == 1 }!
+        d2.pendingDamage = owed
+        b2.rollBlock(d2)
+        let dealt = b2.hit(a2, d2, ranged: false)
+        XCTAssertEqual(d2.pendingDamage, 0)
+        XCTAssertEqual(full - d2.stats.totalHealth, owed + dealt)
     }
 }

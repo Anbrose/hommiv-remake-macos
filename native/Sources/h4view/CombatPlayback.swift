@@ -114,8 +114,8 @@ extension CombatScreen {
             timers.removeAll { $0.seq == e.seq }
             unitState[id] = nil
         }
-        // the cut swing's blow does not land (0x7dd1b5 calls only the end handler); the battle has
-        // already made it a blow of nothing (Battle.together)
+        // the cut swing's blow does not land (0x7dd1b5 calls only the end handler); the battle has made
+        // it a blow of nothing now and left its damage recorded on the target (Battle.together)
         if let p = pendingHits.removeValue(forKey: id) { timers.removeAll { $0.seq == p.seq } }
     }
     /// A stack's animation ended: what waited for it runs now (t_delayed_missile_impact,

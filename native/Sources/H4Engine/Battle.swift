@@ -35,6 +35,11 @@ public final class Battle {
         /// does nothing. Only the stack about to be struck is rolled, so an attacker struck back keeps the
         /// result of the last roll made on it, as the exe does.
         public var blocking = false
+        /// Damage recorded on the stack but not applied yet (creature +0x9c0): a blow is recorded as its
+        /// swing starts (0x575fe0 -> 0x5f2c50 adds it, clamped to the stack's health) and applied at the
+        /// swing's hit frame (0x5ef290 applies all of it and clears it). A swing cut before its hit frame
+        /// leaves its damage here; it lands with the next blow on the stack (0x5ef290 again).
+        public var pendingDamage = 0
         public var frozen: Int { get { durations[186] ?? 0 } set { durations[186] = newValue > 0 ? newValue : nil } }
         public var blind: Int { get { durations[11] ?? 0 } set { durations[11] = newValue > 0 ? newValue : nil } }
         /// What acts at the start of each of its turns: Poison's and Plague's stored damage,
@@ -726,11 +731,9 @@ public final class Battle {
     /// Living creatures: what Stun, Weakness, Poison, Aging and the mind spells work on.
     static func living(_ u: Unit) -> Bool { !u.stats.has("undead") && !u.stats.has("mechanical") && !u.stats.has("elemental") }
 
-    /// One blow of `a` on `b`, then what the attacker's and target's abilities add (heroes4.exe
-    /// 0x553440, the attack's aftermath). `secondary` blows (3-headed, multiple, breath, area)
-    /// only do damage.
-    @discardableResult
-    func hit(_ a: Unit, _ b: Unit, ranged: Bool, secondary: Bool = false) -> Int {
+    /// The damage a blow does, rolled as its swing starts (0x575fe0 -> 0x5ee690, luck in 0x5f2c50),
+    /// at most what the target has; nothing is applied.
+    func rollBlow(_ a: Unit, _ b: Unit, ranged: Bool, secondary: Bool) -> (Int, Bool) {
         let before = b.stats.totalHealth
         a.stats.onQuicksand = onQuicksand(a.x, a.y, a.size)
         var dmg = QuickCombat.damage(a.stats, b.stats, rng: &rng, ranged: ranged, moved: ranged ? 0 : Int(a.moved))
@@ -751,17 +754,34 @@ public final class Battle {
             if per * a.stats.count >= 500 { dmg += Int((Double(b.stats.hitPoints) * Double(per * a.stats.count) * 0.001).rounded()); stoned = true }
         }
         dmg = luckyDamage(b, dmg)
-        dmg = min(dmg, before)
+        return (min(dmg, before), stoned)
+    }
+
+    /// One blow of `a` on `b`, then what the attacker's and target's abilities add (heroes4.exe
+    /// 0x553440, the attack's aftermath). `secondary` blows (3-headed, multiple, breath, area)
+    /// only do damage.
+    @discardableResult
+    func hit(_ a: Unit, _ b: Unit, ranged: Bool, secondary: Bool = false) -> Int {
+        let before = b.stats.totalHealth
+        let (rolled, stoned) = rollBlow(a, b, ranged: ranged, secondary: secondary)
+        // what a cut swing left recorded on the stack lands with this blow, a blocked one too (the flinch
+        // still applies all of +0x9c0: 0x5fc6a0 -> 0x5ef720 -> 0x5ef290); the new blow is recorded only up
+        // to the health left over (0x5f2ee1), and that is what its aftermath gets
+        let stale = min(b.pendingDamage, before)
+        b.pendingDamage = 0
+        let dmg = min(rolled, before - stale)
         // a blocked blow does no damage (0x575fe0: 0 when the target's block flag is set)
         if b.blocking {
-            events.append(ranged ? .shoot(unit: a.id, target: b.id, damage: 0, killed: 0, left: b.stats.count)
-                                 : .melee(unit: a.id, target: b.id, damage: 0, killed: 0, left: b.stats.count))
+            let s = stale, k = s > 0 ? wound(b, s, by: a) : 0
+            events.append(ranged ? .shoot(unit: a.id, target: b.id, damage: s, killed: k, left: b.stats.count)
+                                 : .melee(unit: a.id, target: b.id, damage: s, killed: k, left: b.stats.count))
             events.append(.blocked(unit: b.id))
-            return 0
+            if !b.alive { events.append(.die(unit: b.id)); b.boundBy = nil }
+            return s
         }
-        let killed = wound(b, dmg, by: a)
-        events.append(ranged ? .shoot(unit: a.id, target: b.id, damage: dmg, killed: killed, left: b.stats.count)
-                             : .melee(unit: a.id, target: b.id, damage: dmg, killed: killed, left: b.stats.count))
+        let killed = wound(b, stale + dmg, by: a)
+        events.append(ranged ? .shoot(unit: a.id, target: b.id, damage: stale + dmg, killed: killed, left: b.stats.count)
+                             : .melee(unit: a.id, target: b.id, damage: stale + dmg, killed: killed, left: b.stats.count))
         if !b.alive { events.append(.die(unit: b.id)); b.boundBy = nil }
         flushDeferred()
         // the Stone_Gaze window and the grey fade (t_stoning_animation, 0x553359)
@@ -842,9 +862,10 @@ public final class Battle {
     }
     /// Both sides strike at once (0x56ef40 / 0x5695b0 -> 0x568ee0): each blow is rolled from the stacks as
     /// they were before either lands, the deaths and the aftermath of both come after. In melee a stack
-    /// wiped out before its own swing reaches its hit frame lands nothing: its die (0x5f53c0) resets its
-    /// pose at once (0x7dcc40 -> 0x564480) and the cut swing ends without its hit (0x7dd1b5); on equal
-    /// times the attacker's swing, started first, lands first. A shot always leaves: the reaction to a
+    /// wiped out before its own swing reaches its hit frame lands nothing now: its die (0x5f53c0) resets
+    /// its pose at once (0x7dcc40 -> 0x564480) and the cut swing ends without its hit (0x7dd1b5), but its
+    /// blow, rolled and recorded as it started, stays on its target (pendingDamage) and lands with the next
+    /// blow on that stack. On equal times the attacker's swing, started first, lands first. A shot always leaves: the reaction to a
     /// missile waits for the struck shooter's own animation (t_delayed_missile_impact).
     func together(_ u: Unit, _ t: Unit, ranged: Bool, _ blowU: () -> Void, _ blowT: () -> Void) {
         let hu = ranged ? 0 : meleeHitTime?(u) ?? 0, ht = ranged ? 0 : meleeHitTime?(t) ?? 0
@@ -857,6 +878,16 @@ public final class Battle {
         if tFirst { blowT() } else { blowU() }
         made[s1.id] = Array(events[mark...]); events.removeLast(events.count - mark)
         if !ranged, !v1.alive {
+            // the cut swing's blow was rolled as it started, from the stack before the other blow (0x56e680
+            // -> 0x575fe0), and recorded on its target (0x5f2c50, +0x9c0); its hit never comes (0x7dd1b5), so
+            // it stays recorded and lands with the next blow on that stack (0x5ef290). Nothing shows now.
+            let after = v1.stats
+            v1.stats.count = pre.count; v1.stats.wounds = pre.wounds
+            mark = events.count
+            let (d, _) = rollBlow(s2, s1, ranged: false, secondary: false)
+            events.removeLast(events.count - mark)
+            v1.stats.count = after.count; v1.stats.wounds = after.wounds
+            if !s1.blocking { s1.pendingDamage = min(s1.pendingDamage + d, s1.stats.totalHealth) }
             made[s2.id] = [.melee(unit: s2.id, target: s1.id, damage: 0, killed: 0, left: s1.stats.count)]
         } else {
             let after = v1.stats

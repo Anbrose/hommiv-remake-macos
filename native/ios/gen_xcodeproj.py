@@ -19,7 +19,7 @@ def oid(*parts):
 swift = sorted(f for f in os.listdir(SOURCES) if f.endswith(".swift"))
 P = oid("project"); MAIN = oid("group", "main"); SRC = oid("group", "src"); PRODS = oid("group", "products")
 TGT = oid("target"); APP = oid("product", "app"); INFO = oid("file", "Info.plist")
-SP = oid("phase", "sources"); FP = oid("phase", "frameworks"); RP = oid("phase", "resources")
+SP = oid("phase", "sources"); FP = oid("phase", "frameworks"); RP = oid("phase", "resources"); SH = oid("phase", "bundledata")
 PKG = oid("package"); DEP = oid("dep", "H4Engine"); DEPBF = oid("bf", "H4Engine")
 PCL = oid("cl", "project"); TCL = oid("cl", "target")
 cfg = {k: (oid("cfg", "project", k), oid("cfg", "target", k)) for k in ("Debug", "Release")}
@@ -53,6 +53,7 @@ w(f"""\t\t{TGT} /* H4Remake */ = {{
 \t\t\t\t{SP} /* Sources */,
 \t\t\t\t{FP} /* Frameworks */,
 \t\t\t\t{RP} /* Resources */,
+\t\t\t\t{SH} /* Bundle game data */,
 \t\t\t);
 \t\t\tbuildRules = (
 \t\t\t);
@@ -107,6 +108,20 @@ w(f"""\t\t{TGT} /* H4Remake */ = {{
 \t\t}};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+\t\t{SH} /* Bundle game data */ = {{
+\t\t\tisa = PBXShellScriptBuildPhase;
+\t\t\tbuildActionMask = 2147483647;
+\t\t\tfiles = (
+\t\t\t);
+\t\t\tname = "Bundle game data";
+\t\t\talwaysOutOfDate = 1;
+\t\t\trunOnlyForDeploymentPostprocessing = 0;
+\t\t\tshellPath = /bin/sh;
+\t\t\tshellScript = "if [ \\"$H4_BUNDLE_DATA\\" = 1 ]; then d=\\"$TARGET_BUILD_DIR/$WRAPPER_NAME/GameData\\"; mkdir -p \\"$d\\"; rsync -a --delete \\"$H4DATA/\\" \\"$d/Data/\\"; [ -d \\"$H4MAPS\\" ] && rsync -a --delete \\"$H4MAPS/\\" \\"$d/maps/\\" || true; else rm -rf \\"$TARGET_BUILD_DIR/$WRAPPER_NAME/GameData\\"; fi\\n";
+\t\t}};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 \t\t{SP} /* Sources */ = {{
 \t\t\tisa = PBXSourcesBuildPhase;
@@ -133,7 +148,7 @@ for name, (pc, tc) in cfg.items():
     if name == "Debug":
         proj["SWIFT_ACTIVE_COMPILATION_CONDITIONS"] = "DEBUG"
     tgt = {
-        "CODE_SIGN_STYLE": "Automatic", "DEVELOPMENT_TEAM": f"\"{TEAM}\"",
+        "CODE_SIGN_STYLE": "Automatic", "ENABLE_USER_SCRIPT_SANDBOXING": "NO", "DEVELOPMENT_TEAM": f"\"{TEAM}\"",
         "CURRENT_PROJECT_VERSION": "1", "MARKETING_VERSION": "0.1",
         "GENERATE_INFOPLIST_FILE": "NO", "INFOPLIST_FILE": "Info.plist",
         "LD_RUNPATH_SEARCH_PATHS": "\"$(inherited) @executable_path/Frameworks\"",

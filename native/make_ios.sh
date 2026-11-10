@@ -7,7 +7,11 @@
 #                                  (once; $H4DATA, default the Wine install's Data and maps)
 #                                  and launch it, e.g. ./make_ios.sh run campaign:10:0
 #   ./make_ios.sh data             copy the data into the installed simulator app again
-#   ./make_ios.sh device           Release build for a device (needs H4_TEAM_ID and signing)
+#   ./make_ios.sh device           Release build for your own iPhone with the game data inside
+#                                  the app (needs H4_TEAM_ID, e.g. a free Personal Team), then
+#                                  installs and launches it on the connected iPhone ($H4_DEVICE,
+#                                  default the first one devicectl lists); H4_BUNDLE_DATA=0 leaves
+#                                  the data out (then copy it in through the Files app)
 #   ./make_ios.sh archive          an .xcarchive for App Store Connect (needs H4_TEAM_ID)
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -54,7 +58,16 @@ build|run|data)
     fi
     ;;
 device)
+    export H4_BUNDLE_DATA="${H4_BUNDLE_DATA:-1}" H4DATA="$DATA" H4MAPS="$(dirname "$DATA")/maps"
     xb -sdk iphoneos -destination "generic/platform=iOS" -allowProvisioningUpdates build
+    APPDIR="$DERIVED/Build/Products/Release-iphoneos/H4Remake.app"
+    DEV="${H4_DEVICE:-$(xcrun devicectl list devices --json-output /dev/stdout 2>/dev/null | python3 -c 'import json,sys
+t=sys.stdin.read(); d=json.loads(t[t.index("{"):]) if "{" in t else {}
+ok=[x["identifier"] for x in d.get("result",{}).get("devices",[]) if x.get("hardwareProperties",{}).get("platform")=="iOS" and x.get("connectionProperties",{}).get("tunnelState")!="unavailable"]
+print(ok[0] if ok else "")' || true)}"
+    if [ -z "$DEV" ]; then echo "built $APPDIR; no connected iPhone found (set H4_DEVICE to its identifier)"; exit 0; fi
+    xcrun devicectl device install app --device "$DEV" "$APPDIR"
+    xcrun devicectl device process launch --device "$DEV" "$BUNDLE_ID" "$@" || echo "installed; open it on the phone (trust the developer in Settings > General > VPN & Device Management first)"
     ;;
 archive)
     xb -sdk iphoneos -destination "generic/platform=iOS" -allowProvisioningUpdates archive -archivePath build/ios/H4Remake.xcarchive

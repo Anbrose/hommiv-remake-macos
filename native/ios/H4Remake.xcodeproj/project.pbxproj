@@ -262,6 +262,7 @@
 				C4D5163706E5908DC9E032F3 /* Sources */,
 				C18F88D444D8FE65E18D39E9 /* Frameworks */,
 				4FDAD6DB49035FA75C21467D /* Resources */,
+				29D95D550D0D19DD803F6943 /* Bundle game data */,
 			);
 			buildRules = (
 			);
@@ -315,6 +316,20 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		29D95D550D0D19DD803F6943 /* Bundle game data */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			name = "Bundle game data";
+			alwaysOutOfDate = 1;
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [ \"$H4_BUNDLE_DATA\" = 1 ]; then d=\"$TARGET_BUILD_DIR/$WRAPPER_NAME/GameData\"; mkdir -p \"$d\"; rsync -a --delete \"$H4DATA/\" \"$d/Data/\"; [ -d \"$H4MAPS\" ] && rsync -a --delete \"$H4MAPS/\" \"$d/maps/\" || true; else rm -rf \"$TARGET_BUILD_DIR/$WRAPPER_NAME/GameData\"; fi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		C4D5163706E5908DC9E032F3 /* Sources */ = {
@@ -417,6 +432,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				DEVELOPMENT_TEAM = "";
 				CURRENT_PROJECT_VERSION = 1;
 				MARKETING_VERSION = 0.1;
@@ -455,6 +471,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				DEVELOPMENT_TEAM = "";
 				CURRENT_PROJECT_VERSION = 1;
 				MARKETING_VERSION = 0.1;

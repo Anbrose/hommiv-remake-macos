@@ -10,7 +10,15 @@ import H4Engine
 /// folder beside it: the scenario list reads Documents/maps), or imports it with the picker below.
 enum IOSData {
     static var documents: URL { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0] }
-    static var dataDirectory: URL { documents.appendingPathComponent("Data") }
+    /// Documents/Data when the user put one there, else the copy a personal device build carries
+    /// in the app bundle (GameData/Data, H4_BUNDLE_DATA=1 in make_ios.sh device), else Documents/Data.
+    static var dataDirectory: URL {
+        let own = documents.appendingPathComponent("Data")
+        if FileManager.default.fileExists(atPath: own.appendingPathComponent("heroes4.h4r").path) { return own }
+        if let b = Bundle.main.resourceURL?.appendingPathComponent("GameData/Data"),
+           FileManager.default.fileExists(atPath: b.appendingPathComponent("heroes4.h4r").path) { return b }
+        return own
+    }
     static var archivePath: String { dataDirectory.appendingPathComponent("heroes4.h4r").path }
     static var isPresent: Bool { FileManager.default.fileExists(atPath: archivePath) }
 }

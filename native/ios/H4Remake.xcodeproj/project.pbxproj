@@ -1,0 +1,512 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 60;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		C56F1A60835382AFCA40C450 /* AbilityHelp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B7B2F8B3D62C11CED4B4788 /* AbilityHelp.swift */; };
+		01EA2C711C35EA2112B1F94A /* AdventureDialogs.swift in Sources */ = {isa = PBXBuildFile; fileRef = B94D4E77675D9AEAA37D5D7D /* AdventureDialogs.swift */; };
+		4528369EC958D10C8E37CF5D /* AdventureFlags.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DE955F8C4C0FA201A8ED0C6 /* AdventureFlags.swift */; };
+		6F3FB6887FB3FB77EB9D1E48 /* AdventureFrame.swift in Sources */ = {isa = PBXBuildFile; fileRef = 285E9050DF126EB90B0D2910 /* AdventureFrame.swift */; };
+		F5EFBA494FAE580A507C68F0 /* AnimationTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9AC4B12EA51B753A0FB4CC1 /* AnimationTest.swift */; };
+		EDB1C4A297F13F3D208D9B7F /* AppController.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA56E2F56A35A71288B3BFE9 /* AppController.swift */; };
+		C06B1D96B6FE3F4EB3AE1352 /* ArmyInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3235EF4E4D7DCAFB9D46C3B5 /* ArmyInfo.swift */; };
+		95DA2842334FCB77511BC936 /* ArmyPopup.swift in Sources */ = {isa = PBXBuildFile; fileRef = A43999240017B73F30CDFAD9 /* ArmyPopup.swift */; };
+		77D308EB4F3E4BD7BADF766C /* ArmyScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3BFF44F4CCCDBF844907B8D /* ArmyScreen.swift */; };
+		0285DD040E21262933B18E2D /* ArtifactDragUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 260AB2E0E35062034139FEAB /* ArtifactDragUI.swift */; };
+		0A55B2D3B3FAF1F32D9746BB /* BasicDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7494AD4E6089BD2F1E899417 /* BasicDialog.swift */; };
+		2A014F0C42A4950AEF8644BD /* BootyDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF67AFC661DD7D951D79789B /* BootyDialog.swift */; };
+		57AEB76BBC40331BF4F13CC3 /* ButtonSound.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBFCCF7D0D267410E321164D /* ButtonSound.swift */; };
+		1DF97A1016F6F899A662B00A /* CaravanDialogs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DB2C0001D0C353CD9C55074 /* CaravanDialogs.swift */; };
+		678E4FF3BA8D35605D19E460 /* CastleWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED0C814029698B7F6A49708E /* CastleWindow.swift */; };
+		25DED9BD2B42398C5CA61AE1 /* CharmDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD622FE6444FC1441AF0121B /* CharmDialog.swift */; };
+		3E66C4D79E7978B40DD18BD4 /* CheatBox.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC2C1DAFB8FDDFB8AEA5710E /* CheatBox.swift */; };
+		D2BF687145C0BB63BDB8836B /* ChoiceDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 814C8054F1674F16B076C4A5 /* ChoiceDialog.swift */; };
+		6F47C850C5BA05CA08E4C01F /* CombatDirector.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47F34C669C529D778E8FB35 /* CombatDirector.swift */; };
+		C21D9D38E096EE39A5367841 /* CombatEffectsRender.swift in Sources */ = {isa = PBXBuildFile; fileRef = D52AA2DBFE3579CF02270B57 /* CombatEffectsRender.swift */; };
+		F6261B3BDF31BD0DA4FF808D /* CombatInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = A343BE06F07CA54BDE3455E5 /* CombatInfo.swift */; };
+		EBA024E7F5E2E754F5A3D3C5 /* CombatPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2840B221A0A14B3168E96085 /* CombatPanel.swift */; };
+		B0D42AE222D01FA0C300403D /* CombatPlayback.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC912D6810A94CB43DC4DC6C /* CombatPlayback.swift */; };
+		5621203DFB4DA9FE4727CE6D /* CombatRender.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9CC1B9CD200D73EC5E93F43 /* CombatRender.swift */; };
+		59A4746B514F171E4A70B13E /* CombatResults.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E79DB99BE1CEED97E9D27E5 /* CombatResults.swift */; };
+		67E1D38B0E0A5C9EAA6DF035 /* CombatScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDEBF25DE2D10E12DB0C3E4A /* CombatScreen.swift */; };
+		E17946750896B2684B5B094F /* ComputerTurnView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FBF9C8408E8DE2B6177163D /* ComputerTurnView.swift */; };
+		D74E428016D53F4A9B6DB623 /* DialogKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 055B31A58355A6109FF6602A /* DialogKit.swift */; };
+		D395A1AE9703629BF652531B /* EndGame.swift in Sources */ = {isa = PBXBuildFile; fileRef = D106F2766CE53217A97BBF3E /* EndGame.swift */; };
+		7A19C1C19CA36425008734CF /* EnemyRunsDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20CF9C15975E6AD5996111C8 /* EnemyRunsDialog.swift */; };
+		5A7A1F9C66B8E15D475947D1 /* FileDialogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EBB01CBAEB4440FE4F9F0E1 /* FileDialogView.swift */; };
+		67D363F7C63C3DD32DB55341 /* FinalScore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A344E9A4283029104F4AB6C9 /* FinalScore.swift */; };
+		8BB62CDDD2C58A566449CC92 /* GameData.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4F9D727E4E1B1797FCB0F73 /* GameData.swift */; };
+		5474CD4BE680C070805B4AFB /* HeroPickDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = E606AEE414A5BB61276902D4 /* HeroPickDialog.swift */; };
+		72EF746C9CA37FACA85D05A4 /* HeroScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 359D1E8C7DE14755F4337AFB /* HeroScreen.swift */; };
+		CA91D51B353D686E5E9C8993 /* HighScoreMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 412E60426548DB66F28A3818 /* HighScoreMenu.swift */; };
+		FC155114892AD970F3DE5C87 /* HireDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08F7C6CFCF5DCE7059A477B8 /* HireDialog.swift */; };
+		70F121572A4232101BED3805 /* KingdomOverview.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7AECE6BADE80BAA3D4B1EB2 /* KingdomOverview.swift */; };
+		85D9EEF2A2E88EF5C4067C72 /* LevelUpDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C7DBA8BDE1F0F2AD22F4889 /* LevelUpDialog.swift */; };
+		A7DAC9E8369F7DE28433E33D /* MageGuild.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28D87032A8610608AFA16987 /* MageGuild.swift */; };
+		1DDC5D4B4804E4282735E769 /* MagiWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = D886FD420D346C526B0EB469 /* MagiWindow.swift */; };
+		6D2D9A49818E4608541E382A /* MainMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DA3CF8ADF0B73BD920908E8 /* MainMenu.swift */; };
+		36E0E74435AF48FDDE602B14 /* MarketDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBFA1E89365715116A4DB61F /* MarketDialog.swift */; };
+		9A95FAACF64C9EE7DE5654AE /* MenuKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACC58E626CB1C6E0B7A91DC7 /* MenuKit.swift */; };
+		DEDB0799FE41B495848CB34F /* Menus.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC00B19A7DAB64D756537CFA /* Menus.swift */; };
+		A1256280C15048F5101352B7 /* Movies.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECB8805C400522FE3E0F5B12 /* Movies.swift */; };
+		55BD9C41133911F8A86B5C85 /* OptionsDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D60D8E78297E77987CCEF48 /* OptionsDialog.swift */; };
+		4B7945DF198A34AD571B6C28 /* Platform.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCB5D209DE3447B1C68748A8 /* Platform.swift */; };
+		B14457674127401D0FE900D9 /* PuzzleDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90CAAD49432460B245B8653B /* PuzzleDialog.swift */; };
+		4D6FACF22EEC18A1D350CD11 /* Renderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9F701F8BEB1D74D46AE2C04 /* Renderer.swift */; };
+		9FC48FE3F871278EC882B812 /* SanctuaryDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35F3D1BD37BE75F18A4D00AD /* SanctuaryDialog.swift */; };
+		240B307F71D9F39FD2DCB5C8 /* SaveLoad.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54202C949E20448BD7E6E2A6 /* SaveLoad.swift */; };
+		D8D806E71AAE24DB6B3BF9B4 /* ShopDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6EA3222ADAB816B162AC898 /* ShopDialog.swift */; };
+		0BA3A527900C90BFF3F099A6 /* Shroud.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ACEE4A35430EE3E66D9DECD /* Shroud.swift */; };
+		8B2BD3BA6CCA4AB64AA91C7D /* SkillDialogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A4F14950F4BC746CD5C988A /* SkillDialogView.swift */; };
+		C81974D6A3720B340DB1CF48 /* Sound.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAC4F4048ACBBCC8738F4C31 /* Sound.swift */; };
+		D5FBEE9497986873A5D763E7 /* SpellBook.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31FFCDD9E7048A35DB0BC768 /* SpellBook.swift */; };
+		A170585DCC127568965442A2 /* SplitDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 018A096960233953ADBCA078 /* SplitDialog.swift */; };
+		996ED8DE2690BED97C2C4374 /* TeleporterDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 728CA1EF845E6EC427827E5E /* TeleporterDialog.swift */; };
+		64E6DA6DF9154BC8B00E4882 /* TextureCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D4A72AA6EF69B85FDEA8BB3 /* TextureCache.swift */; };
+		8FEE59B3B76DC75A9F2330E2 /* ThievesGuildDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0DF5CC2F817EB3D88F1B56B /* ThievesGuildDialog.swift */; };
+		E5CFF67702E12FB3E5A8C5C9 /* TownArmyRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAA227FD9B8249DB01334B7A /* TownArmyRows.swift */; };
+		85E780E18972F92071B4B31E /* TownDialogs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FD0DBBD1A5579B71321281D /* TownDialogs.swift */; };
+		946C3184B4F486700161F897 /* TownScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B78A0BE2B02F39B7D69EA1C /* TownScreen.swift */; };
+		9DC669131FD43056D0847278 /* UI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E50AFB2F5B9713F92C3F8804 /* UI.swift */; };
+		8E18CCED9580B9F180289CD5 /* iOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE7AC0E8D6E20583A7E050B7 /* iOSApp.swift */; };
+		13D62B2508D2E68F4D2FE2B6 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFE6C258A7C69022A261A79C /* main.swift */; };
+		82A2C7A2806F1849B0E4B687 /* H4Engine in Frameworks */ = {isa = PBXBuildFile; productRef = D7A7999F04C02B4CC12D18CE /* H4Engine */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		7B7B2F8B3D62C11CED4B4788 /* AbilityHelp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "AbilityHelp.swift"; path = "../Sources/h4view/AbilityHelp.swift"; sourceTree = SOURCE_ROOT; };
+		B94D4E77675D9AEAA37D5D7D /* AdventureDialogs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "AdventureDialogs.swift"; path = "../Sources/h4view/AdventureDialogs.swift"; sourceTree = SOURCE_ROOT; };
+		9DE955F8C4C0FA201A8ED0C6 /* AdventureFlags.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "AdventureFlags.swift"; path = "../Sources/h4view/AdventureFlags.swift"; sourceTree = SOURCE_ROOT; };
+		285E9050DF126EB90B0D2910 /* AdventureFrame.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "AdventureFrame.swift"; path = "../Sources/h4view/AdventureFrame.swift"; sourceTree = SOURCE_ROOT; };
+		E9AC4B12EA51B753A0FB4CC1 /* AnimationTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "AnimationTest.swift"; path = "../Sources/h4view/AnimationTest.swift"; sourceTree = SOURCE_ROOT; };
+		BA56E2F56A35A71288B3BFE9 /* AppController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "AppController.swift"; path = "../Sources/h4view/AppController.swift"; sourceTree = SOURCE_ROOT; };
+		3235EF4E4D7DCAFB9D46C3B5 /* ArmyInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "ArmyInfo.swift"; path = "../Sources/h4view/ArmyInfo.swift"; sourceTree = SOURCE_ROOT; };
+		A43999240017B73F30CDFAD9 /* ArmyPopup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "ArmyPopup.swift"; path = "../Sources/h4view/ArmyPopup.swift"; sourceTree = SOURCE_ROOT; };
+		A3BFF44F4CCCDBF844907B8D /* ArmyScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "ArmyScreen.swift"; path = "../Sources/h4view/ArmyScreen.swift"; sourceTree = SOURCE_ROOT; };
+		260AB2E0E35062034139FEAB /* ArtifactDragUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "ArtifactDragUI.swift"; path = "../Sources/h4view/ArtifactDragUI.swift"; sourceTree = SOURCE_ROOT; };
+		7494AD4E6089BD2F1E899417 /* BasicDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "BasicDialog.swift"; path = "../Sources/h4view/BasicDialog.swift"; sourceTree = SOURCE_ROOT; };
+		BF67AFC661DD7D951D79789B /* BootyDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "BootyDialog.swift"; path = "../Sources/h4view/BootyDialog.swift"; sourceTree = SOURCE_ROOT; };
+		FBFCCF7D0D267410E321164D /* ButtonSound.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "ButtonSound.swift"; path = "../Sources/h4view/ButtonSound.swift"; sourceTree = SOURCE_ROOT; };
+		1DB2C0001D0C353CD9C55074 /* CaravanDialogs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "CaravanDialogs.swift"; path = "../Sources/h4view/CaravanDialogs.swift"; sourceTree = SOURCE_ROOT; };
+		ED0C814029698B7F6A49708E /* CastleWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "CastleWindow.swift"; path = "../Sources/h4view/CastleWindow.swift"; sourceTree = SOURCE_ROOT; };
+		DD622FE6444FC1441AF0121B /* CharmDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "CharmDialog.swift"; path = "../Sources/h4view/CharmDialog.swift"; sourceTree = SOURCE_ROOT; };
+		EC2C1DAFB8FDDFB8AEA5710E /* CheatBox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "CheatBox.swift"; path = "../Sources/h4view/CheatBox.swift"; sourceTree = SOURCE_ROOT; };
+		814C8054F1674F16B076C4A5 /* ChoiceDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "ChoiceDialog.swift"; path = "../Sources/h4view/ChoiceDialog.swift"; sourceTree = SOURCE_ROOT; };
+		C47F34C669C529D778E8FB35 /* CombatDirector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "CombatDirector.swift"; path = "../Sources/h4view/CombatDirector.swift"; sourceTree = SOURCE_ROOT; };
+		D52AA2DBFE3579CF02270B57 /* CombatEffectsRender.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "CombatEffectsRender.swift"; path = "../Sources/h4view/CombatEffectsRender.swift"; sourceTree = SOURCE_ROOT; };
+		A343BE06F07CA54BDE3455E5 /* CombatInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "CombatInfo.swift"; path = "../Sources/h4view/CombatInfo.swift"; sourceTree = SOURCE_ROOT; };
+		2840B221A0A14B3168E96085 /* CombatPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "CombatPanel.swift"; path = "../Sources/h4view/CombatPanel.swift"; sourceTree = SOURCE_ROOT; };
+		EC912D6810A94CB43DC4DC6C /* CombatPlayback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "CombatPlayback.swift"; path = "../Sources/h4view/CombatPlayback.swift"; sourceTree = SOURCE_ROOT; };
+		E9CC1B9CD200D73EC5E93F43 /* CombatRender.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "CombatRender.swift"; path = "../Sources/h4view/CombatRender.swift"; sourceTree = SOURCE_ROOT; };
+		8E79DB99BE1CEED97E9D27E5 /* CombatResults.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "CombatResults.swift"; path = "../Sources/h4view/CombatResults.swift"; sourceTree = SOURCE_ROOT; };
+		EDEBF25DE2D10E12DB0C3E4A /* CombatScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "CombatScreen.swift"; path = "../Sources/h4view/CombatScreen.swift"; sourceTree = SOURCE_ROOT; };
+		7FBF9C8408E8DE2B6177163D /* ComputerTurnView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "ComputerTurnView.swift"; path = "../Sources/h4view/ComputerTurnView.swift"; sourceTree = SOURCE_ROOT; };
+		055B31A58355A6109FF6602A /* DialogKit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "DialogKit.swift"; path = "../Sources/h4view/DialogKit.swift"; sourceTree = SOURCE_ROOT; };
+		D106F2766CE53217A97BBF3E /* EndGame.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "EndGame.swift"; path = "../Sources/h4view/EndGame.swift"; sourceTree = SOURCE_ROOT; };
+		20CF9C15975E6AD5996111C8 /* EnemyRunsDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "EnemyRunsDialog.swift"; path = "../Sources/h4view/EnemyRunsDialog.swift"; sourceTree = SOURCE_ROOT; };
+		3EBB01CBAEB4440FE4F9F0E1 /* FileDialogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "FileDialogView.swift"; path = "../Sources/h4view/FileDialogView.swift"; sourceTree = SOURCE_ROOT; };
+		A344E9A4283029104F4AB6C9 /* FinalScore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "FinalScore.swift"; path = "../Sources/h4view/FinalScore.swift"; sourceTree = SOURCE_ROOT; };
+		A4F9D727E4E1B1797FCB0F73 /* GameData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "GameData.swift"; path = "../Sources/h4view/GameData.swift"; sourceTree = SOURCE_ROOT; };
+		E606AEE414A5BB61276902D4 /* HeroPickDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "HeroPickDialog.swift"; path = "../Sources/h4view/HeroPickDialog.swift"; sourceTree = SOURCE_ROOT; };
+		359D1E8C7DE14755F4337AFB /* HeroScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "HeroScreen.swift"; path = "../Sources/h4view/HeroScreen.swift"; sourceTree = SOURCE_ROOT; };
+		412E60426548DB66F28A3818 /* HighScoreMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "HighScoreMenu.swift"; path = "../Sources/h4view/HighScoreMenu.swift"; sourceTree = SOURCE_ROOT; };
+		08F7C6CFCF5DCE7059A477B8 /* HireDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "HireDialog.swift"; path = "../Sources/h4view/HireDialog.swift"; sourceTree = SOURCE_ROOT; };
+		C7AECE6BADE80BAA3D4B1EB2 /* KingdomOverview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "KingdomOverview.swift"; path = "../Sources/h4view/KingdomOverview.swift"; sourceTree = SOURCE_ROOT; };
+		0C7DBA8BDE1F0F2AD22F4889 /* LevelUpDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "LevelUpDialog.swift"; path = "../Sources/h4view/LevelUpDialog.swift"; sourceTree = SOURCE_ROOT; };
+		28D87032A8610608AFA16987 /* MageGuild.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "MageGuild.swift"; path = "../Sources/h4view/MageGuild.swift"; sourceTree = SOURCE_ROOT; };
+		D886FD420D346C526B0EB469 /* MagiWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "MagiWindow.swift"; path = "../Sources/h4view/MagiWindow.swift"; sourceTree = SOURCE_ROOT; };
+		0DA3CF8ADF0B73BD920908E8 /* MainMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "MainMenu.swift"; path = "../Sources/h4view/MainMenu.swift"; sourceTree = SOURCE_ROOT; };
+		BBFA1E89365715116A4DB61F /* MarketDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "MarketDialog.swift"; path = "../Sources/h4view/MarketDialog.swift"; sourceTree = SOURCE_ROOT; };
+		ACC58E626CB1C6E0B7A91DC7 /* MenuKit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "MenuKit.swift"; path = "../Sources/h4view/MenuKit.swift"; sourceTree = SOURCE_ROOT; };
+		AC00B19A7DAB64D756537CFA /* Menus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "Menus.swift"; path = "../Sources/h4view/Menus.swift"; sourceTree = SOURCE_ROOT; };
+		ECB8805C400522FE3E0F5B12 /* Movies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "Movies.swift"; path = "../Sources/h4view/Movies.swift"; sourceTree = SOURCE_ROOT; };
+		9D60D8E78297E77987CCEF48 /* OptionsDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "OptionsDialog.swift"; path = "../Sources/h4view/OptionsDialog.swift"; sourceTree = SOURCE_ROOT; };
+		DCB5D209DE3447B1C68748A8 /* Platform.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "Platform.swift"; path = "../Sources/h4view/Platform.swift"; sourceTree = SOURCE_ROOT; };
+		90CAAD49432460B245B8653B /* PuzzleDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "PuzzleDialog.swift"; path = "../Sources/h4view/PuzzleDialog.swift"; sourceTree = SOURCE_ROOT; };
+		B9F701F8BEB1D74D46AE2C04 /* Renderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "Renderer.swift"; path = "../Sources/h4view/Renderer.swift"; sourceTree = SOURCE_ROOT; };
+		35F3D1BD37BE75F18A4D00AD /* SanctuaryDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "SanctuaryDialog.swift"; path = "../Sources/h4view/SanctuaryDialog.swift"; sourceTree = SOURCE_ROOT; };
+		54202C949E20448BD7E6E2A6 /* SaveLoad.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "SaveLoad.swift"; path = "../Sources/h4view/SaveLoad.swift"; sourceTree = SOURCE_ROOT; };
+		D6EA3222ADAB816B162AC898 /* ShopDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "ShopDialog.swift"; path = "../Sources/h4view/ShopDialog.swift"; sourceTree = SOURCE_ROOT; };
+		3ACEE4A35430EE3E66D9DECD /* Shroud.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "Shroud.swift"; path = "../Sources/h4view/Shroud.swift"; sourceTree = SOURCE_ROOT; };
+		3A4F14950F4BC746CD5C988A /* SkillDialogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "SkillDialogView.swift"; path = "../Sources/h4view/SkillDialogView.swift"; sourceTree = SOURCE_ROOT; };
+		AAC4F4048ACBBCC8738F4C31 /* Sound.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "Sound.swift"; path = "../Sources/h4view/Sound.swift"; sourceTree = SOURCE_ROOT; };
+		31FFCDD9E7048A35DB0BC768 /* SpellBook.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "SpellBook.swift"; path = "../Sources/h4view/SpellBook.swift"; sourceTree = SOURCE_ROOT; };
+		018A096960233953ADBCA078 /* SplitDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "SplitDialog.swift"; path = "../Sources/h4view/SplitDialog.swift"; sourceTree = SOURCE_ROOT; };
+		728CA1EF845E6EC427827E5E /* TeleporterDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "TeleporterDialog.swift"; path = "../Sources/h4view/TeleporterDialog.swift"; sourceTree = SOURCE_ROOT; };
+		1D4A72AA6EF69B85FDEA8BB3 /* TextureCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "TextureCache.swift"; path = "../Sources/h4view/TextureCache.swift"; sourceTree = SOURCE_ROOT; };
+		F0DF5CC2F817EB3D88F1B56B /* ThievesGuildDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "ThievesGuildDialog.swift"; path = "../Sources/h4view/ThievesGuildDialog.swift"; sourceTree = SOURCE_ROOT; };
+		EAA227FD9B8249DB01334B7A /* TownArmyRows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "TownArmyRows.swift"; path = "../Sources/h4view/TownArmyRows.swift"; sourceTree = SOURCE_ROOT; };
+		9FD0DBBD1A5579B71321281D /* TownDialogs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "TownDialogs.swift"; path = "../Sources/h4view/TownDialogs.swift"; sourceTree = SOURCE_ROOT; };
+		7B78A0BE2B02F39B7D69EA1C /* TownScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "TownScreen.swift"; path = "../Sources/h4view/TownScreen.swift"; sourceTree = SOURCE_ROOT; };
+		E50AFB2F5B9713F92C3F8804 /* UI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "UI.swift"; path = "../Sources/h4view/UI.swift"; sourceTree = SOURCE_ROOT; };
+		CE7AC0E8D6E20583A7E050B7 /* iOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "iOSApp.swift"; path = "../Sources/h4view/iOSApp.swift"; sourceTree = SOURCE_ROOT; };
+		EFE6C258A7C69022A261A79C /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "main.swift"; path = "../Sources/h4view/main.swift"; sourceTree = SOURCE_ROOT; };
+		D611EE345987BB4EBE8CCC43 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		F91288DB192297DC903FE08C /* H4Remake.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = H4Remake.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		C18F88D444D8FE65E18D39E9 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				82A2C7A2806F1849B0E4B687 /* H4Engine in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		4EAE695AD1F489F78EA3E1C6 = {
+			isa = PBXGroup;
+			children = (
+				D611EE345987BB4EBE8CCC43 /* Info.plist */,
+				D028BAC9322B50A2A6B0D9EC /* h4view */,
+				1D5F545FBA1B7116946BB4C6 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		D028BAC9322B50A2A6B0D9EC /* h4view */ = {
+			isa = PBXGroup;
+			children = (
+				7B7B2F8B3D62C11CED4B4788 /* AbilityHelp.swift */,
+				B94D4E77675D9AEAA37D5D7D /* AdventureDialogs.swift */,
+				9DE955F8C4C0FA201A8ED0C6 /* AdventureFlags.swift */,
+				285E9050DF126EB90B0D2910 /* AdventureFrame.swift */,
+				E9AC4B12EA51B753A0FB4CC1 /* AnimationTest.swift */,
+				BA56E2F56A35A71288B3BFE9 /* AppController.swift */,
+				3235EF4E4D7DCAFB9D46C3B5 /* ArmyInfo.swift */,
+				A43999240017B73F30CDFAD9 /* ArmyPopup.swift */,
+				A3BFF44F4CCCDBF844907B8D /* ArmyScreen.swift */,
+				260AB2E0E35062034139FEAB /* ArtifactDragUI.swift */,
+				7494AD4E6089BD2F1E899417 /* BasicDialog.swift */,
+				BF67AFC661DD7D951D79789B /* BootyDialog.swift */,
+				FBFCCF7D0D267410E321164D /* ButtonSound.swift */,
+				1DB2C0001D0C353CD9C55074 /* CaravanDialogs.swift */,
+				ED0C814029698B7F6A49708E /* CastleWindow.swift */,
+				DD622FE6444FC1441AF0121B /* CharmDialog.swift */,
+				EC2C1DAFB8FDDFB8AEA5710E /* CheatBox.swift */,
+				814C8054F1674F16B076C4A5 /* ChoiceDialog.swift */,
+				C47F34C669C529D778E8FB35 /* CombatDirector.swift */,
+				D52AA2DBFE3579CF02270B57 /* CombatEffectsRender.swift */,
+				A343BE06F07CA54BDE3455E5 /* CombatInfo.swift */,
+				2840B221A0A14B3168E96085 /* CombatPanel.swift */,
+				EC912D6810A94CB43DC4DC6C /* CombatPlayback.swift */,
+				E9CC1B9CD200D73EC5E93F43 /* CombatRender.swift */,
+				8E79DB99BE1CEED97E9D27E5 /* CombatResults.swift */,
+				EDEBF25DE2D10E12DB0C3E4A /* CombatScreen.swift */,
+				7FBF9C8408E8DE2B6177163D /* ComputerTurnView.swift */,
+				055B31A58355A6109FF6602A /* DialogKit.swift */,
+				D106F2766CE53217A97BBF3E /* EndGame.swift */,
+				20CF9C15975E6AD5996111C8 /* EnemyRunsDialog.swift */,
+				3EBB01CBAEB4440FE4F9F0E1 /* FileDialogView.swift */,
+				A344E9A4283029104F4AB6C9 /* FinalScore.swift */,
+				A4F9D727E4E1B1797FCB0F73 /* GameData.swift */,
+				E606AEE414A5BB61276902D4 /* HeroPickDialog.swift */,
+				359D1E8C7DE14755F4337AFB /* HeroScreen.swift */,
+				412E60426548DB66F28A3818 /* HighScoreMenu.swift */,
+				08F7C6CFCF5DCE7059A477B8 /* HireDialog.swift */,
+				C7AECE6BADE80BAA3D4B1EB2 /* KingdomOverview.swift */,
+				0C7DBA8BDE1F0F2AD22F4889 /* LevelUpDialog.swift */,
+				28D87032A8610608AFA16987 /* MageGuild.swift */,
+				D886FD420D346C526B0EB469 /* MagiWindow.swift */,
+				0DA3CF8ADF0B73BD920908E8 /* MainMenu.swift */,
+				BBFA1E89365715116A4DB61F /* MarketDialog.swift */,
+				ACC58E626CB1C6E0B7A91DC7 /* MenuKit.swift */,
+				AC00B19A7DAB64D756537CFA /* Menus.swift */,
+				ECB8805C400522FE3E0F5B12 /* Movies.swift */,
+				9D60D8E78297E77987CCEF48 /* OptionsDialog.swift */,
+				DCB5D209DE3447B1C68748A8 /* Platform.swift */,
+				90CAAD49432460B245B8653B /* PuzzleDialog.swift */,
+				B9F701F8BEB1D74D46AE2C04 /* Renderer.swift */,
+				35F3D1BD37BE75F18A4D00AD /* SanctuaryDialog.swift */,
+				54202C949E20448BD7E6E2A6 /* SaveLoad.swift */,
+				D6EA3222ADAB816B162AC898 /* ShopDialog.swift */,
+				3ACEE4A35430EE3E66D9DECD /* Shroud.swift */,
+				3A4F14950F4BC746CD5C988A /* SkillDialogView.swift */,
+				AAC4F4048ACBBCC8738F4C31 /* Sound.swift */,
+				31FFCDD9E7048A35DB0BC768 /* SpellBook.swift */,
+				018A096960233953ADBCA078 /* SplitDialog.swift */,
+				728CA1EF845E6EC427827E5E /* TeleporterDialog.swift */,
+				1D4A72AA6EF69B85FDEA8BB3 /* TextureCache.swift */,
+				F0DF5CC2F817EB3D88F1B56B /* ThievesGuildDialog.swift */,
+				EAA227FD9B8249DB01334B7A /* TownArmyRows.swift */,
+				9FD0DBBD1A5579B71321281D /* TownDialogs.swift */,
+				7B78A0BE2B02F39B7D69EA1C /* TownScreen.swift */,
+				E50AFB2F5B9713F92C3F8804 /* UI.swift */,
+				CE7AC0E8D6E20583A7E050B7 /* iOSApp.swift */,
+				EFE6C258A7C69022A261A79C /* main.swift */,
+			);
+			name = h4view;
+			sourceTree = "<group>";
+		};
+		1D5F545FBA1B7116946BB4C6 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				F91288DB192297DC903FE08C /* H4Remake.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		42AEFBAE01D2DFD981F7DA7D /* H4Remake */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1FE0E75410BBBB0E5DE5E9B5;
+			buildPhases = (
+				C4D5163706E5908DC9E032F3 /* Sources */,
+				C18F88D444D8FE65E18D39E9 /* Frameworks */,
+				4FDAD6DB49035FA75C21467D /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = H4Remake;
+			packageProductDependencies = (
+				D7A7999F04C02B4CC12D18CE /* H4Engine */,
+			);
+			productName = H4Remake;
+			productReference = F91288DB192297DC903FE08C /* H4Remake.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		46F86FAA6BBF9AC94A7E4595 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+			};
+			buildConfigurationList = 4DC842AFD6F1146FD0D47CEA;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 4EAE695AD1F489F78EA3E1C6;
+			packageReferences = (
+				EFE90A8E604A7C840E88D03A /* XCLocalSwiftPackageReference ".." */,
+			);
+			productRefGroup = 1D5F545FBA1B7116946BB4C6 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				42AEFBAE01D2DFD981F7DA7D /* H4Remake */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		4FDAD6DB49035FA75C21467D /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		C4D5163706E5908DC9E032F3 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C56F1A60835382AFCA40C450 /* AbilityHelp.swift in Sources */,
+				01EA2C711C35EA2112B1F94A /* AdventureDialogs.swift in Sources */,
+				4528369EC958D10C8E37CF5D /* AdventureFlags.swift in Sources */,
+				6F3FB6887FB3FB77EB9D1E48 /* AdventureFrame.swift in Sources */,
+				F5EFBA494FAE580A507C68F0 /* AnimationTest.swift in Sources */,
+				EDB1C4A297F13F3D208D9B7F /* AppController.swift in Sources */,
+				C06B1D96B6FE3F4EB3AE1352 /* ArmyInfo.swift in Sources */,
+				95DA2842334FCB77511BC936 /* ArmyPopup.swift in Sources */,
+				77D308EB4F3E4BD7BADF766C /* ArmyScreen.swift in Sources */,
+				0285DD040E21262933B18E2D /* ArtifactDragUI.swift in Sources */,
+				0A55B2D3B3FAF1F32D9746BB /* BasicDialog.swift in Sources */,
+				2A014F0C42A4950AEF8644BD /* BootyDialog.swift in Sources */,
+				57AEB76BBC40331BF4F13CC3 /* ButtonSound.swift in Sources */,
+				1DF97A1016F6F899A662B00A /* CaravanDialogs.swift in Sources */,
+				678E4FF3BA8D35605D19E460 /* CastleWindow.swift in Sources */,
+				25DED9BD2B42398C5CA61AE1 /* CharmDialog.swift in Sources */,
+				3E66C4D79E7978B40DD18BD4 /* CheatBox.swift in Sources */,
+				D2BF687145C0BB63BDB8836B /* ChoiceDialog.swift in Sources */,
+				6F47C850C5BA05CA08E4C01F /* CombatDirector.swift in Sources */,
+				C21D9D38E096EE39A5367841 /* CombatEffectsRender.swift in Sources */,
+				F6261B3BDF31BD0DA4FF808D /* CombatInfo.swift in Sources */,
+				EBA024E7F5E2E754F5A3D3C5 /* CombatPanel.swift in Sources */,
+				B0D42AE222D01FA0C300403D /* CombatPlayback.swift in Sources */,
+				5621203DFB4DA9FE4727CE6D /* CombatRender.swift in Sources */,
+				59A4746B514F171E4A70B13E /* CombatResults.swift in Sources */,
+				67E1D38B0E0A5C9EAA6DF035 /* CombatScreen.swift in Sources */,
+				E17946750896B2684B5B094F /* ComputerTurnView.swift in Sources */,
+				D74E428016D53F4A9B6DB623 /* DialogKit.swift in Sources */,
+				D395A1AE9703629BF652531B /* EndGame.swift in Sources */,
+				7A19C1C19CA36425008734CF /* EnemyRunsDialog.swift in Sources */,
+				5A7A1F9C66B8E15D475947D1 /* FileDialogView.swift in Sources */,
+				67D363F7C63C3DD32DB55341 /* FinalScore.swift in Sources */,
+				8BB62CDDD2C58A566449CC92 /* GameData.swift in Sources */,
+				5474CD4BE680C070805B4AFB /* HeroPickDialog.swift in Sources */,
+				72EF746C9CA37FACA85D05A4 /* HeroScreen.swift in Sources */,
+				CA91D51B353D686E5E9C8993 /* HighScoreMenu.swift in Sources */,
+				FC155114892AD970F3DE5C87 /* HireDialog.swift in Sources */,
+				70F121572A4232101BED3805 /* KingdomOverview.swift in Sources */,
+				85D9EEF2A2E88EF5C4067C72 /* LevelUpDialog.swift in Sources */,
+				A7DAC9E8369F7DE28433E33D /* MageGuild.swift in Sources */,
+				1DDC5D4B4804E4282735E769 /* MagiWindow.swift in Sources */,
+				6D2D9A49818E4608541E382A /* MainMenu.swift in Sources */,
+				36E0E74435AF48FDDE602B14 /* MarketDialog.swift in Sources */,
+				9A95FAACF64C9EE7DE5654AE /* MenuKit.swift in Sources */,
+				DEDB0799FE41B495848CB34F /* Menus.swift in Sources */,
+				A1256280C15048F5101352B7 /* Movies.swift in Sources */,
+				55BD9C41133911F8A86B5C85 /* OptionsDialog.swift in Sources */,
+				4B7945DF198A34AD571B6C28 /* Platform.swift in Sources */,
+				B14457674127401D0FE900D9 /* PuzzleDialog.swift in Sources */,
+				4D6FACF22EEC18A1D350CD11 /* Renderer.swift in Sources */,
+				9FC48FE3F871278EC882B812 /* SanctuaryDialog.swift in Sources */,
+				240B307F71D9F39FD2DCB5C8 /* SaveLoad.swift in Sources */,
+				D8D806E71AAE24DB6B3BF9B4 /* ShopDialog.swift in Sources */,
+				0BA3A527900C90BFF3F099A6 /* Shroud.swift in Sources */,
+				8B2BD3BA6CCA4AB64AA91C7D /* SkillDialogView.swift in Sources */,
+				C81974D6A3720B340DB1CF48 /* Sound.swift in Sources */,
+				D5FBEE9497986873A5D763E7 /* SpellBook.swift in Sources */,
+				A170585DCC127568965442A2 /* SplitDialog.swift in Sources */,
+				996ED8DE2690BED97C2C4374 /* TeleporterDialog.swift in Sources */,
+				64E6DA6DF9154BC8B00E4882 /* TextureCache.swift in Sources */,
+				8FEE59B3B76DC75A9F2330E2 /* ThievesGuildDialog.swift in Sources */,
+				E5CFF67702E12FB3E5A8C5C9 /* TownArmyRows.swift in Sources */,
+				85E780E18972F92071B4B31E /* TownDialogs.swift in Sources */,
+				946C3184B4F486700161F897 /* TownScreen.swift in Sources */,
+				9DC669131FD43056D0847278 /* UI.swift in Sources */,
+				8E18CCED9580B9F180289CD5 /* iOSApp.swift in Sources */,
+				13D62B2508D2E68F4D2FE2B6 /* main.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		80DB6ACE13380ADC3D86D6C5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_COMPILATION_MODE = singlefile;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				VALIDATE_PRODUCT = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+			};
+			name = Debug;
+		};
+		B373EA90B6F23CCAEDAF6FEE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = com.anbrose.h4remake;
+				PRODUCT_NAME = H4Remake;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+			};
+			name = Debug;
+		};
+		08723DE70035A45CE7E33CC1 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				ONLY_ACTIVE_ARCH = NO;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_TESTABILITY = NO;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		03DD51312A9DE8E4A570DD7D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = com.anbrose.h4remake;
+				PRODUCT_NAME = H4Remake;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		4DC842AFD6F1146FD0D47CEA = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				80DB6ACE13380ADC3D86D6C5 /* Debug */,
+				08723DE70035A45CE7E33CC1 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1FE0E75410BBBB0E5DE5E9B5 = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B373EA90B6F23CCAEDAF6FEE /* Debug */,
+				03DD51312A9DE8E4A570DD7D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		EFE90A8E604A7C840E88D03A /* XCLocalSwiftPackageReference ".." */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ..;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		D7A7999F04C02B4CC12D18CE /* H4Engine */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = H4Engine;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 46F86FAA6BBF9AC94A7E4595 /* Project object */;
+}

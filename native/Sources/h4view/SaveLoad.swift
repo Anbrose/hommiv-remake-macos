@@ -1,5 +1,7 @@
 import Foundation
+#if os(macOS)
 import AppKit
+#endif
 import H4Engine
 
 /// Saving and loading (layers.dialog.save_game / load_game): eleven file lines with name and
@@ -112,6 +114,7 @@ extension Renderer {
     }
 
     /// Typing in the save dialog's edit box.
+#if os(macOS)
     func saveDialogKey(_ e: NSEvent) -> Bool {
         guard var sd = saveDialog else { return false }
         switch e.keyCode {
@@ -126,6 +129,7 @@ extension Renderer {
         }
         return true
     }
+#endif
 }
 
 extension Renderer {

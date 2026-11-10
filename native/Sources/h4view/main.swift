@@ -1,10 +1,19 @@
+#if os(macOS)
 import AppKit
+#else
+import UIKit
+#endif
 import Metal
 import MetalKit
 import H4Engine
 
 // h4view <Data/heroes4.h4r> <map.h4c> [--level N] [--snapshot out.png]
 // the game data: given on the command line (and remembered), else the remembered or usual place
+#if os(iOS)
+// iOS: the data lives in the app's Documents/Data (copied in with the Files app or the import
+// screen, iOSApp.swift); a launch's own arguments (simctl launch ... campaign:10:0) follow it
+let args: [String] = [CommandLine.arguments[0], IOSData.archivePath] + CommandLine.arguments.dropFirst()
+#else
 let args: [String] = {
     var a = CommandLine.arguments.filter { !$0.hasPrefix("-psn") }   // (Finder adds a process serial number)
     if a.count >= 2, a[1].hasSuffix(".h4r") { UserDefaults.standard.set(a[1], forKey: "heroes4.h4r"); return a }
@@ -13,6 +22,7 @@ let args: [String] = {
     if let p = known.first(where: { FileManager.default.fileExists(atPath: $0) }) { a.insert(p, at: min(1, a.count)) }
     return a
 }()
+#endif
 // no map: the main menu (new game, campaigns, load); its choices open the game in the same window
 let menuMode = args.count == 2 || (args.count >= 3 && args[2] == "--menu")
 guard args.count >= 2 else {
@@ -75,12 +85,6 @@ while i < args.count {
 
 var t0 = Date()
 func lap(_ what: String) { print("\(what): \(Int(Date().timeIntervalSince(t0) * 1000)) ms"); t0 = Date() }
-let archive = try H4Archive(url: URL(fileURLWithPath: args[1]))
-for f in ["x2.h4r", "storm.h4r", "updates.h4r", "x2_override.h4r", "storm_override.h4r"] {
-    if let a = try? H4Archive(url: URL(fileURLWithPath: args[1]).deletingLastPathComponent().appendingPathComponent(f)) { archive.supplement(with: a) }
-}
-let movies = Movies(dataDirectory: URL(fileURLWithPath: args[1]).deletingLastPathComponent())
-let gameSound = GameSound(dataDirectory: URL(fileURLWithPath: args[1]).deletingLastPathComponent())
 if let names = ProcessInfo.processInfo.environment["H4SOUNDCHECK"] {   // debugging aid: which sounds exist and decode
     for n in names.split(separator: ",") { print("\(n): \(gameSound.data(String(n)).map { "\($0.count) bytes" } ?? "missing")") }
     exit(0)
@@ -121,9 +125,6 @@ if args.count >= 3, args[2] == "--dump" {   // h4view <h4r> --dump <entry>...: d
     }
     exit(0)
 }
-let objNames = Set(archive.names(prefix: "adv_object.").map { String($0.dropFirst("adv_object.".count).dropLast(4)) })
-let masks = try TransitionMasks(data: archive.payload("transition.Transitions.h4d"))
-let device = MTLCreateSystemDefaultDevice()!
 
 /// One scenario in progress: its map, scenes and game state, and the screens built over them.
 /// The window keeps one at a time (AppController); a new game, a load or the next campaign
@@ -753,6 +754,7 @@ if let out = snapshot {
 
 /// The game's animated mouse pointers (layers.cursor.<name>: frames "1".."4" and a hot_spot
 /// layer whose rectangle marks the hot spot; single-frame files hold "Layer 1").
+#if os(macOS)
 final class GameCursors {
     struct Set { let frames: [NSCursor] }
     var sets: [String: Set] = [:]
@@ -784,6 +786,15 @@ final class GameCursors {
         return s
     }
 }
+#else
+/// No pointer on a touch screen: the cursor sets are empty.
+final class GameCursors {
+    struct Frame { func set() {} }
+    struct Set { let frames: [Frame] }
+    init(archive: H4Archive) {}
+    func set(_ name: String) -> Set? { nil }
+}
+#endif
 
 final class MapView: MTKView {
     var renderer: Renderer!
@@ -794,12 +805,25 @@ final class MapView: MTKView {
     var cursorName = "normal"
     var cursorFrame = 0
     var cursorTimer: Timer?
+#if os(macOS)
     override var acceptsFirstResponder: Bool { true }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         for a in trackingAreas { removeTrackingArea(a) }
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self, userInfo: nil))
+        startTicking()
+    }
+    // the mouse, handed to the shared handlers below (the iPhone's touches: iOSApp.swift)
+    override func mouseMoved(with e: NSEvent) { pointerMoved(PointerEvent(e, in: self)) }
+    override func mouseDown(with e: NSEvent) { pointerDown(PointerEvent(e, in: self, clicks: true)) }
+    override func mouseDragged(with e: NSEvent) { pointerDragged(PointerEvent(e, in: self, deltas: true)) }
+    override func mouseUp(with e: NSEvent) { pointerUp(PointerEvent(e, in: self, clicks: true)) }
+    override func rightMouseDown(with e: NSEvent) { rightPointerDown(PointerEvent(e, in: self)) }
+    override func rightMouseUp(with e: NSEvent) { rightPointerUp(PointerEvent(e, in: self)) }
+#endif
+    /// The pointer's animation and the status line's rest timer.
+    func startTicking() {
         if cursorTimer == nil {
             cursorTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self] _ in self?.tickCursor() }
         }
@@ -812,9 +836,9 @@ final class MapView: MTKView {
     }
     /// Pick the pointer for what is under the mouse: the plain arrow over the panel, the
     /// town screen and open boxes; on the map, what a click there would do.
-    override func mouseMoved(with e: NSEvent) {
+    func pointerMoved(_ e: PointerEvent) {
         guard let g = renderer.game, g.heroes.first != nil else { return }
-        let p = convert(e.locationInWindow, from: nil)
+        let p = e.location
         let scale = Float(window?.backingScaleFactor ?? 1)
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
         let cx = mouse.x / renderer.uiScale
@@ -883,13 +907,15 @@ final class MapView: MTKView {
             renderer.hover = (text, Int(p.mouse.x / renderer.uiScale), Int(p.mouse.y / renderer.uiScale))
         }
     }
+#if os(macOS)
     override func mouseExited(with e: NSEvent) { NSCursor.arrow.set(); cursorName = ""; renderer.hover = nil; hoverPending = nil }
-    override func mouseDown(with e: NSEvent) {
+#endif
+    func pointerDown(_ e: PointerEvent) {
         if renderer.skipMagiView() { swallowMouseUp = true; return }   // a Window of the Magi playing: any press ends it
         if renderer.endGameClick(e, in: self) { swallowMouseUp = true; return }   // the win / lose window and what follows it
         dragged = 0; renderer.hover = nil; hoverPending = nil
         renderer.abilityPopup = nil   // an ability's help goes with any left press (0x7e6180)
-        let p = convert(e.locationInWindow, from: nil)
+        let p = e.location
         let scale = Float(window?.backingScaleFactor ?? 1)
         renderer.pressSound(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale)
         if renderer.cheatBoxClick(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale) { return }
@@ -899,53 +925,53 @@ final class MapView: MTKView {
         if renderer.townOpen != nil { renderer.townPress(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale); return }
         renderer.panelPress(x: Float(p.x) * scale / renderer.uiScale, y: Float(bounds.height - p.y) * scale / renderer.uiScale, shift: e.modifierFlags.contains(.shift))   // a stack of the army panel
     }
-    override func mouseDragged(with e: NSEvent) {
+    func pointerDragged(_ e: PointerEvent) {
         dragged += abs(Float(e.deltaX)) + abs(Float(e.deltaY))
         if splitDialog != nil {   // the split dialog's scrollbar follows the pointer
-            let p = convert(e.locationInWindow, from: nil), sc = Float(window?.backingScaleFactor ?? 1)
+            let p = e.location, sc = Float(window?.backingScaleFactor ?? 1)
             renderer.splitClick(x: Float(p.x) * sc / renderer.uiScale, y: Float(bounds.height - p.y) * sc / renderer.uiScale, drag: true)
             return
         }
         if renderer.game?.booty != nil, !renderer.inCombat {   // an artifact carried out of the spoils dialog
             if dragged >= 4 {
-                let p = convert(e.locationInWindow, from: nil), sc = Float(window?.backingScaleFactor ?? 1)
+                let p = e.location, sc = Float(window?.backingScaleFactor ?? 1)
                 renderer.bootyDragged(x: Float(p.x) * sc / renderer.uiScale, y: Float(bounds.height - p.y) * sc / renderer.uiScale)
             }
             return
         }
         if armySession != nil {   // a stack lifted in the army screen
             if dragged >= 4 {
-                let p = convert(e.locationInWindow, from: nil), sc = Float(window?.backingScaleFactor ?? 1)
+                let p = e.location, sc = Float(window?.backingScaleFactor ?? 1)
                 renderer.armyScreenDragged(x: Float(p.x) * sc / renderer.uiScale, y: Float(bounds.height - p.y) * sc / renderer.uiScale, shift: e.modifierFlags.contains(.shift))
             }
             return
         }
         if renderer.caravanUI != nil {   // a ring lifted in a caravan dialog
             if dragged >= 4 {
-                let p = convert(e.locationInWindow, from: nil), sc = Float(window?.backingScaleFactor ?? 1)
+                let p = e.location, sc = Float(window?.backingScaleFactor ?? 1)
                 renderer.caravanDragged(x: Float(p.x) * sc / renderer.uiScale, y: Float(bounds.height - p.y) * sc / renderer.uiScale)
             }
             return
         }
         if renderer.townOpen != nil {
             if dragged >= 4 {
-                let p = convert(e.locationInWindow, from: nil), sc = Float(window?.backingScaleFactor ?? 1)
+                let p = e.location, sc = Float(window?.backingScaleFactor ?? 1)
                 renderer.townDragged(x: Float(p.x) * sc / renderer.uiScale, y: Float(bounds.height - p.y) * sc / renderer.uiScale, split: e.modifierFlags.contains(.shift))
             }
             return
         }
         if panelDrag != nil {   // a stack lifted from the army panel
             if dragged >= 4 {
-                let p = convert(e.locationInWindow, from: nil), sc = Float(window?.backingScaleFactor ?? 1)
+                let p = e.location, sc = Float(window?.backingScaleFactor ?? 1)
                 _ = renderer.panelDragged(x: Float(p.x) * sc / renderer.uiScale, y: Float(bounds.height - p.y) * sc / renderer.uiScale, shift: e.modifierFlags.contains(.shift))
             }
             return
         }
         renderer.pan -= SIMD2(Float(e.deltaX), Float(e.deltaY)) / renderer.zoom
     }
-    override func mouseUp(with e: NSEvent) {
+    func pointerUp(_ e: PointerEvent) {
         if swallowMouseUp { swallowMouseUp = false; return }
-        let p0 = convert(e.locationInWindow, from: nil), sc = Float(window?.backingScaleFactor ?? 1)
+        let p0 = e.location, sc = Float(window?.backingScaleFactor ?? 1)
         renderer.clickCount = e.clickCount
         if renderer.game?.booty != nil, !renderer.inCombat { renderer.bootyRelease(x: Float(p0.x) * sc / renderer.uiScale, y: Float(bounds.height - p0.y) * sc / renderer.uiScale); return }
         if armySession != nil, splitDialog == nil, renderer.armyScreenRelease(x: Float(p0.x) * sc / renderer.uiScale, y: Float(bounds.height - p0.y) * sc / renderer.uiScale, shift: e.modifierFlags.contains(.shift)) { return }
@@ -964,7 +990,7 @@ final class MapView: MTKView {
         // (with every hero in a garrison there is no army to act for: a stand-in)
         let hero = g.heroes.first ?? Hero(actor: "", x: -1, y: -1, movement: 0)
         // window point -> map pixel -> cell (rounding x and y separately picks the diamond under the cursor)
-        let p = convert(e.locationInWindow, from: nil)
+        let p = e.location
         let scale = Float(window?.backingScaleFactor ?? 1)
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
         if splitDialog != nil { renderer.splitClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
@@ -1063,12 +1089,12 @@ final class MapView: MTKView {
     }
     /// Right click: opens a box describing what is under the cursor; it stays until a left
     /// click lands outside it (as in the game).
-    override func rightMouseUp(with e: NSEvent) { renderer.messageItemHelp = nil; renderer.abilityPopup = nil; heldHelp = nil }
-    override func rightMouseDown(with e: NSEvent) {
+    func rightPointerUp(_ e: PointerEvent) { renderer.messageItemHelp = nil; renderer.abilityPopup = nil; heldHelp = nil }
+    func rightPointerDown(_ e: PointerEvent) {
         if renderer.skipMagiView() { return }
         if renderer.endGame != nil { _ = renderer.endGameClick(e, in: self); return }
         if renderer.computerTurnBusy { return }
-        let p = convert(e.locationInWindow, from: nil)
+        let p = e.location
         let scale = Float(window?.backingScaleFactor ?? 1)
         let mouse = SIMD2(Float(p.x) * scale, Float(bounds.height - p.y) * scale)
         let cx = mouse.x / renderer.uiScale, cy = mouse.y / renderer.uiScale
@@ -1106,6 +1132,7 @@ final class MapView: MTKView {
         }
         renderer.inspect(mapPoint: renderer.pan + mouse / renderer.zoom, canvas: (cx, cy))
     }
+#if os(macOS)
     override func scrollWheel(with e: NSEvent) {
         if armySession != nil { renderer.armyScreenScroll(e.scrollingDeltaY); return }   // the backpack scrolls
         if renderer.townOpen != nil {   // the build list pages with the wheel
@@ -1119,6 +1146,8 @@ final class MapView: MTKView {
         }
         renderer.pan -= SIMD2(Float(e.scrollingDeltaX), Float(e.scrollingDeltaY)) / renderer.zoom
     }
+#endif
+#if os(macOS)
     override func magnify(with e: NSEvent) {
         let z = max(0.25, min(4, renderer.zoom * Float(1 + e.magnification)))
         let p = convert(e.locationInWindow, from: nil)
@@ -1127,6 +1156,8 @@ final class MapView: MTKView {
         renderer.pan += mouse / renderer.zoom - mouse / z
         renderer.zoom = z
     }
+#endif
+#if os(macOS)
     override func keyDown(with e: NSEvent) {
         if renderer.skipMagiView() { return }
         if renderer.endGameKey(e) { return }
@@ -1172,11 +1203,16 @@ final class MapView: MTKView {
         default: break
         }
     }
+#endif
 }
 
-let app = NSApplication.shared
-app.setActivationPolicy(.regular)
 AppController.shared.initialArgs = args
 AppController.shared.initialCentre = center
+#if os(macOS)
+let app = NSApplication.shared
+app.setActivationPolicy(.regular)
 app.delegate = AppController.shared
 app.run()
+#else
+_ = UIApplicationMain(CommandLine.argc, CommandLine.unsafeArgv, nil, NSStringFromClass(IOSAppDelegate.self))
+#endif

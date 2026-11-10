@@ -1,5 +1,4 @@
 import Foundation
-import AppKit
 import H4Engine
 
 /// The town screen's army rows (town_spec §4, town_screens_spec §1.3.4): the garrison (t_creature_array_window
@@ -48,7 +47,7 @@ extension Renderer {
     /// The pointer moved with the button down: the lifted stack follows it (the system pointer hides).
     func townDragged(x: Float, y: Float, split: Bool) {
         guard townDrag != nil else { return }
-        if townDragAt == nil { NSCursor.hide() }
+        if townDragAt == nil { Platform.hideCursor() }
         townDragAt = (x, y); townDragSplit = split || townSplitOn
     }
     /// Apply a move (`count` of a stack when splitting); creatures left outside without a hero stay
@@ -67,7 +66,7 @@ extension Renderer {
     /// A drop: with Shift or the split toggle, onto an empty place or the same creature, the split
     /// dialog asks how many go (0x6467f0); otherwise a move.
     func townDrop(x: Float, y: Float, split: Bool) {
-        defer { townDrag = nil; if townDragAt != nil { NSCursor.unhide() }; townDragAt = nil }
+        defer { townDrag = nil; if townDragAt != nil { Platform.unhideCursor() }; townDragAt = nil }
         guard let from = townDrag, let to = townRing(at: x, y), from != to, let rows = townRows(), let src = rows[from.row][from.k] else { return }
         let dst = rows[to.row][to.k]
         if split || townSplitOn, let a = src.stack, dst == nil || dst?.stack?.creature == a.creature, a.count + (dst?.stack?.count ?? 0) >= 2 {

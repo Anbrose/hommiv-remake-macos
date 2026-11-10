@@ -1,4 +1,8 @@
+#if os(macOS)
 import AppKit
+#else
+import UIKit
+#endif
 import H4Engine
 
 /// The main menu and the screens before a game (campaign_spec §3, menus_spec parts A-C): the
@@ -7,7 +11,7 @@ import H4Engine
 /// scenario list (dialog.new_game), New_Game_Options, the campaign selection (campaign_selection /
 /// storm_ / wow_), the campaign briefing (dialog.Campaign) and epilogue (Campaign_Epilogue), Load
 /// Game and Game Settings. A choice opens the map or campaign scenario in the same window (AppController).
-final class MenuView: NSView {
+final class MenuView: PlatformView {
     enum Screen {
         case main
         case scenarios
@@ -69,7 +73,7 @@ final class MenuView: NSView {
         menuRules = rules
         kit = MenuKit(archives: extra + [archive], strings: { texts })
         sound = shared ?? GameSound(dataDirectory: dir)
-        super.init(frame: NSRect(x: 0, y: 0, width: 1024, height: 768))
+        super.init(frame: CGRect(x: 0, y: 0, width: 1024, height: 768))
         // an epilogue / the next scenario after a won campaign scenario: "--menu --next <id> <index> [--carry file]"
         if let k = args.firstIndex(of: "--next"), k + 2 < args.count, let id = Int(args[k + 1]), let index = Int(args[k + 2]) {
             let carry = args.firstIndex(of: "--carry").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
@@ -85,8 +89,10 @@ final class MenuView: NSView {
         timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in self?.tick() }
     }
     required init?(coder: NSCoder) { fatalError() }
+    #if os(macOS)
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
+    #endif
 
     /// Open a screen by name (the snapshot names and --screen).
     func open(_ name: String) {
@@ -183,9 +189,9 @@ final class MenuView: NSView {
         return UIRect(ox + l.x, oy + l.y, w ?? l.width, h ?? l.height).contains(x, y)
     }
 
-    override func draw(_ dirty: NSRect) {
-        guard let c = NSGraphicsContext.current?.cgContext else { return }
-        c.setFillColor(.black); c.fill(bounds)
+    override func draw(_ dirty: CGRect) {
+        guard let c = Platform.currentCGContext() else { return }
+        c.setFillColor(CGColor(gray: 0, alpha: 1)); c.fill(bounds)
         let s = min(bounds.width / 1024, bounds.height / 768)
         c.translateBy(x: (bounds.width - 1024 * s) / 2, y: (bounds.height - 768 * s) / 2); c.scaleBy(x: s, y: s)
         ctx = c
@@ -222,10 +228,14 @@ final class MenuView: NSView {
         let s = min(bounds.width / 1024, bounds.height / 768)
         return (s, (bounds.width - 1024 * s) / 2, (bounds.height - 768 * s) / 2)
     }
-    func canvasPoint(_ e: NSEvent) -> (Float, Float) {
-        let p = convert(e.locationInWindow, from: nil), t = canvasScale
+    /// A point in the (flipped) view -> the 1024 x 768 canvas.
+    func canvasPoint(_ p: CGPoint) -> (Float, Float) {
+        let t = canvasScale
         return (Float((p.x - t.dx) / t.s), Float((p.y - t.dy) / t.s))
     }
+    #if os(macOS)
+    func canvasPoint(_ e: NSEvent) -> (Float, Float) { canvasPoint(convert(e.locationInWindow, from: nil)) }
+    #endif
 
     // MARK: the main menu (menus_spec A.1)
 
@@ -273,7 +283,7 @@ final class MenuView: NSView {
         if on("New_Game") { openNewGameMenu() }
         else if on("Load_Game") { saves = Renderer.savedGames(); scroll = 0; selected = 0; screen = .load }
         else if on("Options") { openOptionsMenu() }
-        else if on("Quit") { NSApp.terminate(nil) }
+        else if on("Quit") { Platform.quit() }
     }
     func clickPopup(_ p: Popup, _ x: Float, _ y: Float) {
         popup = nil
@@ -459,11 +469,16 @@ final class MenuView: NSView {
         }
         return nil
     }
-    override func rightMouseDown(with e: NSEvent) {
-        let (x, y) = canvasPoint(e)
+    #if os(macOS)
+    override func rightMouseDown(with e: NSEvent) { rightPointerDown(canvasPoint(e)) }
+    override func rightMouseUp(with e: NSEvent) { rightPointerUp() }
+    #endif
+    /// The right button (a long press on iOS): a campaign button's help while held.
+    func rightPointerDown(_ at: (Float, Float)) {
+        let (x, y) = at
         if notice == nil, popup == nil, options == nil, case .campaigns(let set) = screen { heldHelp = campaignHelp(set, x, y); needsDisplay = true }
     }
-    override func rightMouseUp(with e: NSEvent) { if heldHelp != nil { heldHelp = nil; needsDisplay = true } }
+    func rightPointerUp() { if heldHelp != nil { heldHelp = nil; needsDisplay = true } }
     /// A campaign picked (0x76eb80 -> 0x76f320): a carry-in campaign needs the results of the ones
     /// it imports from (CarryoverStore, the exe's data/carryover.dat), else 0x76c110 shows its
     /// message and nothing starts; otherwise the first scenario's briefing. The selection screen
@@ -781,24 +796,30 @@ final class MenuView: NSView {
 
     // MARK: input and starting the game
 
-    override func mouseMoved(with e: NSEvent) { hover = canvasPoint(e); needsDisplay = true }
-    override func mouseDragged(with e: NSEvent) { hover = canvasPoint(e); needsDisplay = true }
+    #if os(macOS)
+    override func mouseMoved(with e: NSEvent) { pointerMoved(canvasPoint(e)) }
+    override func mouseDragged(with e: NSEvent) { pointerMoved(canvasPoint(e)) }
     override func updateTrackingAreas() {
         trackingAreas.forEach(removeTrackingArea)
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseMoved, .activeAlways, .inVisibleRect], owner: self))
     }
-    override func mouseDown(with e: NSEvent) {
-        pressedAt = canvasPoint(e); needsDisplay = true
+    override func mouseDown(with e: NSEvent) { pointerDown(canvasPoint(e)) }
+    override func mouseUp(with e: NSEvent) { pointerUp(canvasPoint(e), clickCount: e.clickCount) }
+    #endif
+    // the pointer on the canvas (the mouse's events above, the iPhone's touches in iOSApp.swift)
+    func pointerMoved(_ at: (Float, Float)) { hover = at; needsDisplay = true }
+    func pointerDown(_ at: (Float, Float)) {
+        pressedAt = at; needsDisplay = true
         if PressTarget.clicks(pressTargets, pressedAt!.0, pressedAt!.1) { sound.play("miscellaneous.button") }   // a button's press (0x5a0dd0)
     }
-    override func mouseUp(with e: NSEvent) {
-        let (x, y) = canvasPoint(e)
+    func pointerUp(_ at: (Float, Float), clickCount: Int) {
+        let (x, y) = at
         pressedAt = nil
         defer { needsDisplay = true }
         if let p = popup { clickPopup(p, x, y); return }
         if options != nil { clickOptions(x, y); return }
         if let n = notice { if noticeBox(n)?.ok.contains(x, y) == true { notice = nil }; return }
-        let double = e.clickCount >= 2
+        let double = clickCount >= 2
         switch screen {
         case .main: clickMain(x, y)
         case .scenarios: clickScenarios(x, y, double: double)
@@ -811,12 +832,15 @@ final class MenuView: NSView {
         case .campaignResults(let id, let carry): clickCampaignResults(id, carry, x, y)
         }
     }
+#if os(macOS)
     override func scrollWheel(with e: NSEvent) {
         guard abs(e.scrollingDeltaY) > 1 else { return }
         let (n, page) = { () -> (Int, Int) in if case .load = self.screen { return (self.saves.count, 11) }; return (self.maps.count, 10) }()
         scroll = max(0, min(max(0, n - page), scroll + (e.scrollingDeltaY < 0 ? 1 : -1)))
         needsDisplay = true
     }
+#endif
+#if os(macOS)
     override func keyDown(with e: NSEvent) {
         if highScoreKey(e) { return }
         if e.keyCode == 53 {   // Esc: close what is open, else back to the menu
@@ -834,6 +858,7 @@ final class MenuView: NSView {
             }
         }
     }
+#endif
     /// Start the game on a map (or a campaign scenario "campaign:<id>:<index>"), in this window.
     func start(_ gameArgs: [String]) { AppController.shared.open([archivePath] + gameArgs) }
     /// The window shows another screen: the redraw timer and the music stop.

@@ -1,5 +1,4 @@
 import Foundation
-import AppKit
 import H4Engine
 
 /// The game settings (layers.dialog.options): Quick Combat, Show Coordinates, Movement Reminder,
@@ -170,7 +169,7 @@ extension Renderer {
         switch h {
         case .ok:
             optionsOpen = nil
-            if (s.fullScreen ?? false) != (settings.fullScreen ?? false) { NSApp.keyWindow?.toggleFullScreen(nil) }
+            if (s.fullScreen ?? false) != (settings.fullScreen ?? false) { Platform.toggleFullScreen() }
             settings = s; applySettings(); settings.save(); return
         case .cancel: optionsOpen = nil; return
         case .none: break

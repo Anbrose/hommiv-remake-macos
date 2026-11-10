@@ -1,5 +1,4 @@
 import Foundation
-import AppKit
 import H4Engine
 
 /// The caravan dialogs (re/caravans_dialogs_create_spec.md, re/caravans_dialogs_view_spec.md):
@@ -789,12 +788,12 @@ extension Renderer {
     }
     func caravanDragged(x: Float, y: Float) {
         guard caravanDrag != nil else { return }
-        if caravanDragAt == nil { NSCursor.hide() }
+        if caravanDragAt == nil { Platform.hideCursor() }
         caravanDragAt = (x, y)
     }
     /// A drop: a move between the rows (Shift: the split dialog in Create Caravan).
     func caravanDrop(x: Float, y: Float, shift: Bool) {
-        defer { caravanDrag = nil; if caravanDragAt != nil { NSCursor.unhide() }; caravanDragAt = nil }
+        defer { caravanDrag = nil; if caravanDragAt != nil { Platform.unhideCursor() }; caravanDragAt = nil }
         guard let from = caravanDrag, let c = caravanUI else { return }
         let (ox, oy) = dialogOrigin800
         switch c {

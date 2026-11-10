@@ -1,7 +1,12 @@
+#if os(macOS)
 import AppKit
+#else
+import UIKit
+#endif
 import MetalKit
 import H4Engine
 
+#if os(macOS)
 /// The game's one window (heroes4.exe keeps a single main window for the menus and the
 /// adventure screen): the main menu and a scenario take turns as its content. A new scenario,
 /// a campaign scenario, a load, a restart, the next campaign scenario and the return to the
@@ -101,39 +106,6 @@ final class AppController: NSObject, NSApplicationDelegate {
         window?.contentView = NSView()   // (released here, not at the next screen's install)
     }
 
-    /// The adventure screen of a scenario (the old process's window content).
-    private func makeGameView(_ all: [String], size: NSSize?, centre: (Int, Int)?) throws -> (view: MapView, aspect: NSSize, title: String) {
-        let session = try autoreleasepool { try makeSession(all) }
-        let game = session.game, ui = session.ui
-        let aspect = ui == nil ? NSSize(width: 1280, height: 800) : NSSize(width: AdventureUI.width, height: AdventureUI.height)
-        let view = MapView(frame: NSRect(origin: .zero, size: size ?? aspect), device: device)
-        view.colorPixelFormat = .bgra8Unorm
-        view.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
-        view.preferredFramesPerSecond = 60
-        let renderer = try Renderer(device: device, scenes: session.scenes, pixelFormat: .bgra8Unorm)
-        renderer.archivePath = all[1]; renderer.mapPath = all.count > 2 ? all[2] : nil
-        renderer.launchArgs = Array(all.dropFirst())
-        if session.loadFile != nil { renderer.lastAutosaveDay = game.day }   // a loaded game: its day is saved already (no new autosave until the next day)
-        renderer.game = game
-        renderer.resolver = session.resolver
-        game.gaitProvider = { [unowned renderer] in renderer.gait($0) }
-        renderer.showBlocked = showBlocked
-        renderer.ui = ui
-        renderer.town = session.townScreen
-        renderer.combat = session.combatScreen
-        renderer.movies = movies
-        renderer.sound = gameSound
-        session.combatScreen?.sound = gameSound
-        renderer.applySettings()
-        renderer.onTitle = { [weak view] t in if let w = view?.window, w.title != t { w.title = t } }
-        view.renderer = renderer
-        view.cursors = GameCursors(archive: archive)
-        view.delegate = renderer
-        renderer.viewSize = SIMD2(Float(view.drawableSize.width), Float(view.drawableSize.height))
-        aim(renderer, at: centre ?? game.heroes.first.map { ($0.x, $0.y) } ?? (session.map.size / 2, session.map.size / 2))
-        return (view, aspect, "Heroes IV — \(session.map.name)")
-    }
-
     private func snapshotMenu(_ view: MenuView, to out: String) {
         // a menu screen ("popup", "options", "settings", "load", "scenarios", "setup[:map]",
         // "campaigns:k", "briefing:id:i[:tab]", "epilogue:id:i", "hover:<button>")
@@ -177,6 +149,45 @@ final class AppController: NSObject, NSApplicationDelegate {
         let r = withUnsafeMutablePointer(to: &info) { $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) } }
         return r == KERN_SUCCESS ? Int(info.phys_footprint >> 20) : -1
     }
+}
+#endif
+
+/// The adventure screen of a scenario (the old process's window content).
+func makeGameView(_ all: [String], size: CGSize?, centre: (Int, Int)?) throws -> (view: MapView, aspect: CGSize, title: String) {
+    let session = try autoreleasepool { try makeSession(all) }
+    let game = session.game, ui = session.ui
+    let aspect = ui == nil ? CGSize(width: 1280, height: 800) : CGSize(width: AdventureUI.width, height: AdventureUI.height)
+    let view = MapView(frame: CGRect(origin: .zero, size: size ?? aspect), device: device)
+    #if os(iOS)
+    view.contentScaleFactor = UIScreen.main.scale   // native pixels (the drawable follows the bounds)
+    #endif
+    view.colorPixelFormat = .bgra8Unorm
+    view.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
+    view.preferredFramesPerSecond = 60
+    let renderer = try Renderer(device: device, scenes: session.scenes, pixelFormat: .bgra8Unorm)
+    renderer.archivePath = all[1]; renderer.mapPath = all.count > 2 ? all[2] : nil
+    renderer.launchArgs = Array(all.dropFirst())
+    if session.loadFile != nil { renderer.lastAutosaveDay = game.day }   // a loaded game: its day is saved already (no new autosave until the next day)
+    renderer.game = game
+    renderer.resolver = session.resolver
+    game.gaitProvider = { [unowned renderer] in renderer.gait($0) }
+    renderer.showBlocked = showBlocked
+    renderer.ui = ui
+    renderer.town = session.townScreen
+    renderer.combat = session.combatScreen
+    renderer.movies = movies
+    renderer.sound = gameSound
+    session.combatScreen?.sound = gameSound
+    renderer.applySettings()
+    #if os(macOS)
+    renderer.onTitle = { [weak view] t in if let w = view?.window, w.title != t { w.title = t } }
+    #endif
+    view.renderer = renderer
+    view.cursors = GameCursors(archive: archive)
+    view.delegate = renderer
+    renderer.viewSize = SIMD2(Float(view.drawableSize.width), Float(view.drawableSize.height))
+    aim(renderer, at: centre ?? game.heroes.first.map { ($0.x, $0.y) } ?? (session.map.size / 2, session.map.size / 2))
+    return (view, aspect, "Heroes IV — \(session.map.name)")
 }
 
 extension MapView {

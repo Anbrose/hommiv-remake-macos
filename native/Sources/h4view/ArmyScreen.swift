@@ -1,5 +1,4 @@
 import Foundation
-import AppKit
 import H4Engine
 
 /// The army screen's working state (t_army_dialog, army_split_spec.md): the rows (the army, and
@@ -141,7 +140,7 @@ extension Renderer {
     /// The army screen is done (OK, Escape, a click outside, another army picked): 0x529050.
     func closeArmyScreen() {
         if let s = armySession, let d = s.artDrag {   // closed with an artifact in hand: it goes home
-            ArtifactRules.cancel(d, tables: game?.tables); s.artDrag = nil; NSCursor.unhide()
+            ArtifactRules.cancel(d, tables: game?.tables); s.artDrag = nil; Platform.unhideCursor()
         }
         if let s = armySession, s.town == nil, let g = game { g.finishExchange(s.x) }
         armySession = nil
@@ -225,13 +224,13 @@ extension Renderer {
                 guard let d = ArtifactRules.pickUp(p) else { return }   // taken off at once (0x537650): the stats change
                 s.artDrag = d
                 refreshArtifactArmies(s)
-                NSCursor.hide()
+                Platform.hideCursor()
             }
             s.artAt = (x, y)
             return
         }
         guard let s = armySession, s.drag != nil else { return }
-        if s.dragAt == nil { NSCursor.hide() }
+        if s.dragAt == nil { Platform.hideCursor() }
         s.dragAt = (x, y)
         s.dragSplit = shift || s.splitMode
         if s.splitMode { s.splitMode = false }   // a drag ends split mode (0x6436fb)
@@ -240,13 +239,13 @@ extension Renderer {
     func armyScreenRelease(x: Float, y: Float, shift: Bool) -> Bool {
         if let s = armySession, let d = s.artDrag {
             s.artDrag = nil; s.artAt = nil; s.artPress = nil
-            NSCursor.unhide()
+            Platform.unhideCursor()
             artifactDrop(s, d, x: x, y: y)
             return true
         }
         armySession?.artPress = nil
         guard let s = armySession, let from = s.drag else { return false }
-        defer { s.drag = nil; if s.dragAt != nil { NSCursor.unhide() }; s.dragAt = nil }
+        defer { s.drag = nil; if s.dragAt != nil { Platform.unhideCursor() }; s.dragAt = nil }
         guard s.dragAt != nil else { return false }
         if let to = armyRing(s, at: x, y) { armyDrop(s, from: from, to: to, split: shift || s.dragSplit) }
         return true

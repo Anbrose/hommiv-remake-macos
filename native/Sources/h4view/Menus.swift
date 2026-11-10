@@ -1,5 +1,4 @@
 import Foundation
-import AppKit
 import H4Engine
 
 /// The adventure panel's System Menu and Game Menu (menus_spec D3): t_scroll_menus
@@ -39,7 +38,7 @@ extension Renderer {
         items.append((text("restart_game", "Restart Game"), { [weak self] in self?.restartScenario() }))
         items.append((text("options", "Game Settings"), { [weak self] in guard let self = self else { return }; self.optionsOpen = self.settings }))
         items.append((text("main_menu", "Main Menu"), { [weak self] in guard let self = self, let a = self.archivePath else { return }; self.relaunch([a, "--menu"]) }))
-        items.append((text("quit", "Quit"), { NSApp.terminate(nil) }))
+        items.append((text("quit", "Quit"), { Platform.quit() }))
         let b = ui?.hotspot("System_menu_button")
         menu = PopupMenu(items: items, x: b?.x ?? 959, y: b?.y ?? 26)
     }

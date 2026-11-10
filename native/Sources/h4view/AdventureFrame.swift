@@ -1,5 +1,4 @@
 import Foundation
-import AppKit
 import H4Engine
 
 /// The adventure frame (t_adventure_frame, adventure_frame_spec.md) as heroes4.exe's builder 0x4acbb0
@@ -263,7 +262,7 @@ extension Renderer {
     /// The pointer moved with a stack held.
     func panelDragged(x: Float, y: Float, shift: Bool) -> Bool {
         guard var d = panelDrag else { return false }
-        if d.at == nil { d.split = d.split || shift; NSCursor.hide() }
+        if d.at == nil { d.split = d.split || shift; Platform.hideCursor() }
         d.at = (x, y); panelDrag = d
         return true
     }
@@ -272,7 +271,7 @@ extension Renderer {
         guard let d = panelDrag else { return false }
         panelDrag = nil
         guard d.at != nil else { return false }
-        NSCursor.unhide()
+        Platform.unhideCursor()
         if let to = panelRing(at: x, y) { panelDrop(from: d.k, to: to, split: d.split || shift) }
         return true
     }

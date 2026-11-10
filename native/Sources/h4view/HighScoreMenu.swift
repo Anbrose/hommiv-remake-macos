@@ -1,4 +1,7 @@
+#if os(macOS)
 import AppKit
+#endif
+import Foundation
 import H4Engine
 
 /// The High Score dialog (t_high_score_dialog 0x6bbf00 / 0x6b9970, layers.dialog.High_Score) and
@@ -102,6 +105,7 @@ extension MenuView {
         if changed { t.save(highScoresURL()) }
         highScores = t
     }
+#if os(macOS)
     func highScoreKey(_ e: NSEvent) -> Bool {
         guard case .highScores = screen else { return false }
         guard highScoreList.contains(where: { $0.isNew }) else { return false }
@@ -114,6 +118,7 @@ extension MenuView {
         needsDisplay = true
         return true
     }
+#endif
 
     // MARK: Campaign Results
 

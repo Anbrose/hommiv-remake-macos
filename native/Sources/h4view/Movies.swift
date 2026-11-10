@@ -58,6 +58,9 @@ final class Movies {
     }
 
     private func decode(_ name: String) {
+        #if os(iOS)
+        return   // no ffmpeg to run on iOS (and no Bink decoder yet): the movie slots stay empty
+        #else
         guard let archive = archive, let ffmpeg = Movies.ffmpeg, let data = try? archive.payload("bink.\(name).h4d"), data.count > 20 else { return }
         // the Bink header: width and height at 20 and 24, the frame rate as a fraction at 28 / 32
         func u32(_ o: Int) -> Int { Int(data[data.startIndex + o]) | Int(data[data.startIndex + o + 1]) << 8 | Int(data[data.startIndex + o + 2]) << 16 | Int(data[data.startIndex + o + 3]) << 24 }
@@ -90,5 +93,6 @@ final class Movies {
         let m = Movie(width: w, height: h, fps: num > 0 ? Double(num) / Double(den) : 15, pixels: pixels,
                       audio: FileManager.default.fileExists(atPath: wav.path) ? wav : nil)
         queue.sync { loaded[name] = m }
+        #endif
     }
 }

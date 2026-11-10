@@ -1,4 +1,7 @@
+#if os(macOS)
 import AppKit
+#endif
+import Foundation
 import H4Engine
 
 /// Where the high-score lists are kept (the game's data\high_scores.dat, here beside the saves).
@@ -114,14 +117,14 @@ extension Renderer {
             leaveToMainMenu(); return
         }
         if !table.save(url) { NSLog("%@", text("high_score_save_problem.misc", "There was a problem saving your high score.")) }
-        guard let archive = archivePath else { NSApp.terminate(nil); return }
+        guard let archive = archivePath else { Platform.quit(); return }
         relaunch([archive, "--menu", "--high-score", "standard", "\(k)"])
     }
 
     /// The press and key handling of the window and of the score dialog after it.
-    func endGameClick(_ e: NSEvent, in v: NSView) -> Bool {
+    func endGameClick(_ e: PointerEvent, in v: PlatformView) -> Bool {
         if finalScore != nil {
-            let p = v.convert(e.locationInWindow, from: nil)
+            let p = e.location
             let scale = Float(v.window?.backingScaleFactor ?? 1)
             let x = Int(Float(p.x) * scale / uiScale), y = Int(Float(v.bounds.height - p.y) * scale / uiScale)
             let (ox, oy) = finalScoreOrigin
@@ -131,6 +134,7 @@ extension Renderer {
         }
         return skipEndGame()
     }
+#if os(macOS)
     func endGameKey(_ e: NSEvent) -> Bool {
         if let fs = finalScore {
             switch e.keyCode {
@@ -145,4 +149,5 @@ extension Renderer {
         }
         return skipEndGame()
     }
+#endif
 }

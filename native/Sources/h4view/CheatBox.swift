@@ -1,5 +1,7 @@
 import Foundation
+#if os(macOS)
 import AppKit
+#endif
 import H4Engine
 
 /// The Tab box (t_dialog_cheat 0x5cede0, re/cheats_spec.md §2): a t_text_edit_window of 300 x 50
@@ -31,6 +33,7 @@ extension Renderer {
     }
 
     /// A key while the box is up. True when it was used (the screen does not see it).
+#if os(macOS)
     func cheatBoxKey(_ e: NSEvent) -> Bool {
         let mods = e.modifierFlags.intersection([.shift, .control, .option])
         if e.keyCode == 48, mods.isEmpty, game != nil, saveDialog == nil, prompt == nil {   // Tab
@@ -72,6 +75,7 @@ extension Renderer {
         cheatBox = b
         return true
     }
+#endif
 
     /// A click on the box gives it the focus again.
     func cheatBoxClick(x: Float, y: Float) -> Bool {

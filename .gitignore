@@ -5,3 +5,5 @@ native/.build/
 native/build/
 __pycache__/
 re/
+xcuserdata/
+native/ios/H4Remake.xcodeproj/project.xcworkspace/

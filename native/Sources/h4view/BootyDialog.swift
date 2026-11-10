@@ -1,5 +1,4 @@
 import Foundation
-import AppKit
 import H4Engine
 
 /// The "Spoils of War" dialog (t_dialog_booty, heroes4.exe ctor 0x674e90; re/booty_spec.md),
@@ -107,7 +106,7 @@ extension Renderer {
     }
     func bootyDragged(x: Float, y: Float) {
         guard bootyView?.pressed != nil else { return }
-        if bootyView?.at == nil { NSCursor.hide() }
+        if bootyView?.at == nil { Platform.hideCursor() }
         bootyView?.at = (x, y)
     }
     /// The release: a carried artifact goes to the hero whose portrait it is dropped on (0x676540),
@@ -116,7 +115,7 @@ extension Renderer {
         guard let (b, v) = bootyState(), let g = game, let d = bootyFile() else { return }
         bootyView?.pressed = nil; bootyView?.at = nil
         if let k = v.pressed, v.at != nil {
-            NSCursor.unhide()
+            Platform.unhideCursor()
             let members = b.army.members
             for (n, slot) in bootyRing().enumerated() where n < members.count && DRect(slot.fx + 15, slot.fy + 15, 52, 52).contains(x, y) {
                 if g.bootyGive(k, to: members[n]) { buttonClick() }

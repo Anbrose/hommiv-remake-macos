@@ -1,4 +1,4 @@
-import AppKit
+import Foundation
 import AVFoundation
 import Metal
 import H4Engine
@@ -118,7 +118,7 @@ extension Renderer {
 
     /// 0x4b6bf0: back to the main menu (the game is over, so no question).
     func leaveToMainMenu() {
-        guard let archive = archivePath else { NSApp.terminate(nil); return }
+        guard let archive = archivePath else { Platform.quit(); return }
         relaunch([archive, "--menu"])
     }
 }

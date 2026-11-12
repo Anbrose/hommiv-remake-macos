@@ -59,12 +59,16 @@ build|run|data)
     ;;
 device)
     export H4_BUNDLE_DATA="${H4_BUNDLE_DATA:-1}" H4DATA="$DATA" H4MAPS="$(dirname "$DATA")/maps"
-    xb -sdk iphoneos -destination "generic/platform=iOS" -allowProvisioningUpdates build
-    APPDIR="$DERIVED/Build/Products/Release-iphoneos/H4Remake.app"
-    DEV="${H4_DEVICE:-$(xcrun devicectl list devices --json-output /dev/stdout 2>/dev/null | python3 -c 'import json,sys
+    # the connected iPhone: devicectl identifier and hardware UDID (simulators are listed too)
+    read -r DEV UDID <<< "$(xcrun devicectl list devices --json-output /dev/stdout 2>/dev/null | python3 -c 'import json,sys
 t=sys.stdin.read(); d=json.loads(t[t.index("{"):]) if "{" in t else {}
-ok=[x["identifier"] for x in d.get("result",{}).get("devices",[]) if x.get("hardwareProperties",{}).get("platform")=="iOS" and x.get("hardwareProperties",{}).get("reality")!="simulated" and x.get("connectionProperties",{}).get("tunnelState")!="unavailable"]
-print(ok[0] if ok else "")' || true)}"
+ok=[(x["identifier"], x["hardwareProperties"].get("udid","")) for x in d.get("result",{}).get("devices",[]) if x.get("hardwareProperties",{}).get("platform")=="iOS" and x.get("hardwareProperties",{}).get("reality")!="simulated" and x.get("connectionProperties",{}).get("tunnelState")!="unavailable"]
+print(*ok[0]) if ok else print("")' || true)"
+    DEV="${H4_DEVICE:-$DEV}"
+    # building for that phone lets automatic signing register it in the team's profile
+    DEST="generic/platform=iOS"; [ -n "${UDID:-}" ] && DEST="id=$UDID"
+    xb -sdk iphoneos -destination "$DEST" -allowProvisioningUpdates -allowProvisioningDeviceRegistration build
+    APPDIR="$DERIVED/Build/Products/Release-iphoneos/H4Remake.app"
     if [ -z "$DEV" ]; then echo "built $APPDIR; no connected iPhone found (set H4_DEVICE to its identifier)"; exit 0; fi
     xcrun devicectl device install app --device "$DEV" "$APPDIR"
     xcrun devicectl device process launch --device "$DEV" "$BUNDLE_ID" "$@" || echo "installed; open it on the phone (trust the developer in Settings > General > VPN & Device Management first)"

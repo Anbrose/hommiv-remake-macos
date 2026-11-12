@@ -204,6 +204,13 @@ final class Renderer: NSObject, MTKViewDelegate {
     var combatTarget: Int?
     /// The stacks an area spell aimed at the pointer's cell would take in (each gets its target shadow).
     var combatArea: Set<Int>?
+#if os(iOS)
+    /// The battlefield action a touch aims and has not done yet (iOSCombatTouch.swift), and the one
+    /// aimed before the finger now down came (a tap on it again does it).
+    var touchPreview: CombatTouchPreview?
+    var touchBefore: CombatTouchAction?
+    var touchCursorFiles: [String: LayerFile?] = [:]
+#endif
     var dayCache: (cell: Int, days: Int?)?
     /// The combat options "Show Combat Grid" and "Show Movement Shadow" (both off by default, as in
     /// heroes4.exe); H4GRID / H4SHADE force them on for snapshots.

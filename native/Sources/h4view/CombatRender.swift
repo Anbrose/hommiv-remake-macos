@@ -66,6 +66,9 @@ extension Renderer {
         unitHeads = []
         guard let cs = combat, let b = cs.battle, ui != nil, let f = cs.field else { return [] }
         var out: [Quad] = []
+#if os(iOS)
+        validateTouchPreview(cs, b)
+#endif
         let sc = CombatScreen.sceneScale
         // the ground: a ship's backdrop, or the terrain's tiles
         if let bd = f.backdrop, bd.kind != 4 {
@@ -118,6 +121,9 @@ extension Renderer {
             let c = Renderer.rgba(50, 50, 200, UInt8(5 * 255 / 15))
             out.append(fieldOverlay("shadow", Dictionary(uniqueKeysWithValues: b.movementShadow(b.unit(id)).map { ($0, c) })))
         }
+#if os(iOS)
+        out += touchPreviewGround()   // a touch's aimed place (no pointer on a phone)
+#endif
         // obstacles and units, back to front
         var drawn: [(Float, [Quad])] = []
         for o in f.obstacles {
@@ -234,6 +240,9 @@ extension Renderer {
         out += effectWindowQuads(cs, b, now: now)
         out += floaterQuads(cs, now: now)
         out += combatPanelQuads(cs, b, now: now)
+#if os(iOS)
+        out += touchPreviewCursor()
+#endif
         out += combatInfoQuads().modal()   // the windows from here on are modal: what is under one takes no press
         out += hoverQuads()
         if cs.showResults { out += combatResultQuads().modal() }

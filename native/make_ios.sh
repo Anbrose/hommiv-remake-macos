@@ -48,7 +48,7 @@ build|run|data)
     fi
     if [ "$MODE" != build ]; then
         xcrun simctl boot "$SIM" 2>/dev/null || true
-        open -a Simulator
+        open -a Simulator 2>/dev/null || true   # (Xcode 27 may ship without the Simulator window app; the device runs headless)
         [ "$MODE" = run ] && xcrun simctl install "$SIM" build/ios/H4Remake.app
         copy_data $([ "$MODE" = data ] && echo force)
         if [ "$MODE" = run ]; then
@@ -63,7 +63,7 @@ device)
     APPDIR="$DERIVED/Build/Products/Release-iphoneos/H4Remake.app"
     DEV="${H4_DEVICE:-$(xcrun devicectl list devices --json-output /dev/stdout 2>/dev/null | python3 -c 'import json,sys
 t=sys.stdin.read(); d=json.loads(t[t.index("{"):]) if "{" in t else {}
-ok=[x["identifier"] for x in d.get("result",{}).get("devices",[]) if x.get("hardwareProperties",{}).get("platform")=="iOS" and x.get("connectionProperties",{}).get("tunnelState")!="unavailable"]
+ok=[x["identifier"] for x in d.get("result",{}).get("devices",[]) if x.get("hardwareProperties",{}).get("platform")=="iOS" and x.get("hardwareProperties",{}).get("reality")!="simulated" and x.get("connectionProperties",{}).get("tunnelState")!="unavailable"]
 print(ok[0] if ok else "")' || true)}"
     if [ -z "$DEV" ]; then echo "built $APPDIR; no connected iPhone found (set H4_DEVICE to its identifier)"; exit 0; fi
     xcrun devicectl device install app --device "$DEV" "$APPDIR"

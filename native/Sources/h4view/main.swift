@@ -719,7 +719,15 @@ if let out = snapshot {
         let m = SIMD2(Float(sx), Float(sy))
         let canvas = (m - renderer.pan) * renderer.zoom / renderer.uiScale
         renderer.inspect(mapPoint: m, canvas: (canvas.x, canvas.y))
-        print("inspect (\(target.0),\(target.1)): \(renderer.popup.map { "\($0.title) | " + $0.lines.joined(separator: " / ") } ?? renderer.creatureDialog.map { "dialog: \($0.count) \($0.creature.plural)" } ?? renderer.armyPopup.flatMap { renderer.armyPopupContent($0) }.map { c in "army window \"\(c.title)\" level \(c.level): " + c.slots.map { m -> String in switch m { case .hero(let h)?: return h.name; case .stack(let d, let n)?: return "\(n) \(d.plural)"; case nil: return "-" } }.joined(separator: ", ") } ?? "nothing")")
+        let popupText: String? = renderer.popup.map { "\($0.title) | " + $0.lines.joined(separator: " / ") }
+        let dialogText: String? = renderer.creatureDialog.map { "dialog: \($0.count) \($0.creature.plural)" }
+        let armyText: String? = renderer.armyPopup.flatMap { renderer.armyPopupContent($0) }.map { c -> String in
+            let slots: [String] = c.slots.map { m -> String in
+                switch m { case .hero(let h)?: return h.name; case .stack(let d, let n)?: return "\(n) \(d.plural)"; case nil: return "-" }
+            }
+            return "army window \"\(c.title)\" level \(c.level): " + slots.joined(separator: ", ")
+        }
+        print("inspect (\(target.0),\(target.1)): \(popupText ?? dialogText ?? armyText ?? "nothing")")
     }
     func render(to out: String) {
         let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: w, height: h, mipmapped: false)

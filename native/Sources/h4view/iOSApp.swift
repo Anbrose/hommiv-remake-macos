@@ -67,6 +67,7 @@ final class AppController {
         if !IOSData.isPresent { controller.showImport(); return }
         started = true
         show(initialArgs, first: true)
+        if let spec = ProcessInfo.processInfo.environment["H4TOUCHBATTLE"], let m = controller.content as? MapView { m.startTouchTestBattle(spec) }
         if let script = ProcessInfo.processInfo.environment["H4TOUCHES"] { controller.runTouchScript(script) }
     }
 
@@ -118,6 +119,9 @@ final class AppController {
 ///   right-click information boxes show while it is held);
 /// - a drag is a left drag: what the press picked up is carried, else (on the map) the view pans.
 /// The pointer (hover: highlights, status line) follows the finger.
+/// A screen may instead take a touch to aim with (touchDown true: the combat battlefield,
+/// iOSCombatTouch.swift): its slides and its end come to it as such; a press held still is
+/// still the right button.
 protocol TouchTarget: UIView {
     func touchMoved(_ p: CGPoint)
     func touchPressed(_ p: CGPoint)
@@ -125,6 +129,16 @@ protocol TouchTarget: UIView {
     func touchReleased(_ p: CGPoint, clicks: Int)
     func touchHeld(_ p: CGPoint)
     func touchHoldEnded(_ p: CGPoint)
+    func touchDown(_ p: CGPoint) -> Bool
+    func touchSlid(_ p: CGPoint)
+    func touchLifted(_ p: CGPoint, slid: Bool)
+    func touchAimCancelled()
+}
+extension TouchTarget {
+    func touchDown(_ p: CGPoint) -> Bool { false }
+    func touchSlid(_ p: CGPoint) {}
+    func touchLifted(_ p: CGPoint, slid: Bool) {}
+    func touchAimCancelled() {}
 }
 
 extension MapView: TouchTarget {
@@ -135,9 +149,20 @@ extension MapView: TouchTarget {
     }
     func touchMoved(_ p: CGPoint) { pointerMoved(event(p)) }
     func touchPressed(_ p: CGPoint) { pointerDown(event(p)) }
-    func touchDragged(_ p: CGPoint, by d: CGPoint) { pointerMoved(event(p)); pointerDragged(event(p, d)) }
+    func touchDragged(_ p: CGPoint, by d: CGPoint) {
+        pointerMoved(event(p))
+        if renderer.inCombat, splitDialog == nil { return }   // the battlefield does not pan
+        pointerDragged(event(p, d))
+    }
     func touchReleased(_ p: CGPoint, clicks: Int) { pointerUp(event(p, clicks: clicks)) }
-    func touchHeld(_ p: CGPoint) { rightPointerDown(event(p)) }
+    func touchHeld(_ p: CGPoint) {
+        if renderer.inCombat { renderer.clearTouchPreview() }   // the creature window opens
+        rightPointerDown(event(p))
+    }
+    func touchDown(_ p: CGPoint) -> Bool { combatTouchDown(p) }
+    func touchSlid(_ p: CGPoint) { combatTouchSlid(p) }
+    func touchLifted(_ p: CGPoint, slid: Bool) { combatTouchLifted(p, slid: slid) }
+    func touchAimCancelled() { combatTouchCancelled() }
     func touchHoldEnded(_ p: CGPoint) { rightPointerUp(event(p)) }
     override func didMoveToWindow() {
         super.didMoveToWindow()
@@ -202,6 +227,8 @@ final class GameViewController: UIViewController, UIDocumentPickerDelegate {
     // MARK: touches -> mouse
 
     private enum Phase { case pending, dragging, holding }
+    /// The screen aims with this touch (TouchTarget.touchDown).
+    private var aiming = false
     private var touch: UITouch?
     private var phase = Phase.pending
     private var start = CGPoint.zero, last = CGPoint.zero
@@ -238,7 +265,8 @@ final class GameViewController: UIViewController, UIDocumentPickerDelegate {
         guard let v = content else { return }
         phase = .pending
         start = p; last = p
-        v.touchMoved(p)
+        aiming = v.touchDown(p)
+        if !aiming { v.touchMoved(p) }
         holdTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { [weak self] _ in
             guard let self = self, self.phase == .pending, let v = self.content else { return }
             self.phase = .holding
@@ -252,10 +280,11 @@ final class GameViewController: UIViewController, UIDocumentPickerDelegate {
             guard hypot(p.x - start.x, p.y - start.y) > slop else { return }
             holdTimer?.invalidate(); holdTimer = nil
             phase = .dragging
+            if aiming { v.touchSlid(p); break }
             v.touchPressed(start)
             v.touchDragged(p, by: CGPoint(x: p.x - start.x, y: p.y - start.y))
         case .dragging:
-            v.touchDragged(p, by: CGPoint(x: p.x - last.x, y: p.y - last.y))
+            if aiming { v.touchSlid(p) } else { v.touchDragged(p, by: CGPoint(x: p.x - last.x, y: p.y - last.y)) }
         case .holding:
             break
         }
@@ -264,7 +293,7 @@ final class GameViewController: UIViewController, UIDocumentPickerDelegate {
 
     /// H4TOUCHES (simctl launch with SIMCTL_CHILD_H4TOUCHES): scripted touches for checking the
     /// mapping without a finger, in canvas pixels (1024 x 768): "wait 2;tap 512,384;hold 100,200 1.5;
-    /// drag 300,300 500,400" (steps 1 s apart unless a wait says otherwise).
+    /// drag 300,300 500,400 [seconds]" (steps 1 s apart unless a wait says otherwise).
     private var scripted = false
     func runTouchScript(_ script: String) {
         var steps = script.split(separator: ";").map { $0.split(separator: " ").map(String.init) }
@@ -287,13 +316,14 @@ final class GameViewController: UIViewController, UIDocumentPickerDelegate {
                 DispatchQueue.main.asyncAfter(deadline: .now() + held) { [self] in endTouch(cancelled: false); scripted = false }
                 after = held + 1
             case "drag" where s.count > 2:
-                let a = pt(s[1]), b = pt(s[2])
+                let a = pt(s[1]), b = pt(s[2]), secs = Double(s.count > 3 ? s[3] : "0.3") ?? 0.3
                 scripted = true; began(a)
                 for k in 1...10 {
                     let t = CGFloat(k) / 10
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.03 * Double(k)) { [self] in moved(CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t)) }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + secs / 10 * Double(k)) { [self] in moved(CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t)) }
                 }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [self] in endTouch(cancelled: false); scripted = false }
+                DispatchQueue.main.asyncAfter(deadline: .now() + secs + 0.1) { [self] in endTouch(cancelled: false); scripted = false }
+                after = max(1, secs + 0.6)
             default: break
             }
             print("touch script: \(s.joined(separator: " "))")
@@ -303,8 +333,12 @@ final class GameViewController: UIViewController, UIDocumentPickerDelegate {
     }
     private func endTouch(cancelled: Bool) {
         holdTimer?.invalidate(); holdTimer = nil
-        defer { touch = nil; phase = .pending }
+        defer { touch = nil; phase = .pending; aiming = false }
         guard active, let v = content else { return }
+        if aiming, phase != .holding {
+            if cancelled { v.touchAimCancelled() } else { v.touchLifted(phase == .pending ? start : last, slid: phase == .dragging) }
+            return
+        }
         switch phase {
         case .pending:
             guard !cancelled else { return }

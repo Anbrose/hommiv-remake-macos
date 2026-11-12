@@ -101,7 +101,8 @@ extension Renderer {
     /// A press: on an artifact it may be carried off (the drag starts once the pointer moves).
     func bootyPress(x: Float, y: Float) {
         guard bootyState() != nil else { return }
-        bootyView?.pressed = bootyPlace(at: x, y)?.index
+        let pressed = bootyPlace(at: x, y)?.index   // (bootyPlace rewrites bootyView: not inside its access)
+        bootyView?.pressed = pressed
         bootyView?.at = nil
     }
     func bootyDragged(x: Float, y: Float) {

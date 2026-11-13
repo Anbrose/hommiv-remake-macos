@@ -143,7 +143,8 @@ extension CombatScreen {
     /// One stack struck: what it has left, the damage numbers, and its flinch or its fall
     /// (0x56a710 / 0x5f3c50).
     struct Strike {
-        var attacker: Int?, target: Int, damage: Int, killed: Int, left: Int
+        var attacker: Int? = nil
+        var target: Int, damage: Int, killed: Int, left: Int
         var dies = false
         /// The blow was blocked (0x5f62e0 -> state 0); `blockMessage`: the panel says Block (only the missile
         /// reaction posts combat_action.block, 0x56a92a).

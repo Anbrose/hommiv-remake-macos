@@ -1172,6 +1172,13 @@ public final class Battle {
     /// Towards a place further than this turn's move: the route there (searched as far as 12
     /// turns), cut where this turn's movement ends.
     public func stepToward(_ u: Unit, _ gx: Int, _ gy: Int) -> (Int, Int)? {
+        guard let r = route(u, to: gx, gy) else { return nil }
+        let today = reachable(u)
+        return r.last { today[Battle.key($0.0, $0.1)] != nil }
+    }
+    /// The searched route (as far as 12 turns) to a footprint position, the start excluded, in
+    /// walking order; nil when the search does not reach it.
+    public func route(_ u: Unit, to gx: Int, _ gy: Int) -> [(Int, Int)]? {
         let far = moveBudget(u) * 12, n = Battlefield.size
         guard explore(u, budget: far)[Battle.key(gx, gy)] != nil,
               let parent = parentCache["\(u.id)|\(u.x)|\(u.y)|\(far)|\(version)"] else { return nil }
@@ -1179,9 +1186,7 @@ public final class Battle {
         var k = Battle.key(gx, gy)
         let start = Battle.key(u.x, u.y)
         while k != start, k >= 0, route.count < n * n { route.append(k); k = parent[k] }
-        let today = reachable(u)
-        guard let end = route.reversed().last(where: { today[$0] != nil }) else { return nil }
-        return (end / n, end % n)
+        return route.reversed().map { ($0 / n, $0 % n) }
     }
 
     public func move(to x: Int, _ y: Int) -> Bool {
@@ -1300,18 +1305,21 @@ public final class Battle {
 
     /// Does the target strike back? Not against No Retaliation or Fear, not when stunned, frozen
     /// or blind, once a round unless Unlimited Retaliation, and only if the attacker is within its reach.
-    func canRetaliate(_ t: Unit, against a: Unit) -> Bool {
+    /// `from`: the attacker's footprint corner if it strikes from elsewhere than where it stands.
+    public func canRetaliate(_ t: Unit, against a: Unit, from: (Int, Int)? = nil) -> Bool {
         t.alive && !t.disabled && !a.stats.has("no_retaliation") && !fears(t, a)
             && (!t.retaliated || t.stats.has("unlimited_retaliation"))
-            && Battle.reachesBack(t, a)
+            && Battle.reachesBack(t, a, from: from)
     }
     /// Whether a stack reaches its attacker to strike back (0x5f2810): always unless the attacker's
     /// range is longer (Long Weapon); then the gap (round(distance) - 8 x both sizes + 8) >> 4 must be
     /// within its own range.
-    static func reachesBack(_ t: Unit, _ a: Unit) -> Bool {
+    static func reachesBack(_ t: Unit, _ a: Unit, from: (Int, Int)? = nil) -> Bool {
         let r = meleeRange(t)
         guard meleeRange(a) > r else { return true }
-        return (centreDistance(t.x, t.y, t.size, a) - 8 * (t.size + a.size) + 8) >> 4 <= r
+        // (the attacker at `from`: the same distance measured from that place)
+        let d = from.map { centreDistance($0.0, $0.1, a.size, t) } ?? centreDistance(t.x, t.y, t.size, a)
+        return (d - 8 * (t.size + a.size) + 8) >> 4 <= r
     }
     /// Aura of Fear on the attacker (the panic ability likewise with Panic): no strike back unless
     /// the fear cannot touch the target or it has Death Ward (0x5f2810 / 0x5f2a47).

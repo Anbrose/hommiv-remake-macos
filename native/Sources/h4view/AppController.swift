@@ -186,6 +186,9 @@ func makeGameView(_ all: [String], size: CGSize?, centre: (Int, Int)?) throws ->
     view.cursors = GameCursors(archive: archive)
     view.delegate = renderer
     renderer.viewSize = SIMD2(Float(view.drawableSize.width), Float(view.drawableSize.height))
+    #if os(iOS)
+    renderer.layoutWide()   // the map window on a wide screen, before the view is centred in it
+    #endif
     aim(renderer, at: centre ?? game.heroes.first.map { ($0.x, $0.y) } ?? (session.map.size / 2, session.map.size / 2))
     return (view, aspect, "Heroes IV — \(session.map.name)")
 }

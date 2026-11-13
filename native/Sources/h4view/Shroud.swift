@@ -65,7 +65,7 @@ extension Renderer {
         let l = g.level, n = g.map.size, fog = g.fog[l]
         var out: [Quad] = []
         var inView = Set<Int>()
-        let minX = pan.x - 64, minY = pan.y - 64, maxX = pan.x + viewSize.x / zoom + 64, maxY = pan.y + viewSize.y / zoom + 64
+        let (minX, minY, maxX, maxY) = viewWorld(margin: 64)
         // the overlays out of view go once there are many (each is a chunk-sized texture; one is
         // rebuilt from the fog when it comes back into view)
         defer {

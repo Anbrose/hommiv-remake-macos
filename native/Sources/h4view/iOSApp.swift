@@ -95,9 +95,10 @@ final class AppController {
             controller.install(v, aspect: CGSize(width: 1024, height: 768))
         } else {
             do {
-                let aspect = CGSize(width: AdventureUI.width, height: AdventureUI.height)
-                let g = try makeGameView(all, size: controller.fitRect(aspect).size, centre: first ? initialCentre : nil)
-                controller.install(g.view, aspect: g.aspect)
+                // the whole screen: the canvas is as wide as the screen (iOSWide.swift)
+                controller.updateSafeInsets()
+                let g = try makeGameView(all, size: controller.view.bounds.size, centre: first ? initialCentre : nil)
+                controller.install(g.view, aspect: .zero)
             } catch {
                 print("cannot start \(all.dropFirst()): \(error)")
                 show([all[0], all[1], "--menu"]); return
@@ -119,9 +120,9 @@ final class AppController {
 ///   right-click information boxes show while it is held);
 /// - a drag is a left drag: what the press picked up is carried, else (on the map) the view pans.
 /// The pointer (hover: highlights, status line) follows the finger.
-/// A screen may instead take a touch to aim with (touchDown true: the combat battlefield,
-/// iOSCombatTouch.swift): its slides and its end come to it as such; a press held still is
-/// still the right button.
+/// A screen may instead take a touch for itself (touchDown true: the combat battlefield and its
+/// sidebar, iOSCombatTouch.swift): its end comes to it at the point where it came down (a slide
+/// changes nothing); a press held still is still the right button.
 protocol TouchTarget: UIView {
     func touchMoved(_ p: CGPoint)
     func touchPressed(_ p: CGPoint)
@@ -130,22 +131,26 @@ protocol TouchTarget: UIView {
     func touchHeld(_ p: CGPoint)
     func touchHoldEnded(_ p: CGPoint)
     func touchDown(_ p: CGPoint) -> Bool
-    func touchSlid(_ p: CGPoint)
     func touchLifted(_ p: CGPoint, slid: Bool)
     func touchAimCancelled()
 }
 extension TouchTarget {
     func touchDown(_ p: CGPoint) -> Bool { false }
-    func touchSlid(_ p: CGPoint) {}
     func touchLifted(_ p: CGPoint, slid: Bool) {}
     func touchAimCancelled() {}
 }
 
 extension MapView: TouchTarget {
-    private func event(_ p: CGPoint, _ d: CGPoint = .zero, clicks: Int = 1) -> PointerEvent {
+    /// A point of the view on the 1024x768 frame's own points (the frame sits `pointerShift`
+    /// canvas pixels right on a wide screen, iOSWide.swift).
+    func framePoint(_ p: CGPoint) -> CGPoint {
+        CGPoint(x: p.x - CGFloat(renderer.pointerShift) * bounds.height / CGFloat(AdventureUI.height), y: p.y)
+    }
+    func event(_ p: CGPoint, _ d: CGPoint = .zero, clicks: Int = 1) -> PointerEvent {
         // the handlers take AppKit's bottom-left origin; a drag's distance in pixels, so the
         // map follows the finger (the mac's is in points: the trackpad's gearing)
-        PointerEvent(location: CGPoint(x: p.x, y: bounds.height - p.y), deltaX: d.x * contentScaleFactor, deltaY: d.y * contentScaleFactor, clickCount: clicks)
+        let f = framePoint(p)
+        return PointerEvent(location: CGPoint(x: f.x, y: bounds.height - f.y), deltaX: d.x * contentScaleFactor, deltaY: d.y * contentScaleFactor, clickCount: clicks)
     }
     func touchMoved(_ p: CGPoint) { pointerMoved(event(p)) }
     func touchPressed(_ p: CGPoint) { pointerDown(event(p)) }
@@ -160,7 +165,6 @@ extension MapView: TouchTarget {
         rightPointerDown(event(p))
     }
     func touchDown(_ p: CGPoint) -> Bool { combatTouchDown(p) }
-    func touchSlid(_ p: CGPoint) { combatTouchSlid(p) }
     func touchLifted(_ p: CGPoint, slid: Bool) { combatTouchLifted(p, slid: slid) }
     func touchAimCancelled() { combatTouchCancelled() }
     func touchHoldEnded(_ p: CGPoint) { rightPointerUp(event(p)) }
@@ -179,7 +183,8 @@ extension MenuView: TouchTarget {
     func touchHoldEnded(_ p: CGPoint) { rightPointerUp() }
 }
 
-/// Full screen, landscape: the game's 4:3 screen scaled to fit (black bars at the sides).
+/// Full screen, landscape: the menu's 4:3 screen scaled to fit (dark at the sides); a scenario
+/// fills the screen (its canvas widens, iOSWide.swift).
 final class GameViewController: UIViewController, UIDocumentPickerDelegate {
     private(set) var content: TouchTarget?
     private var aspect = CGSize.zero
@@ -218,8 +223,20 @@ final class GameViewController: UIViewController, UIDocumentPickerDelegate {
         v.isUserInteractionEnabled = false   // the touches come here (and go to the screen as the mouse)
         view.addSubview(v)
     }
+    /// The unsafe insets in canvas pixels (768 to the screen's height).
+    func updateSafeInsets() {
+        let h = view.bounds.height
+        guard h > 0 else { return }
+        IOSWide.safeLeft = Float(view.safeAreaInsets.left * CGFloat(AdventureUI.height) / h)
+        IOSWide.safeRight = Float(view.safeAreaInsets.right * CGFloat(AdventureUI.height) / h)
+    }
+    override func viewSafeAreaInsetsDidChange() {
+        super.viewSafeAreaInsetsDidChange()
+        updateSafeInsets()
+    }
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        updateSafeInsets()
         if let v = content { v.frame = fitRect(aspect) }
         importView?.frame = view.bounds
     }
@@ -227,7 +244,7 @@ final class GameViewController: UIViewController, UIDocumentPickerDelegate {
     // MARK: touches -> mouse
 
     private enum Phase { case pending, dragging, holding }
-    /// The screen aims with this touch (TouchTarget.touchDown).
+    /// The screen takes this touch for itself (TouchTarget.touchDown).
     private var aiming = false
     private var touch: UITouch?
     private var phase = Phase.pending
@@ -280,11 +297,11 @@ final class GameViewController: UIViewController, UIDocumentPickerDelegate {
             guard hypot(p.x - start.x, p.y - start.y) > slop else { return }
             holdTimer?.invalidate(); holdTimer = nil
             phase = .dragging
-            if aiming { v.touchSlid(p); break }
+            if aiming { break }
             v.touchPressed(start)
             v.touchDragged(p, by: CGPoint(x: p.x - start.x, y: p.y - start.y))
         case .dragging:
-            if aiming { v.touchSlid(p) } else { v.touchDragged(p, by: CGPoint(x: p.x - last.x, y: p.y - last.y)) }
+            if !aiming { v.touchDragged(p, by: CGPoint(x: p.x - last.x, y: p.y - last.y)) }
         case .holding:
             break
         }
@@ -292,15 +309,24 @@ final class GameViewController: UIViewController, UIDocumentPickerDelegate {
     }
 
     /// H4TOUCHES (simctl launch with SIMCTL_CHILD_H4TOUCHES): scripted touches for checking the
-    /// mapping without a finger, in canvas pixels (1024 x 768): "wait 2;tap 512,384;hold 100,200 1.5;
-    /// drag 300,300 500,400 [seconds]" (steps 1 s apart unless a wait says otherwise).
+    /// mapping without a finger, in canvas pixels (768 high; as wide as the screen): "wait 2;tap
+    /// 512,384;dtap 512,384;hold 100,200 1.5;drag 300,300 500,400 [seconds]" (steps 1 s apart unless a wait says
+    /// otherwise); "@512,384" is on the 1024x768 frame's pixels instead (wherever it sits now), "#3"
+    /// the battle unit 3's body.
     private var scripted = false
     func runTouchScript(_ script: String) {
         var steps = script.split(separator: ";").map { $0.split(separator: " ").map(String.init) }
         func pt(_ s: String) -> CGPoint {
-            let c = s.split(separator: ",").compactMap { Double($0) }
-            let k = (content?.bounds.width ?? 1024) / 1024
-            return CGPoint(x: (c.first ?? 0) * k, y: (c.count > 1 ? c[1] : 0) * k)
+            // "#3": the centre of battle unit 3 (on the frame)
+            if s.hasPrefix("#"), let id = Int(s.dropFirst()), let m = content as? MapView, let u = m.renderer.combat?.battle?.units.first(where: { $0.id == id }) {
+                let (x, y) = CombatScreen.point(u.centre.0, u.centre.1)
+                return pt("@\(x),\(y - 20)")
+            }
+            let framed = s.hasPrefix("@")
+            let c = s.drop { $0 == "@" }.split(separator: ",").compactMap { Double($0) }
+            let k = (content?.bounds.height ?? 768) / 768
+            let dx = framed ? Double((content as? MapView)?.renderer.pointerShift ?? 0) : 0
+            return CGPoint(x: ((c.first ?? 0) + dx) * k, y: (c.count > 1 ? c[1] : 0) * k)
         }
         func next() {
             guard !steps.isEmpty else { return }
@@ -310,6 +336,11 @@ final class GameViewController: UIViewController, UIDocumentPickerDelegate {
             case "wait": after = Double(s.count > 1 ? s[1] : "1") ?? 1
             case "tap" where s.count > 1:
                 scripted = true; began(pt(s[1])); last = pt(s[1]); endTouch(cancelled: false); scripted = false
+            case "dtap" where s.count > 1:   // a double tap
+                scripted = true; began(pt(s[1])); last = pt(s[1]); endTouch(cancelled: false); scripted = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [self] in
+                    scripted = true; began(pt(s[1])); last = pt(s[1]); endTouch(cancelled: false); scripted = false
+                }
             case "hold" where s.count > 1:
                 let held = Double(s.count > 2 ? s[2] : "1") ?? 1
                 scripted = true; began(pt(s[1]))
@@ -336,7 +367,7 @@ final class GameViewController: UIViewController, UIDocumentPickerDelegate {
         defer { touch = nil; phase = .pending; aiming = false }
         guard active, let v = content else { return }
         if aiming, phase != .holding {
-            if cancelled { v.touchAimCancelled() } else { v.touchLifted(phase == .pending ? start : last, slid: phase == .dragging) }
+            if cancelled { v.touchAimCancelled() } else { v.touchLifted(start, slid: phase == .dragging) }
             return
         }
         switch phase {

@@ -74,6 +74,7 @@
 		9DC669131FD43056D0847278 /* UI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E50AFB2F5B9713F92C3F8804 /* UI.swift */; };
 		8E18CCED9580B9F180289CD5 /* iOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE7AC0E8D6E20583A7E050B7 /* iOSApp.swift */; };
 		9F8AF17C2C7E9D9F60FF83F1 /* iOSCombatTouch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99FCBD9099034F2DA622EFD9 /* iOSCombatTouch.swift */; };
+		21D6E826CE8061C1FAE9FDB4 /* iOSWide.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8569E4130C25625CDC7E5469 /* iOSWide.swift */; };
 		13D62B2508D2E68F4D2FE2B6 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFE6C258A7C69022A261A79C /* main.swift */; };
 		82A2C7A2806F1849B0E4B687 /* H4Engine in Frameworks */ = {isa = PBXBuildFile; productRef = D7A7999F04C02B4CC12D18CE /* H4Engine */; };
 /* End PBXBuildFile section */
@@ -146,6 +147,7 @@
 		E50AFB2F5B9713F92C3F8804 /* UI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "UI.swift"; path = "../Sources/h4view/UI.swift"; sourceTree = SOURCE_ROOT; };
 		CE7AC0E8D6E20583A7E050B7 /* iOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "iOSApp.swift"; path = "../Sources/h4view/iOSApp.swift"; sourceTree = SOURCE_ROOT; };
 		99FCBD9099034F2DA622EFD9 /* iOSCombatTouch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "iOSCombatTouch.swift"; path = "../Sources/h4view/iOSCombatTouch.swift"; sourceTree = SOURCE_ROOT; };
+		8569E4130C25625CDC7E5469 /* iOSWide.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "iOSWide.swift"; path = "../Sources/h4view/iOSWide.swift"; sourceTree = SOURCE_ROOT; };
 		EFE6C258A7C69022A261A79C /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "main.swift"; path = "../Sources/h4view/main.swift"; sourceTree = SOURCE_ROOT; };
 		D611EE345987BB4EBE8CCC43 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		F91288DB192297DC903FE08C /* H4Remake.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = H4Remake.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -242,6 +244,7 @@
 				E50AFB2F5B9713F92C3F8804 /* UI.swift */,
 				CE7AC0E8D6E20583A7E050B7 /* iOSApp.swift */,
 				99FCBD9099034F2DA622EFD9 /* iOSCombatTouch.swift */,
+				8569E4130C25625CDC7E5469 /* iOSWide.swift */,
 				EFE6C258A7C69022A261A79C /* main.swift */,
 			);
 			name = h4view;
@@ -406,6 +409,7 @@
 				9DC669131FD43056D0847278 /* UI.swift in Sources */,
 				8E18CCED9580B9F180289CD5 /* iOSApp.swift in Sources */,
 				9F8AF17C2C7E9D9F60FF83F1 /* iOSCombatTouch.swift in Sources */,
+				21D6E826CE8061C1FAE9FDB4 /* iOSWide.swift in Sources */,
 				13D62B2508D2E68F4D2FE2B6 /* main.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

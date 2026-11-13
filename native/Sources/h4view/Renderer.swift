@@ -93,7 +93,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// The terrain of the level in play that the view (with a small margin) shows.
     var terrain: [Quad] {
         let l = min(game?.level ?? 0, scenes.count - 1)
-        let minX = pan.x - 64, minY = pan.y - 64, maxX = pan.x + viewSize.x / zoom + 64, maxY = pan.y + viewSize.y / zoom + 64
+        let (minX, minY, maxX, maxY) = viewWorld(margin: 64)
         var out: [Quad] = []
         for (i, c) in scenes[l].chunks.enumerated() where !c.isEmpty {
             if Float(c.x + c.width) < minX || Float(c.x) > maxX || Float(c.y + c.height) < minY || Float(c.y) > maxY { continue }
@@ -210,7 +210,18 @@ final class Renderer: NSObject, MTKViewDelegate {
     var touchPreview: CombatTouchPreview?
     var touchBefore: CombatTouchAction?
     var touchCursorFiles: [String: LayerFile?] = [:]
+    /// The combat touch sidebar's selection (iOSCombatTouch.swift) and its buttons this frame.
+    var combatPick: CombatPick?
+    var sidebarButtons: [SidebarButton] = []
+    /// A large modal window centred on a wide canvas: canvas pixels it is moved by (iOSWide.swift).
+    var modalShift: Float = 0
 #endif
+    /// Where the 1024x768 screen's left edge sits on the canvas (canvas pixels): 0 on the mac; a
+    /// wide phone screen moves it (iOSWide.swift) and shows more map or its own panels beside it.
+    var frameOffset: Float = 0
+    /// The map window's left edge in the frame's canvas pixels when the canvas is wider than the
+    /// frame (nil: right of the frame's Left piece).
+    var wideMapLeft: Float? = nil
     var dayCache: (cell: Int, days: Int?)?
     /// The combat options "Show Combat Grid" and "Show Movement Shadow" (both off by default, as in
     /// heroes4.exe); H4GRID / H4SHADE force them on for snapshots.
@@ -1187,12 +1198,18 @@ final class Renderer: NSObject, MTKViewDelegate {
         return out
     }
 
+    /// The map rectangle the drawable shows (world pixels), with a margin: from the drawable's left
+    /// edge, which is frameOffset canvas pixels left of the frame's origin.
+    func viewWorld(margin m: Float) -> (Float, Float, Float, Float) {
+        let x0 = pan.x - frameOffset * uiScale / zoom
+        return (x0 - m, pan.y - m, x0 + viewSize.x / zoom + m, pan.y + viewSize.y / zoom + m)
+    }
     func quads(at t: Double) -> [Quad] {
         var out = terrain
         var underlays: [(seq: Int, quads: [Quad])] = []
         var shadows: [Quad] = []
         var pieces: [MapPiece] = []
-        let minX = pan.x - 512, minY = pan.y - 512, maxX = pan.x + viewSize.x / zoom + 512, maxY = pan.y + viewSize.y / zoom + 512
+        let (minX, minY, maxX, maxY) = viewWorld(margin: 512)
         if let g = game {
             // empty ships on the water
             for (i, b) in g.boats.enumerated() where b.z == g.level && g.fogState(b.x, b.y) != GameState.fogUnexplored {
@@ -1362,7 +1379,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     var mapWindow: (min: SIMD2<Float>, max: SIMD2<Float>) {
         guard let ui, let l = frameLayer(ui, "Left"), let t = frameLayer(ui, "Top"),
               let r = frameLayer(ui, "Right"), let b = frameLayer(ui, "Bottom") else { return (.zero, viewSize) }
-        return (SIMD2(Float(l.x + l.width), Float(t.y + t.height)) * uiScale, SIMD2(Float(r.x), Float(b.y)) * uiScale)
+        return (SIMD2(wideMapLeft ?? Float(l.x + l.width), Float(t.y + t.height)) * uiScale, SIMD2(Float(r.x), Float(b.y)) * uiScale)
     }
 
     /// Keep the map window within heroes4.exe's scroll limits (MapScene.clampView).
@@ -1406,8 +1423,14 @@ final class Renderer: NSObject, MTKViewDelegate {
         refreshShroud()
         // the win / lose window replaces the adventure screen (0x4c5d00 closes the frame)
         let mapList = inTown || inCombat || endGame != nil ? [] : quads(at: time)
-        let uiList = endGame != nil ? endGameQuads(now: Date()) + finalScoreQuads()
+#if os(iOS)
+        layoutWide()
+#endif
+        var uiList = endGame != nil ? endGameQuads(now: Date()) + finalScoreQuads()
             : (inCombat ? combatQuads(now: now) : inTown ? townScreenQuads() : uiQuads()) + abilityPopupQuads() + cheatBoxQuads()
+#if os(iOS)
+        uiList = centreLargeModal(uiList)
+#endif
         collectPressTargets(uiList)   // where this frame's buttons are, for the click sound
         let list = mapList + uiList
         var verts: [Vertex] = []
@@ -1435,12 +1458,14 @@ final class Renderer: NSObject, MTKViewDelegate {
         enc.setRenderPipelineState(pipeline)
         enc.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
         // pass 1: the map, clipped to the map window
-        var cam = Camera(vw: viewSize.x, vh: viewSize.y, px: pan.x, py: pan.y, zoom: zoom, pad: 0)
+        // (the frame's origin sits frameOffset canvas pixels right of the drawable's)
+        let off = SIMD2(frameOffset * uiScale, 0)
+        var cam = Camera(vw: viewSize.x, vh: viewSize.y, px: pan.x - off.x / zoom, py: pan.y, zoom: zoom, pad: 0)
         enc.setVertexBytes(&cam, length: MemoryLayout<Camera>.stride, index: 1)
         let win = mapWindow
-        let lo = simd_clamp(win.min.rounded(.down), .zero, viewSize), hi = simd_clamp(win.max.rounded(.down), lo, viewSize)
+        let lo = simd_clamp((win.min + off).rounded(.down), .zero, viewSize), hi = simd_clamp((win.max + off).rounded(.down), lo, viewSize)
         enc.setScissorRect(MTLScissorRect(x: Int(lo.x), y: Int(lo.y), width: max(1, Int(hi.x - lo.x)), height: max(1, Int(hi.y - lo.y))))
-        let minX = pan.x + lo.x / zoom, minY = pan.y + lo.y / zoom, maxX = pan.x + hi.x / zoom, maxY = pan.y + hi.y / zoom
+        let minX = pan.x + (lo.x - off.x) / zoom, minY = pan.y + lo.y / zoom, maxX = pan.x + (hi.x - off.x) / zoom, maxY = pan.y + hi.y / zoom
         for (i, q) in mapList.enumerated() {
             if Float(q.x + q.w) < minX || Float(q.x) > maxX || Float(q.y + q.h) < minY || Float(q.y) > maxY { continue }
             enc.setFragmentTexture(q.texture, index: 0)
@@ -1449,7 +1474,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         // pass 2: the chrome on the 1024x768 canvas
         if !uiList.isEmpty {
             enc.setScissorRect(MTLScissorRect(x: 0, y: 0, width: Int(viewSize.x), height: Int(viewSize.y)))
-            var uiCam = Camera(vw: viewSize.x, vh: viewSize.y, px: 0, py: 0, zoom: uiScale, pad: 0)
+            var uiCam = Camera(vw: viewSize.x, vh: viewSize.y, px: -frameOffset, py: 0, zoom: uiScale, pad: 0)
             enc.setVertexBytes(&uiCam, length: MemoryLayout<Camera>.stride, index: 1)
             for (i, q) in uiList.enumerated() {
                 enc.setFragmentTexture(q.texture, index: 0)

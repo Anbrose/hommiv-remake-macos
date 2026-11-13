@@ -242,6 +242,7 @@ extension Renderer {
         out += combatPanelQuads(cs, b, now: now)
 #if os(iOS)
         out += touchPreviewCursor()
+        out += combatSidebarQuads(cs, b)
 #endif
         out += combatInfoQuads().modal()   // the windows from here on are modal: what is under one takes no press
         out += hoverQuads()
@@ -433,12 +434,19 @@ extension Renderer {
         }
         let mode = cs.shownMode(cur)
         guard mode != 4 else { return nil }
-        let ranged = b.canShoot(cur) && mode == 0
+        return attackStatusText(b, cur, target, ranged: b.canShoot(cur) && mode == 0)
+    }
+    /// "Attack <creature> for N - M damage" for a blow or a shot at that stack.
+    func attackStatusText(_ b: Battle, _ cur: Battle.Unit, _ target: Battle.Unit, ranged: Bool) -> String? {
+        guard let t = game?.tables else { return nil }
         let (lo, hi) = b.damageRange(cur, target, ranged: ranged)
         let range = lo == hi ? (t.strings["text_damage_range_1"] ?? "%damage damage").replacingOccurrences(of: "%damage", with: "\(lo)")
                              : (t.strings["text_damage_range_2"] ?? "%damage_low - %damage_high damage").replacingOccurrences(of: "%damage_low", with: "\(lo)").replacingOccurrences(of: "%damage_high", with: "\(hi)")
-        let name = target.stats.count == 1 ? target.stats.name : "\(target.stats.count) " + (t.creature(target.keyword)?.plural ?? target.stats.name)
-        return (t.strings["attack.combat"] ?? "Attack %creature_name\nfor %damage").replacingOccurrences(of: "%creature_name", with: name).replacingOccurrences(of: "%damage", with: range).replacingOccurrences(of: "\n", with: " ")
+        return (t.strings["attack.combat"] ?? "Attack %creature_name\nfor %damage").replacingOccurrences(of: "%creature_name", with: unitName(target)).replacingOccurrences(of: "%damage", with: range).replacingOccurrences(of: "\n", with: " ")
+    }
+    /// "Orc" for one, "20 Orcs" for more.
+    func unitName(_ u: Battle.Unit) -> String {
+        u.stats.count == 1 ? u.stats.name : "\(u.stats.count) " + (game?.tables?.creature(u.keyword)?.plural ?? u.stats.name)
     }
 
     /// Which combat cursor fits the cell under the pointer.

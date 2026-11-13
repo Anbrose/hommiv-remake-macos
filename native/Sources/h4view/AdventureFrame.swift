@@ -74,9 +74,16 @@ extension Renderer {
 
     func adventureFrameQuads(_ ui: AdventureUI, _ g: GameState) -> [Quad] {
         var out: [Quad] = []
-        for name in Renderer.framePieces {
-            guard let l = frameLayer(ui, name) else { continue }
-            out.append(Quad(texture: uiTexture("frame|\(l.name)", { l.bitmap }), x: l.x, y: l.y, w: l.width, h: l.height))
+#if os(iOS)
+        let wide = wideFrameQuads(ui)
+#else
+        let wide: [Quad]? = nil
+#endif
+        if let wide { out += wide } else {
+            for name in Renderer.framePieces {
+                guard let l = frameLayer(ui, name) else { continue }
+                out.append(Quad(texture: uiTexture("frame|\(l.name)", { l.bitmap }), x: l.x, y: l.y, w: l.width, h: l.height))
+            }
         }
         // the minimap and its view rectangle: black 1-px frame outside, white 1-px frame on it (0x7a0470)
         if let mm = ui.hotspot("mini_map") {

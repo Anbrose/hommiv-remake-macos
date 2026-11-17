@@ -449,6 +449,13 @@ if let out = snapshot {
         if let b = cs.battle { for _ in 0..<battleSteps { b.autoAct() }
             if ProcessInfo.processInfo.environment["H4DEBUG"] != nil { print("battle: round \(b.round) finished \(String(describing: b.finished)) units \(b.units.map { "\($0.keyword):\($0.stats.count)@\($0.x),\($0.y)" })") }
             _ = b.takeEvents(); cs.pump(); if b.finished != nil { cs.result = (b.finished!, b.round); cs.showResults = battleResults }
+            if let out = ProcessInfo.processInfo.environment["H4COMBATSAVETO"] {   // debugging: a combat save of this battle
+                var s = game.snapshot(mapPath: args[2])
+                s.combat = game.savedCombat(hero: hero, enemy: nil, monster: mi, placed: p, town: nil, battle: b)
+                s.combat?.screen = cs.savedScreen
+                try? s.write(to: URL(fileURLWithPath: out))
+                print("combat saved \(s.combat != nil): \(Renderer.battleSummary(b))")
+            }
             if let sp = ProcessInfo.processInfo.environment["H4CAST"].flatMap({ Int($0) }) {   // snapshot: a hero casts at the first enemy
                 var guardN = 0
                 while b.finished == nil, guardN < 40, !(b.current?.side == 0 && b.current?.caster != nil) { b.autoAct(); guardN += 1 }
@@ -589,6 +596,7 @@ if let out = snapshot {
         print("puzzle \(first.subtype): \(game.obeliskVisits[first.subtype] ?? 0)/\(game.obelisksRequired(first.subtype)) site \(game.digSites[first.subtype] ?? [])")
     }
     if ProcessInfo.processInfo.environment["H4OPTIONS"] != nil { renderer.optionsOpen = renderer.settings }   // snapshot: the options
+    if let o = ProcessInfo.processInfo.environment["H4COMBATOPTIONS"] { renderer.openCombatOptions(); if o == "quit" { renderer.combatQuitOpen = true } }   // snapshot: the combat options
     if ProcessInfo.processInfo.environment["H4THIEVES"] != nil {   // snapshot: the Thieves Guild
         renderer.thievesGuildOpen = true
         let tg = game.thievesGuild()
@@ -738,6 +746,8 @@ if let out = snapshot {
         rpd.colorAttachments[0].loadAction = .clear
         rpd.colorAttachments[0].storeAction = .store
         rpd.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
+        // H4PREFRAMES=n: n frames first (a loaded combat save's battle starts a frame or two in)
+        for _ in 0..<(ProcessInfo.processInfo.environment["H4PREFRAMES"].flatMap { Int($0) } ?? 0) { renderer.encode(rpd: rpd, present: nil, time: snapTime) }
         renderer.encode(rpd: rpd, present: nil, time: snapTime)
         lap("frame rendered")
         var pixels = [UInt8](repeating: 0, count: w * h * 4)
@@ -1010,6 +1020,10 @@ final class MapView: MTKView {
         if renderer.mapRecruit != nil { renderer.mapRecruitClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.optionsOpen != nil { renderer.optionsClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
         if renderer.spellBook != nil { renderer.spellBookClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale); return }
+        if renderer.inCombat, renderer.prompt == nil {   // the combat options, its Quit question, the save / load dialog
+            if renderer.saveDialogClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale, double: e.clickCount >= 2) { return }
+            if renderer.combatOptionsClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale) { return }
+        }
         if renderer.inCombat {
             renderer.combatClick(x: mouse.x / renderer.uiScale, y: mouse.y / renderer.uiScale)
             return
@@ -1200,6 +1214,9 @@ final class MapView: MTKView {
         case 14: if renderer.townOpen == nil, !renderer.inCombat { renderer.buttonClick(); renderer.endTurn() }       // E
         // the battlefield's hot keys (0x6335c0): F10 (key 0x79) toggles the movement shadow, G
         // (combat_grid_toggle.hot_keys) the grid; each change is kept at once, as the exe's setters do
+        case 31:   // O: the combat options (combat_options.hot_keys), when its button is enabled
+            if renderer.inCombat, renderer.prompt == nil, renderer.combatOptions == nil, renderer.saveDialog == nil, let cs = renderer.combat, let b = cs.battle,
+               renderer.combatButtons(cs, b).contains(where: { $0.key == "options" && $0.enabled }) { renderer.buttonClick(); renderer.openCombatOptions() }
         case 109: if renderer.inCombat { renderer.settings.showMovementShading = !renderer.showMovementShading; renderer.settings.save() }
         case 5: if renderer.inCombat, renderer.prompt == nil { renderer.settings.showCombatGrid = !renderer.showCombatGrid; renderer.settings.save() }
         case 1: if renderer.inCombat, renderer.prompt == nil, let b = renderer.combat?.battle, !(renderer.combat?.busy ?? true), b.finished == nil { renderer.buttonClick(); b.wait(); renderer.combat?.pump() }   // S = wait (the button's hot key: its click)

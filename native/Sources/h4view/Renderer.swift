@@ -238,6 +238,12 @@ final class Renderer: NSObject, MTKViewDelegate {
     var casting: Int? = nil               // a combat spell being aimed
     var castFirst: Int? = nil             // its first stack when it takes two clicks (Sacrifice, Martyr, Teleport)
     var optionsOpen: GameSettings? = nil   // the options dialog, while open (the values being edited)
+    /// The combat options dialog (layers.dialog.combat.options, re/combat_save_spec.md), while open
+    /// (the values being edited), and its Quit Game question.
+    var combatOptions: GameSettings? = nil
+    var combatQuitOpen = false
+    /// Quit Game > Save: the program ends once the save is written (0x6a8e90).
+    var quitAfterSave = false
     var settings = GameSettings.load()
     var hire: HireOffer? = nil             // the tavern's dialog
     var mapRecruit: (dwelling: Int, hero: Hero, count: Int)? = nil   // a map dwelling's recruit dialog
@@ -1400,12 +1406,14 @@ final class Renderer: NSObject, MTKViewDelegate {
         battlePoseShown = battleWaiting && !battleShown
         if battleShown, let g = game, let cs = combat, let pb = g.pendingBattle, cs.battle == nil {
             let cell = g.map.cells[g.level][pb.hero.x * g.map.size + pb.hero.y]
+            cs.pendingResume = g.resumeCombat; g.resumeCombat = nil   // a loaded combat save
             cs.start(game: g, hero: pb.hero, monsterAt: pb.monster, pb.placed, terrain: cell?.type ?? 1, variant: cell?.variant ?? 0,
                      ships: GameState.shipField(attacker: pb.hero.boat, defender: nil))
             g.pendingBattle = nil
         }
         if let g = game, let cs = combat, let ps = g.pendingSiege, cs.battle == nil {
             let tw = g.towns[ps.town]
+            cs.pendingResume = g.resumeCombat; g.resumeCombat = nil   // a loaded combat save
             cs.startSiege(game: g, hero: ps.hero, town: ps.town, terrain: tw.terrain)
             g.pendingSiege = nil
         }
@@ -1413,6 +1421,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             let cell = g.map.cells[g.level][pb.enemy.x * g.map.size + pb.enemy.y]
             // the attacker's ship is the lower deck (the computer's army attacks when aiAttacking)
             let ships = g.aiAttacking ? GameState.shipField(attacker: pb.enemy.boat, defender: pb.hero.boat) : GameState.shipField(attacker: pb.hero.boat, defender: pb.enemy.boat)
+            cs.pendingResume = g.resumeCombat; g.resumeCombat = nil   // a loaded combat save
             cs.start(game: g, hero: pb.hero, enemy: pb.enemy, terrain: cell?.type ?? 1, variant: cell?.variant ?? 0, ships: ships)
             g.aiAttacking = false
             g.pendingHeroBattle = nil

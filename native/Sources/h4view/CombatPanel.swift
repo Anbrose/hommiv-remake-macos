@@ -111,7 +111,7 @@ extension Renderer {
             case "cast_spell": openCombatBook()
             case "defend": b.defend(); cs.pump()
             case "wait": b.wait(); cs.pump()
-            case "options": optionsOpen = settings
+            case "options": openCombatOptions()
             case "retreat": askRetreat()
             case "surrender": askSurrender()
             case "mode":

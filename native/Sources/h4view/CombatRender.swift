@@ -249,6 +249,8 @@ extension Renderer {
         if cs.showResults { out += combatResultQuads().modal() }
         out += spellBookQuads().modal()
         out += optionsQuads().modal()
+        out += combatOptionsQuads().modal()
+        out += saveDialogQuads().modal()
         if prompt != nil { out += messageBoxQuads().modal() }
         return out
     }

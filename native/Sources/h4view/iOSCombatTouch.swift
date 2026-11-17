@@ -87,7 +87,7 @@ extension Renderer {
     /// Is the battle waiting for the player's order (no spell being aimed, no window open)?
     func combatOrdersOpen() -> Bool {
         guard let cs = combat, let b = cs.battle, let cur = b.current else { return false }
-        return cs.info == nil && prompt == nil && spellBook == nil && optionsOpen == nil && casting == nil && !cs.showResults
+        return cs.info == nil && prompt == nil && spellBook == nil && optionsOpen == nil && combatOptions == nil && !combatQuitOpen && saveDialog == nil && casting == nil && !cs.showResults
             && cs.awaitingOrders && !cs.busy && cs.result == nil && !cs.autoCombat && b.commander(of: cur) == 0
     }
     /// Is the battlefield taking the player's orders at this frame canvas point (not a panel button)?

@@ -39,8 +39,10 @@ extension Renderer {
         }.sorted { $0.date > $1.date }
     }
 
+    /// In combat (re/combat_save_spec.md) the same dialog saves the battle with the game (the
+    /// caller has checked the battle can be saved) or loads any save.
     func openSaveDialog(_ mode: SaveDialog.Mode) {
-        guard game != nil, !inCombat else { return }
+        guard game != nil else { return }
         saveDialog = SaveDialog(mode: mode, files: Renderer.savedGames(), selected: nil, name: mode == .save ? (game?.map.name ?? "Game") : "")
     }
 
@@ -48,7 +50,13 @@ extension Renderer {
     func save(as name: String) {
         guard let g = game, let path = mapPath else { return }
         let file = Renderer.savesDirectory.appendingPathComponent("\(name).h4s")
-        do { try g.snapshot(mapPath: path).write(to: file) } catch { g.log.append("Could not save \(name): \(error.localizedDescription)") }
+        var s = g.snapshot(mapPath: path)
+        if inCombat {   // the battle with its adventure context (t_saved_combat)
+            guard let c = combatRecord() else { quitAfterSave = false; return }
+            s.combat = c
+        }
+        do { try s.write(to: file) } catch { g.log.append("Could not save \(name): \(error.localizedDescription)"); quitAfterSave = false; return }
+        if quitAfterSave { Platform.quit() }
     }
     /// A new day: the previous autosave becomes "last turn", this one "this turn".
     func autosave() {
@@ -80,7 +88,7 @@ extension Renderer {
         guard var sd = saveDialog, let kit = kit else { return false }
         let (ox, oy) = saveOrigin
         switch FileDialogView.hit(kit, save: sd.mode == .save, files: sd.files.count, scroll: sd.scroll, ox: ox, oy: oy, x, y) {
-        case .cancel: saveDialog = nil
+        case .cancel: saveDialog = nil; quitAfterSave = false
         case .ok: confirmSaveDialog()
         case .row(let k):
             sd.selected = k
@@ -118,7 +126,7 @@ extension Renderer {
     func saveDialogKey(_ e: NSEvent) -> Bool {
         guard var sd = saveDialog else { return false }
         switch e.keyCode {
-        case 53: buttonClick(); saveDialog = nil   // Cancel's and OK's hot keys
+        case 53: buttonClick(); saveDialog = nil; quitAfterSave = false   // Cancel's and OK's hot keys
         case 36, 76: buttonClick(); confirmSaveDialog()
         case 51: if sd.mode == .save, !sd.name.isEmpty { sd.name.removeLast(); saveDialog = sd }
         default:

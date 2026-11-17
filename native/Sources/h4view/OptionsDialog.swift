@@ -14,6 +14,8 @@ struct GameSettings: Codable {
     /// The combat options "Show Combat Grid" (show_combat_grid) and "Show Movement Shadow"
     /// (show_combat_movement_shading): both off unless set (heroes4.exe 0x7c91d0 defaults them to 0).
     var showCombatGrid: Bool? = nil, showMovementShading: Bool? = nil
+    /// The combat options "Show Damage / Death / Other Numbers" (on unless set, 0x7c9060...).
+    var showDamageNumbers: Bool? = nil, showDeathNumbers: Bool? = nil, showOtherNumbers: Bool? = nil
     static func load() -> GameSettings {
         guard let d = UserDefaults.standard.data(forKey: "h4view.settings"), let s = try? JSONDecoder().decode(GameSettings.self, from: d) else { return GameSettings() }
         return s
@@ -187,6 +189,9 @@ extension Renderer {
         let sp = settings.speeds
         GameState.armySpeedPercent = sp[0]
         combat?.animationSpeed = sp[1]
+        combat?.showDamageNumbers = settings.showDamageNumbers ?? true
+        combat?.showDeathNumbers = settings.showDeathNumbers ?? true
+        combat?.showOtherNumbers = settings.showOtherNumbers ?? true
         GameState.otherArmySpeedPercent = sp[2]
         GameState.showEnemyMoves = SpeedOption.showsEnemyMoves(sp[2])
     }

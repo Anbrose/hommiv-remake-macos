@@ -380,7 +380,7 @@ final class CombatScreen {
         let r = seed % 6; pieces = Array(pieces[r...] + pieces[..<r])
         sound?.playMusic(first: "combat.start", then: pieces)
         resetPlayback(); resultShownAt = nil; result = nil; showResults = false; floaters = []; actionMessage = nil; attackMode = [:]; autoCombat = false; surrendered = false
-        pump()
+        begin()
     }
 
     /// A siege (heroes4.exe 0x560b50 / 0x62d930): the town's walls from castle.<alignment>.<fort|
@@ -419,7 +419,7 @@ final class CombatScreen {
         let r = seed % 6; pieces = Array(pieces[r...] + pieces[..<r])
         sound?.playMusic(first: "combat.start", then: pieces)
         resetPlayback(); resultShownAt = nil; result = nil; showResults = false; floaters = []; actionMessage = nil; attackMode = [:]; autoCombat = false; surrendered = false
-        pump()
+        begin()
     }
 
     /// Set up a battle between a hero's army and a wandering stack.
@@ -463,7 +463,7 @@ final class CombatScreen {
         let r = seed % 6; pieces = Array(pieces[r...] + pieces[..<r])
         sound?.playMusic(first: "combat.start", then: pieces)
         resetPlayback(); resultShownAt = nil; result = nil; showResults = false; floaters = []; actionMessage = nil; attackMode = [:]; autoCombat = false; surrendered = false
-        pump()
+        begin()
     }
 
     /// A test battle (the snapshot hooks): the hero's army against stacks "creature:n,...", on grass.
@@ -488,6 +488,33 @@ final class CombatScreen {
     /// The battle places the stacks spells bring with their real combat actors and footprints.
     func attachModels() {
         battle?.creatureModel = { [weak self] cd in (self?.actorName(cd) ?? cd.name, self.flatMap { $0.actor($0.actorName(cd))?.size } ?? 4) }
+    }
+
+    /// A loaded combat save (re/combat_save_spec.md): laid over the battle just started from the
+    /// same adventure, before anyone acts.
+    var pendingResume: SaveGame.SavedCombat?
+    /// The battle is set up: a saved one is put back (the stacks as saved, the dead lying, the
+    /// spell-made ground drawn as it was, nothing playing), then the fight goes on.
+    func begin() {
+        guard let r = pendingResume, let b = battle else { pump(); return }
+        pendingResume = nil
+        b.restore(r.battle)
+        resetPlayback()
+        for u in b.units where !u.alive { dead.insert(u.id) }
+        if let s = r.screen {
+            hidden = Set(s.hidden); alphaLevel = s.alpha
+            spellObstacles = s.decor.map { SpellObstacle(name: $0.name, x: $0.x, y: $0.y, w: $0.w, h: $0.h, since: .distantPast, fadeIn: false) }
+        }
+        if ProcessInfo.processInfo.environment["H4DEBUG"] != nil { print("combat resumed: \(Renderer.battleSummary(b))") }
+        for k in b.quicksand.sorted() {
+            let x = k / Battlefield.size, y = k % Battlefield.size
+            _ = fieldActor("spells.quicksand", states: ["cast_spell"], at: (Float(x * 16), Float(y * 16), 0), t: .distantPast, holdLast: true, ground: true)
+        }
+        pump()
+    }
+    /// What a save keeps of the screen: the stacks hidden (bodies gone), alpha levels (phantoms), the spell-made obstacles.
+    var savedScreen: SaveGame.SavedCombat.Screen {
+        .init(hidden: hidden.sorted(), alpha: alphaLevel, decor: spellObstacles.map { .init(name: $0.name, x: $0.x, y: $0.y, w: $0.w, h: $0.h) })
     }
 
     /// Pull new events from the battle and let the defender's side act on its own.

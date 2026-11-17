@@ -162,6 +162,8 @@ extension MapView: TouchTarget {
     func touchReleased(_ p: CGPoint, clicks: Int) { pointerUp(event(p, clicks: clicks)) }
     func touchHeld(_ p: CGPoint) {
         if renderer.inCombat { renderer.clearTouchPreview() }   // the creature window opens
+        let c = holdCanvas(p)
+        if renderer.holdSplit(x: c.0, y: c.1) { return }   // a stack splits (iOSSplitHold.swift)
         rightPointerDown(event(p))
     }
     func touchDown(_ p: CGPoint) -> Bool { combatTouchDown(p) }

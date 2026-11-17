@@ -101,7 +101,7 @@ final class ArtifactSetTests: XCTestCase {
         XCTAssertEqual(carry.human[0].backpack ?? [], [id("bag_of_gold")])
 
         // the next map: the carried pool goes to the most skilled hero, put on where it fits
-        let weak = hero(), strong = SaveGame.hero(from: carry.human[0])
+        let weak = hero(), strong = SaveGame.hero(from: carry.human[0], tables: nil)
         weak.skills = ["scouting": 0]
         second.heroes = [weak, strong]
         second.giveCarriedArtifacts(carry.artifacts ?? [])

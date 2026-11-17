@@ -52,6 +52,10 @@ public struct HeroDef {
     /// "Allowed By Default" not blank (0x667978, record +0x3c): the hero may come up at random
     /// (a map's allowed-portrait list is filled from it, 0x4dfed3); campaign heroes are not.
     public var allowedByDefault = true
+    /// "Custom Model Fighter" / "Custom Model Archer" (record strings, copied by 0x7315d0 into the
+    /// hero's +0x5fc / +0x60c): a hero's own adv_actor / combat_actor model "hero.<name>" instead of
+    /// the class's; empty for all but ten expansion heroes (Bohb "Archmage", Mongo "mongo", ...).
+    public var customModelFighter = "", customModelArcher = ""
     /// The row's portrait id: its keyword in RuleTables.heroPortraits (0x6677bb); nil for the
     /// generic names, which have no portrait.
     public var portrait: Int? { RuleTables.portraitId(keyword) }
@@ -199,6 +203,8 @@ public final class RuleTables {
             var h = HeroDef(keyword: $0[0], name: $0[1], sex: $0[2].lowercased(), heroClass: $0[3].lowercased())
             h.biography = $0.count > 4 ? $0[4] : ""
             h.allowedByDefault = $0.count > 5 && !$0[5].trimmingCharacters(in: .whitespaces).isEmpty
+            h.customModelFighter = $0.count > 6 ? $0[6].trimmingCharacters(in: .whitespaces) : ""
+            h.customModelArcher = $0.count > 7 ? $0[7].trimmingCharacters(in: .whitespaces) : ""
             return h
         }
         let rn = RuleTable(data: try archive.payload("table.random_names.h4d"))

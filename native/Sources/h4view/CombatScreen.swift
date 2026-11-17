@@ -348,7 +348,9 @@ final class CombatScreen {
         for (k, hh) in heroes.enumerated() {
             var st = g.heroCombatant(hh)
             st.morale = Battle.armyMorale(own: hh.alignment, army: army)
-            let model = hh.combatModel(shooter: st.shooter), fallback = "hero.\(hh.alignment)_fighter_male"
+            // its custom model (0x72de50), else its class model, else a model the archive surely has
+            let fallback = "hero.\(hh.alignment)_fighter_male"
+            let model = hh.combatModels(shooter: st.shooter, tables: t).first { actor($0) != nil } ?? fallback
             let book = Caster(hero: hh, spellPoints: g.spellPoints(hh))
             let itemMove = hh.artifactEffects.filter { $0.type == 0x05 && ($0.target == 0 || $0.target == 5) }.reduce(0) { $0 + $1.amount } / 300
             out.append(Battle.Fighter(stats: st, keyword: hh.keyword, actor: actor(model) != nil ? model : fallback, size: actor(model)?.size ?? actor(fallback)?.size ?? 4, move: max(1, 24 + itemMove), shots: st.shots, slot: k, caster: book))

@@ -74,7 +74,7 @@ extension GameState {
         let price = o.prices[c]
         guard resources["Gold", default: 0] >= price else { return nil }
         let def = t.heroes[list[k]]
-        var mh = MapHero(); mh.heroClass = c; mh.level = 1; mh.portrait = def.portrait ?? -1; mh.gender = o.female[c] == true ? 1 : 0; mh.name = def.name
+        var mh = MapHero(); mh.heroClass = c; mh.level = 1; mh.portrait = def.portrait ?? -1; mh.gender = o.female[c] == true ? 0 : 1; mh.name = def.name
         var x = visitor?.x ?? 0, y = visitor?.y ?? 0
         var z = visitor?.z ?? level
         if let ti = o.town, let p = scenes[towns[ti].z].placed.first(where: { $0.category == "castle" && $0.cellX == towns[ti].x && $0.cellY == towns[ti].y }) {

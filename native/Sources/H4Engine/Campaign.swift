@@ -256,7 +256,7 @@ extension GameState {
             level = l
             scene.remove(p)
             guard let s = st else { continue }
-            let h = SaveGame.hero(from: s)
+            let h = SaveGame.hero(from: s, tables: tables)
             h.x = p.cellX; h.y = p.cellY; h.z = l; h.owner = owner
             h.army = []; h.companions = []; h.path = []; h.plan = []
             h.maxMovement = armyMovement(h); h.movement = h.maxMovement

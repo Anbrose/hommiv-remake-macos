@@ -619,6 +619,7 @@ public struct MapFile {
 /// A hero as a map sets it up (heroes4.exe t_hero, 0x72f4e0); -1 fields are "random".
 public struct MapHero {
     /// portrait: an id of RuleTables.heroPortraits (-1: random); heroClass: RuleTables.heroClasses.
+    /// gender: the exe's sex (+0x634, 0x72f680): 1 male, 0 female, -1 random.
     public var portrait = -1, heroClass = -1, gender = -1, level = 1
     public var stats: [Int] = []
     public var name = "", biography = ""

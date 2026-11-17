@@ -68,9 +68,9 @@ final class ArmySplitTests: XCTestCase {
         let led = Hero(actor: "hero.life_might_male", x: 0, y: 0)
         led.companions = [Hero(actor: "hero.order_magic_female", x: 0, y: 0)]
         XCTAssertEqual(led.members.count, 2)
-        let back = SaveGame.hero(from: SaveGame.state(of: h))
+        let back = SaveGame.hero(from: SaveGame.state(of: h), tables: nil)
         XCTAssertTrue(back.heroless); XCTAssertEqual(back.listRank, 5); XCTAssertEqual(back.actor, "Gold Golem")
-        XCTAssertFalse(SaveGame.hero(from: SaveGame.state(of: led)).heroless)
+        XCTAssertFalse(SaveGame.hero(from: SaveGame.state(of: led), tables: nil).heroless)
     }
 }
 

@@ -108,7 +108,7 @@ final class StealthMineTests: XCTestCase {
         XCTAssertEqual(h.experience, share)
         XCTAssertTrue(h.eluded.contains(g.monsters[i].uid))
         // the save keeps the set
-        let back = SaveGame.hero(from: SaveGame.state(of: h))
+        let back = SaveGame.hero(from: SaveGame.state(of: h), tables: nil)
         XCTAssertEqual(back.eluded, h.eluded)
         h.eludedGains = []
     }

@@ -150,7 +150,7 @@ extension GameState {
         let h = w.hero
         var steps: [Int] = [], px = h.x, py = h.y
         for c in w.cells { steps.append(ArmyWalk.distance(px, py, c.x, c.y)); px = c.x; py = c.y }
-        w.anim = ArmyWalk(steps: steps, gait: gait(h.model), walking: walking)
+        w.anim = ArmyWalk(steps: steps, gait: armyGait(h), walking: walking)
         w.shown = true
         h.path = w.cells; h.progress = 0
         h.animState = w.anim?.state; h.animFrame = 0
@@ -162,7 +162,7 @@ extension GameState {
         let h = w.hero
         if !w.shown { hiddenSteps(w); return }
         guard var a = w.anim else { end(w); return }
-        let g = gait(h.model)
+        let g = armyGait(h)
         let percent = heroes.contains { $0 === h } ? GameState.armySpeedPercent : GameState.otherArmySpeedPercent
         var finished = a.advance(dt, gait: g, percent: percent)
         w.anim = a

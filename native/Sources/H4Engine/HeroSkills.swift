@@ -19,13 +19,55 @@ public struct H4Random {
 extension Hero {
     /// The hero's mage flag (+0x7d4 = 0x737ec0(class)).
     public var isMageClass: Bool { RuleTables.mageClasses.contains(heroClass) }
-    /// The hero's combat model (0x610c00 -> 0x610fb0, names built by 0x7381a0 from "hero." 0xa4ae50, the
-    /// alignment names 0x996634, the classes fighter / archer / mage 0xa6e484 and female / male 0x989abc):
-    /// the mage model for a magic class unless the hero is of might (index 5, which has none), else the
-    /// archer model when it can shoot (has_ability 51 'ranged'), else the fighter model.
+    /// The model alignments (0x996634: life order death chaos nature might); a promoted class of
+    /// none (class alignment 6) draws as might.
+    static let modelAlignments = ["life", "order", "death", "chaos", "nature", "might"]
+    /// A hero's class adventure model (0x72e080 default branch -> 0x42b3c0 -> names built by 0x737f10):
+    /// "hero.<alignment +0xa8>_<might|magic +0x7d4>_<female|male +0x634 == 1>" (0x989ac4 might/magic,
+    /// 0x989abc female/male: index 1 is male). The magic flag is 0x737ec0(class), the class ids at
+    /// 0x989a54 (RuleTables.mageClasses), set when the hero is made and kept through promotions.
+    public static func adventureModel(heroClass cls: Int, alignment: String, male: Bool) -> String {
+        let def = RuleTables.heroClasses.indices.contains(cls) ? RuleTables.heroClasses[cls].alignment : alignment
+        let a = modelAlignments.contains(def) ? def : "might"
+        let magic = a != "might" && RuleTables.mageClasses.contains(cls)
+        return "hero.\(a)_\(magic ? "magic" : "might")_\(male ? "male" : "female")"
+    }
+    /// The hero's sex as its class model shows it (+0x634 == 1: male).
+    public var isMale: Bool { !actor.lowercased().hasSuffix("_female") }
+    /// Gives the class model the sex (an actor of another kind is left as it is).
+    func setSex(male: Bool) {
+        guard actor.hasPrefix("hero."), let r = actor.range(of: "_(fe)?male$", options: [.regularExpression, .caseInsensitive]) else { return }
+        actor.replaceSubrange(r, with: male ? "_male" : "_female")
+    }
+    /// The table.heroes record of the hero's keyword (its portrait's), whose custom models the hero has.
+    func record(in tables: RuleTables?) -> HeroDef? {
+        guard !keyword.isEmpty else { return nil }
+        return tables?.heroes.first { $0.keyword.caseInsensitiveCompare(keyword) == .orderedSame }
+    }
+    /// The hero's own models (+0x5fc fighter, +0x60c archer, from its record's "Custom Model" columns,
+    /// 0x7315d0); nil when the record has none.
+    public func customModel(archer: Bool, tables: RuleTables?) -> String? {
+        guard let r = record(in: tables) else { return nil }
+        let name = archer ? r.customModelArcher : r.customModelFighter
+        return name.isEmpty ? nil : "hero.\(name)"
+    }
+    /// The adventure model the hero is drawn with (0x72e080): its custom fighter model when it has one
+    /// (and the archive holds it: the caller falls back to `actor`), else its class model `actor`.
+    public func adventureModel(tables: RuleTables?) -> String { customModel(archer: false, tables: tables) ?? actor }
+
+    /// The hero's class combat model (0x72de50's default branch -> 0x5d8af0, names built by 0x7381a0
+    /// from "hero." 0xa4ae50, the alignment names 0x996634, fighter / archer / mage 0xa6e484 and
+    /// female / male 0x989abc): the mage model for a magic class unless the hero is of might (index 5,
+    /// which has none), else the archer model when it can shoot (has_ability 51 'ranged'), else the
+    /// fighter model.
     public func combatModel(shooter: Bool) -> String {
         let cls = isMageClass && alignment != "might" ? "mage" : shooter ? "archer" : "fighter"
-        return "hero.\(alignment)_\(cls)_\(actor.lowercased().hasSuffix("_female") ? "female" : "male")"
+        return "hero.\(alignment)_\(cls)_\(isMale ? "male" : "female")"
+    }
+    /// The combat models to try in turn (0x72de50): the custom archer model of a shooter, else the
+    /// custom fighter model (mages included), then the class model.
+    public func combatModels(shooter: Bool, tables: RuleTables?) -> [String] {
+        (customModel(archer: shooter, tables: tables).map { [$0] } ?? []) + [combatModel(shooter: shooter)]
     }
     public var classKeyword: String { RuleTables.heroClasses.indices.contains(heroClass) ? RuleTables.heroClasses[heroClass].keyword : "" }
     public func skill(id: Int) -> Int { skill(RuleTables.skillIds[id]) }
@@ -226,24 +268,23 @@ extension Hero {
     /// classes), the class skills at basic unless the map gives skills, then one automatic
     /// level-up per level to the map's level, then the class the skills make.
     public static func fromMap(_ m: MapHero, alignment: String, x: Int, y: Int, tables: RuleTables?, random rng: inout H4Random) -> Hero {
-        // the table.heroes row of the map's portrait id: its class and gender stand in for random ones
-        // (0x7315d0 applies the row's class +0x14 and gender +0x18)
+        // the table.heroes row of the map's portrait id: map-start setup 0x730990 takes the hero's
+        // description from that record and 0x7315d0 applies its class (+0x14 -> +0x638) and sex
+        // (+0x18 -> +0x634) over the map's; the campaigns' maps always agree with their rows
         let all = tables?.heroes ?? []
         let portraitRow = RuleTables.heroPortraits.indices.contains(m.portrait) ? all.first { $0.portrait == m.portrait } : nil
         var cls = m.heroClass
-        if !RuleTables.heroClasses.indices.contains(cls), let r = portraitRow, let c = RuleTables.heroClasses.firstIndex(where: { $0.keyword == r.heroClass }) { cls = c }
+        if let r = portraitRow, let c = RuleTables.heroClasses.firstIndex(where: { $0.keyword == r.heroClass }) { cls = c }
         if !RuleTables.heroClasses.indices.contains(cls) {
             let base = (0..<11).filter { RuleTables.heroClasses[$0].alignment == alignment }
             cls = base.isEmpty ? 10 : base[rng.next() % base.count]
         }
         let def = RuleTables.heroClasses[cls]
-        let gender = m.gender == 0 || m.gender == 1 ? m.gender : portraitRow.map { $0.sex == "female" ? 1 : 0 } ?? rng.next() % 2
-        // the adventure model: the class's alignment, might for the fighting base classes
-        let model = ["life", "order", "death", "chaos", "nature"].contains(def.alignment) ? def.alignment : "might"
-        let might = model == "might" || [0, 2, 4, 6, 8].contains(cls) || def.skills.contains { $0 < 4 }
-        let h = Hero(actor: "hero.\(model)_\(might ? "might" : "magic")_\(gender == 1 ? "female" : "male")", x: x, y: y, movement: Hero.baseMovement)
+        // the sex (+0x634): the map byte 1 male, 0 female, -1 random (0x72f680); a record's "male" (0x667828)
+        let male = portraitRow.map { $0.sex == "male" } ?? (m.gender == 1 || m.gender == 0 ? m.gender == 1 : rng.next() % 2 == 1)
+        let h = Hero(actor: Hero.adventureModel(heroClass: cls, alignment: alignment, male: male), x: x, y: y, movement: Hero.baseMovement)
         h.heroClass = cls
-        h.alignment = model == "might" ? (def.alignment == "might" ? "might" : alignment) : model
+        h.alignment = Hero.modelAlignments.contains(def.alignment) ? def.alignment : alignment
         // portrait and name (0x730990): the map's portrait id (RuleTables.heroPortraits) and the
         // table.heroes row of that portrait; no portrait (-1): a row of the class and gender with a
         // portrait, allowed at random (0x731260 -> pool 0x6681e0)
@@ -252,7 +293,7 @@ extension Hero {
             pick = portraitRow
             h.keyword = pick?.keyword ?? RuleTables.heroPortraits[m.portrait].keyword
         } else {
-            let sex = gender == 1 ? "female" : "male"
+            let sex = male ? "male" : "female"
             var pool = all.filter { $0.heroClass == def.keyword && $0.sex == sex && $0.portrait != nil && $0.allowedByDefault }
             if pool.isEmpty {
                 // a promoted class has no rows (the game's pool would be empty: maps give random-portrait

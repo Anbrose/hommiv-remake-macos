@@ -97,6 +97,9 @@ public struct SaveGame: Codable {
         public var boat: String?
         // (added with army splitting: an army without a hero, the army list's order)
         public var heroless: Bool?, listRank: Int?
+        // (added with the corrected hero sex: +0x634, 1 male; absent: a save that may hold a map
+        // hero drawn with the other sex, put right from its table.heroes record on load)
+        public var male: Bool?
     }
     public struct TownState: Codable {
         public var x, y: Int
@@ -224,16 +227,16 @@ extension GameState {
             for o in removed { passability.free(o.x, o.y) }
         }
         level = s.level ?? playing
-        heroes = s.heroes.map { SaveGame.hero(from: $0) }
+        heroes = s.heroes.map { SaveGame.hero(from: $0, tables: tables) }
         for t in s.towns {
             guard let i = towns.firstIndex(where: { $0.x == t.x && $0.y == t.y }) else { continue }
             towns[i].name = t.name; towns[i].owned = t.owned; towns[i].owner = t.owner
             towns[i].buildings = Set(t.buildings); towns[i].available = t.available; towns[i].builtToday = t.builtToday
             if let gs = t.guildSpells { towns[i].guildSpells = gs }
             if let g = t.garrison { towns[i].garrison = g.map { Hero.Stack(creature: $0.creature, count: $0.count) } }
-            towns[i].garrisonHeroes = (t.garrisonHeroes ?? []).map { SaveGame.hero(from: $0) }
+            towns[i].garrisonHeroes = (t.garrisonHeroes ?? []).map { SaveGame.hero(from: $0, tables: tables) }
             towns[i].growthRemainder = t.growthRemainder ?? [:]
-            towns[i].prisoners = (t.prisoners ?? []).map { SaveGame.hero(from: $0) }
+            towns[i].prisoners = (t.prisoners ?? []).map { SaveGame.hero(from: $0, tables: tables) }
         }
         for m in s.mines { if let i = mines.firstIndex(where: { $0.x == m.x && $0.y == m.y }) { mines[i].owned = m.on } }
         for d in s.dwellings { if let i = dwellings.firstIndex(where: { $0.x == d.x && $0.y == d.y }) { dwellings[i].available = d.count; dwellings[i].owned = d.owned ?? false; dwellings[i].fourteenths = d.fourteenths ?? 0
@@ -283,7 +286,7 @@ extension GameState {
         if let e = s.enemyHeroes {
             for h in enemyHeroes { if h.z < passabilities.count { passabilities[h.z].free(h.x, h.y) } }
             enemyHeroes = []
-            for st in e { place(enemy: SaveGame.hero(from: st)) }
+            for st in e { place(enemy: SaveGame.hero(from: st, tables: tables)) }
         }
         if let a = s.aiResources { aiResources = a }
         if let d = s.difficulty { difficulty = d }
@@ -292,7 +295,7 @@ extension GameState {
         if let v = s.shroudVisits { shroudVisits = v }
         if let d = s.digSites { digSites = d }
         if let d = s.dug { dug = Set(d) }
-        sanctuaryGuests = (s.sanctuaryGuests ?? [:]).mapValues { SaveGame.hero(from: $0) }
+        sanctuaryGuests = (s.sanctuaryGuests ?? [:]).mapValues { SaveGame.hero(from: $0, tables: tables) }
         sanctuaryPaid = Set(s.sanctuaryPaid ?? [])
         reapplyGarrisons()
         applyBorderGates(for: map.humanColour)
@@ -301,7 +304,7 @@ extension GameState {
         caravans = (s.caravans ?? []).compactMap { c in
             guard let t = towns.firstIndex(where: { $0.x == c.town.x && $0.y == c.town.y }) else { return nil }
             let slots: [ArmySlot?] = c.slots.map { sl in
-                if let h = sl?.hero { return .hero(SaveGame.hero(from: h)) }
+                if let h = sl?.hero { return .hero(SaveGame.hero(from: h, tables: tables)) }
                 if let st = sl?.stack { return .stack(Hero.Stack(creature: st.creature, count: st.count)) }
                 return nil
             }
@@ -334,18 +337,22 @@ extension SaveGame {
         st.visitedObjects = Array(h.visitedObjects).sorted(); st.eluded = h.eluded.isEmpty ? nil : h.eluded.sorted(); st.fountainEffects = Array(h.fountainEffects).sorted(); st.timedEffects = h.timedEffects; st.universitySlots = h.universitySlots.isEmpty ? nil : h.universitySlots
         st.armyLuck = h.armyLuck; st.armyMorale = h.armyMorale; st.templeAlignment = h.templeAlignment
         st.spells = Array(h.spells).sorted()
+        if !h.heroless, h.actor.hasPrefix("hero.") { st.male = h.isMale }
         return st
     }
-    static func hero(from st: HeroState) -> Hero {
+    /// A saved hero; `tables` puts right the sex of a hero saved before the sex fix (`male` absent):
+    /// its record's (the remake had read the map's sex byte reversed, 1 being male).
+    static func hero(from st: HeroState, tables: RuleTables?) -> Hero {
         let h = Hero(actor: st.actor, x: st.x, y: st.y, movement: st.maxMovement)
         h.name = st.name; h.keyword = st.keyword; h.alignment = st.alignment
+        if st.male == nil, !(st.heroless ?? false), let r = h.record(in: tables) { h.setSex(male: r.sex == "male") }
         h.army = st.army.map { Hero.Stack(creature: $0.creature, count: $0.count) }
         h.skills = st.skills; h.experience = st.experience; h.home = (st.home.x, st.home.y)
         h.level = st.level ?? Hero.level(for: st.experience)
         h.heroClass = st.heroClass ?? -1; h.lastCombatOffer = st.lastCombatOffer ?? 0
         if let e = st.equipped { h.equipped = e }
         h.backpack = st.backpack ?? []
-        h.companions = (st.companions ?? []).map { hero(from: $0) }
+        h.companions = (st.companions ?? []).map { hero(from: $0, tables: tables) }
         h.z = st.z ?? 0
         h.owner = st.owner ?? 0
         h.boat = st.boat

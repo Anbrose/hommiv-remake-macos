@@ -733,6 +733,12 @@ public final class GameState {
     /// The walk model of an adv_actor model (the renderer reads the files); defaults without it.
     public var gaitProvider: ((String) -> ArmyGait)? = nil
     func gait(_ model: String?) -> ArmyGait { model.flatMap { gaitProvider?($0) } ?? ArmyGait() }
+    /// The adv_actor model an army is drawn with (0x72e080): its ship at sea, else a hero's custom
+    /// model (Hero.adventureModel), else its class model; a custom model the archive lacks falls back
+    /// to the class model (the caller checks).
+    public func armyModel(_ h: Hero) -> String { h.boat == nil ? h.adventureModel(tables: tables) : h.model }
+    /// An army's walking gait: its drawn model's.
+    func armyGait(_ h: Hero) -> ArmyGait { gait(armyModel(h)) }
     /// The combat screen is open: the map waits (the exe's battle is modal, 0x521780).
     public var battleUnderway = false
 
@@ -1670,7 +1676,7 @@ public final class GameState {
             steps.append(ArmyWalk.distance(px, py, c.x, c.y))
             px = c.x; py = c.y
         }
-        h.walkAnim = steps.isEmpty ? nil : ArmyWalk(steps: steps, gait: gait(h.model))
+        h.walkAnim = steps.isEmpty ? nil : ArmyWalk(steps: steps, gait: armyGait(h))
         h.animState = steps.isEmpty ? nil : "prewalk"; h.animFrame = 0
         h.progress = 0
     }
@@ -1706,7 +1712,7 @@ public final class GameState {
                 if h.path.isEmpty { moveEnded(h); continue }
                 startWalk(h)
             }
-            let g = gait(h.model)
+            let g = armyGait(h)
             if var w = h.walkAnim, !w.done {
                 if let next = h.path.first { h.facing = Hero.facing(dx: next.x - h.x, dy: next.y - h.y) }
                 var finished = w.advance(dt, gait: g, percent: GameState.armySpeedPercent)

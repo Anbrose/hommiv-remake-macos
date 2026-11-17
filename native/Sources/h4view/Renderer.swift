@@ -1077,7 +1077,9 @@ final class Renderer: NSObject, MTKViewDelegate {
         guard let r = resolver else { print("hero: no resolver"); return (nil, nil, nil, nil) }
         // the state the walk or the meeting set (prewalk / walk / postwalk / attack), else wait;
         // at sea the army is drawn as its ship (adv_actor.ships.<alignment>)
-        let actorName = h.model
+        // (a hero's custom model, 0x72e080, when the archive holds it, else its class model)
+        let custom = game?.armyModel(h) ?? h.model
+        let actorName = custom != h.model && r.sequence(actor: custom, state: "wait", facing: h.facing) == nil ? h.model : custom
         var state = h.animState ?? "wait"
         if r.sequence(actor: actorName, state: state, facing: h.facing) == nil { state = h.isWalking ? "walk" : "wait" }
         guard let entry = r.sequence(actor: actorName, state: state, facing: h.facing) else { print("hero: no sequence for \(h.actor) \(state) \(h.facing)"); return (nil, nil, nil, nil) }

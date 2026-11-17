@@ -175,7 +175,7 @@ extension Renderer {
         let sp = townSplitAt
         if townButtonHit(sp.file, x: sp.x, y: sp.y, x, y) { return b("town_screen.split") }
         if let lord = townGovernor(i), ts.hit(ts.hotspot("Lord_Portrait"), x, y) {
-            let female = lord.actor.lowercased().contains("female")
+            let female = !lord.isMale
             return text("town_lord_portrait_help_balloon.misc", "%Hero_name runs %town_name with %his %skill.")
                 .replacingOccurrences(of: "%Hero_name", with: lord.name).replacingOccurrences(of: "%town_name", with: g.towns[i].name)
                 .replacingOccurrences(of: "%his", with: female ? "her" : "his").replacingOccurrences(of: "%skill", with: skillName(3, level: lord.skill("nobility")).name)

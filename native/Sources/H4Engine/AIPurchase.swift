@@ -116,7 +116,7 @@ extension GameState {
             let r = random.next()
             guard !list.isEmpty else { continue }
             let def = t.heroes[list[r % list.count]]
-            var mh = MapHero(); mh.heroClass = c; mh.level = 1; mh.portrait = def.portrait ?? -1; mh.gender = female ? 1 : 0; mh.name = def.name
+            var mh = MapHero(); mh.heroClass = c; mh.level = 1; mh.portrait = def.portrait ?? -1; mh.gender = female ? 0 : 1; mh.name = def.name
             let h = Hero.fromMap(mh, alignment: RuleTables.heroClasses[c].alignment, x: 0, y: 0, tables: tables, random: &random)
             h.owner = colour; h.z = town.z
             var cost = [Int](repeating: 0, count: 7); cost[0] = prices[c]

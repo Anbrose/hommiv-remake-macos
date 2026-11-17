@@ -103,7 +103,7 @@ extension GameState {
         guard let last = heroes.last else { return t }
         var names = ""
         for (k, h) in heroes.enumerated() { names = k == 0 ? h.name : names + (k == 1 ? " \(text("and.dialog", "and")) " : ", ") + h.name }
-        let female = last.actor.lowercased().hasSuffix("_female")
+        let female = !last.isMale
         let subs: [(String, String)] = [("%hero_names", names), ("%hero_name", last.name), ("%himself", female ? "herself" : "himself"),
                                         ("%him", female ? "her" : "him"), ("%his", female ? "her" : "his"), ("%he", female ? "she" : "he")]
         for (k, v) in subs {

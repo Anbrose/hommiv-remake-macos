@@ -219,7 +219,7 @@ extension GameState {
         guard let k = d.hero, k < d.heroes.count else { return (say("university_no_heroes", [:]), 0) }
         let h = d.heroes[k]
         guard let o = universitySlot(h, p, d.choice) else { return ("", 0) }
-        let he = h.isFemale ? "she" : "he"
+        let he = h.isMale ? "he" : "she"
         var subs = ["%hero_name": h.name, "%Hero_name": h.name, "%skill_name": skillLabel(o.skill, o.level),
                     "%he": he, "%He": he.capitalized]
         if h.skill(id: o.skill) > o.level { return (say(o.stored ? "university_learned_here" : "university_skill_known", subs), 0) }
@@ -235,9 +235,4 @@ extension GameState {
         }
         return (say("university_legal_skill", subs), 2000)
     }
-}
-
-extension Hero {
-    /// The hero's sex as its adventure model shows it ("hero.<model>_<might|magic>_female").
-    var isFemale: Bool { actor.lowercased().hasSuffix("_female") }
 }

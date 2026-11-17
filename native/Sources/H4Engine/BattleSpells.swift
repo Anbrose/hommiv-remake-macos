@@ -37,6 +37,7 @@ public struct Caster {
     /// The spell a click casts without opening the book: the first with the Default flag (0x656c20).
     public var defaultSpell: Int? { spells.first { $0 < RuleTables.spells.count && RuleTables.spells[$0].has("Default") } ?? spells.first }
 }
+extension Caster: Codable {}
 
 /// Casting in battle, as heroes4.exe does it (spells_spec: power 0x865200 / 0x72db90, damage
 /// after resistance 0x40d000, resistance 0x5f2330 / 0x40cac0, mass spells 0x98bf08, summons

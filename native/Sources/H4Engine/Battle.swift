@@ -75,6 +75,49 @@ public final class Battle {
             initialCount = stats.count
             facing = side == 0 ? "ne" : "sw"
         }
+
+        /// Everything a stack is in battle, as a saved combat keeps it (re/combat_save_spec.md §3).
+        public struct Saved: Codable {
+            public var id, side: Int
+            public var stats: Combatant
+            public var keyword, actor: String
+            public var modelOverride, size, move, shots, x, y: Int
+            public var facing: String
+            public var acted, waited, defended, retaliated: Bool
+            public var moraleRoll: Int, moraleChecked, goodMorale, badMorale: Bool
+            public var moved: Float
+            public var initialCount: Int
+            public var durations: [Int: Int]
+            public var blocking: Bool
+            public var pendingDamage, poison, plague, regeneration: Int
+            public var turnStarted: Bool
+            public var boundBy: Int?
+            public var hypnotized: Bool
+            public var caster: Caster?
+            public var summoned: Bool
+            public var summonedBy: Int?
+            public var permanentlyLost: Int
+            public var powers: [Int: Int]
+            public var martyr, leechedBy: Int?
+            public var deathHandled: Bool
+        }
+        public var saved: Saved {
+            Saved(id: id, side: side, stats: stats, keyword: keyword, actor: actor, modelOverride: modelOverride, size: size, move: move, shots: shots,
+                  x: x, y: y, facing: facing, acted: acted, waited: waited, defended: defended, retaliated: retaliated, moraleRoll: moraleRoll,
+                  moraleChecked: moraleChecked, goodMorale: goodMorale, badMorale: badMorale, moved: moved, initialCount: initialCount,
+                  durations: durations, blocking: blocking, pendingDamage: pendingDamage, poison: poison, plague: plague, regeneration: regeneration,
+                  turnStarted: turnStarted, boundBy: boundBy, hypnotized: hypnotized, caster: caster, summoned: summoned, summonedBy: summonedBy,
+                  permanentlyLost: permanentlyLost, powers: powers, martyr: martyr, leechedBy: leechedBy, deathHandled: deathHandled)
+        }
+        init(saved s: Saved) {
+            id = s.id; side = s.side; stats = s.stats; keyword = s.keyword; actor = s.actor; modelOverride = s.modelOverride; size = s.size
+            move = s.move; shots = s.shots; x = s.x; y = s.y; facing = s.facing; acted = s.acted; waited = s.waited; defended = s.defended
+            retaliated = s.retaliated; moraleRoll = s.moraleRoll; moraleChecked = s.moraleChecked; goodMorale = s.goodMorale; badMorale = s.badMorale
+            moved = s.moved; initialCount = s.initialCount; durations = s.durations; blocking = s.blocking; pendingDamage = s.pendingDamage
+            poison = s.poison; plague = s.plague; regeneration = s.regeneration; turnStarted = s.turnStarted; boundBy = s.boundBy
+            hypnotized = s.hypnotized; caster = s.caster; summoned = s.summoned; summonedBy = s.summonedBy; permanentlyLost = s.permanentlyLost
+            powers = s.powers; martyr = s.martyr; leechedBy = s.leechedBy; deathHandled = s.deathHandled
+        }
     }
 
     public struct Fighter {
@@ -1677,5 +1720,54 @@ public final class Battle {
                 }
             }
         }
+    }
+}
+
+// MARK: saved combat
+
+extension Battle {
+    /// The battle as a saved combat keeps it (t_saved_combat, re/combat_save_spec.md): every
+    /// stack, the turn order, the round, the random stream, spell-made ground, the field's blocked
+    /// cells and the gate. Taken between actions only (`canSnapshot`): nothing is held for the
+    /// screen then, so nothing that is only animation needs keeping.
+    public struct Snapshot: Codable {
+        public var units: [Unit.Saved]
+        public var round: Int
+        public var order: [Int]
+        public var experience: Int
+        public var finished: Bool?
+        public var retreated: Bool
+        public var rng: UInt32
+        public var quicksand, smoke: [Int]
+        public var initialHealth, lossPenalty: [Int]
+        public var grails: [[String]]
+        /// The field's blocked cells, one bit a cell (Rock Growth, a broken gate), and the gate's hit points.
+        public var blocked: Data
+        public var gateHP: Int
+    }
+    /// Between actions: no blow waits for the screen, no event is waiting to be taken.
+    public var canSnapshot: Bool { heldAftermath == nil && deferred.isEmpty && events.isEmpty }
+
+    public func snapshot() -> Snapshot {
+        var bits = Data(count: (field.blocked.count + 7) / 8)
+        for (k, b) in field.blocked.enumerated() where b { bits[k >> 3] |= UInt8(1 << (k & 7)) }
+        return Snapshot(units: units.map(\.saved), round: round, order: order, experience: experience, finished: finished, retreated: retreated,
+                        rng: rng.state, quicksand: quicksand.sorted(), smoke: smoke.sorted(), initialHealth: initialHealth, lossPenalty: lossPenalty,
+                        grails: grails.map { $0.sorted() }, blocked: bits, gateHP: field.gateHP)
+    }
+
+    /// Lay a saved battle over this one (started afresh from the same adventure, so its field,
+    /// tables and models are the saved battle's).
+    public func restore(_ s: Snapshot) {
+        units = s.units.map { Unit(saved: $0) }
+        round = s.round; order = s.order; experience = s.experience; finished = s.finished; retreated = s.retreated
+        rng.state = s.rng
+        quicksand = Set(s.quicksand); smoke = Set(s.smoke)
+        initialHealth = s.initialHealth; lossPenalty = s.lossPenalty
+        grails = s.grails.map { Set($0) }
+        for k in field.blocked.indices where k >> 3 < s.blocked.count { field.blocked[k] = s.blocked[s.blocked.startIndex + (k >> 3)] & UInt8(1 << (k & 7)) != 0 }
+        field.gateHP = s.gateHP
+        heldAftermath = nil; deferred = []; events = []
+        exploreCache = [:]; parentCache = [:]; version &+= 1
     }
 }

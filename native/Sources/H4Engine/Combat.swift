@@ -283,3 +283,57 @@ extension Combatant {
         return (adj(lo, false), adj(hi, true))
     }
 }
+
+/// A stack's fighting state as a saved combat keeps it (t_saved_combat, re/combat_save_spec.md):
+/// every field, the spell effects included.
+extension Combatant: Codable {
+    enum CodingKeys: String, CodingKey {
+        case name, count, baseHitPoints, damageLow, damageHigh, attack, defense, speed, experience, wounds, isHero, mageHero, shooter
+        case noMeleePenalty, defending, morale, luck, onQuicksand, abilities, level, alignment, cursed, weakened, aged, bound, effects
+        case magicResistance, spellPoints, spellPower, castAtStart, spellsOnHit, rangedAttack, shots
+    }
+    struct OnHit: Codable { var spell: Int; var melee: Bool; var ranged: Bool }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name); count = try c.decode(Int.self, forKey: .count)
+        baseHitPoints = try c.decode(Int.self, forKey: .baseHitPoints)
+        damageLow = try c.decode(Int.self, forKey: .damageLow); damageHigh = try c.decode(Int.self, forKey: .damageHigh)
+        attack = try c.decode(Int.self, forKey: .attack); defense = try c.decode(Int.self, forKey: .defense)
+        speed = try c.decode(Int.self, forKey: .speed); experience = try c.decode(Int.self, forKey: .experience)
+        isHero = try c.decode(Bool.self, forKey: .isHero); mageHero = try c.decode(Bool.self, forKey: .mageHero)
+        shooter = try c.decode(Bool.self, forKey: .shooter); noMeleePenalty = try c.decode(Bool.self, forKey: .noMeleePenalty)
+        defending = try c.decode(Bool.self, forKey: .defending)
+        morale = try c.decode(Int.self, forKey: .morale); luck = try c.decode(Int.self, forKey: .luck)
+        onQuicksand = try c.decode(Bool.self, forKey: .onQuicksand)
+        abilities = try c.decode(Set<String>.self, forKey: .abilities)
+        level = try c.decode(Int.self, forKey: .level); alignment = try c.decode(String.self, forKey: .alignment)
+        cursed = try c.decode(Bool.self, forKey: .cursed); weakened = try c.decode(Bool.self, forKey: .weakened)
+        aged = try c.decode(Bool.self, forKey: .aged); bound = try c.decode(Bool.self, forKey: .bound)
+        effects = try c.decode(Set<Int>.self, forKey: .effects)
+        wounds = try c.decode(Int.self, forKey: .wounds)
+        magicResistance = try c.decode(Int.self, forKey: .magicResistance)
+        spellPoints = try c.decode(Int.self, forKey: .spellPoints); spellPower = try c.decode(Int.self, forKey: .spellPower)
+        castAtStart = try c.decode([[Int]].self, forKey: .castAtStart).map { ($0[0], $0[1]) }
+        spellsOnHit = try c.decode([OnHit].self, forKey: .spellsOnHit).map { ($0.spell, $0.melee, $0.ranged) }
+        rangedAttack = try c.decodeIfPresent(Int.self, forKey: .rangedAttack)
+        shots = try c.decode(Int.self, forKey: .shots)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(name, forKey: .name); try c.encode(count, forKey: .count); try c.encode(baseHitPoints, forKey: .baseHitPoints)
+        try c.encode(damageLow, forKey: .damageLow); try c.encode(damageHigh, forKey: .damageHigh)
+        try c.encode(attack, forKey: .attack); try c.encode(defense, forKey: .defense); try c.encode(speed, forKey: .speed)
+        try c.encode(experience, forKey: .experience); try c.encode(wounds, forKey: .wounds); try c.encode(isHero, forKey: .isHero)
+        try c.encode(mageHero, forKey: .mageHero); try c.encode(shooter, forKey: .shooter); try c.encode(noMeleePenalty, forKey: .noMeleePenalty)
+        try c.encode(defending, forKey: .defending); try c.encode(morale, forKey: .morale); try c.encode(luck, forKey: .luck)
+        try c.encode(onQuicksand, forKey: .onQuicksand); try c.encode(abilities.sorted(), forKey: .abilities)
+        try c.encode(level, forKey: .level); try c.encode(alignment, forKey: .alignment)
+        try c.encode(cursed, forKey: .cursed); try c.encode(weakened, forKey: .weakened); try c.encode(aged, forKey: .aged)
+        try c.encode(bound, forKey: .bound); try c.encode(effects.sorted(), forKey: .effects)
+        try c.encode(magicResistance, forKey: .magicResistance); try c.encode(spellPoints, forKey: .spellPoints)
+        try c.encode(spellPower, forKey: .spellPower)
+        try c.encode(castAtStart.map { [$0.spell, $0.power] }, forKey: .castAtStart)
+        try c.encode(spellsOnHit.map { OnHit(spell: $0.spell, melee: $0.melee, ranged: $0.ranged) }, forKey: .spellsOnHit)
+        try c.encodeIfPresent(rangedAttack, forKey: .rangedAttack); try c.encode(shots, forKey: .shots)
+    }
+}

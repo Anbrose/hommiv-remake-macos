@@ -1020,6 +1020,8 @@ public final class GameState {
 
     /// A battle waiting for the combat screen: the hero, the monster and its map object.
     public var pendingBattle: (hero: Hero, monster: Int, placed: MapScene.Placed)?
+    /// A loaded combat save waiting for the combat screen to start its battle and lay this over it.
+    public var resumeCombat: SaveGame.SavedCombat? = nil
     /// Use the quick-combat rules instead of the combat screen (tests, --walk snapshots).
     public var quickCombatOnly = false
 
